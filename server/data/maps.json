@@ -1,0 +1,14 @@
+[
+  {
+    "id": "graybox_01",
+    "name": "Gray Box",
+    "width": 20,
+    "height": 12,
+    "spawn": { "x": 2, "y": 6 },
+    "blocked": [
+      { "x": 8, "y": 4 },
+      { "x": 8, "y": 5 },
+      { "x": 8, "y": 6 }
+    ]
+  }
+]

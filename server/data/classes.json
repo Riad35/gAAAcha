@@ -1,0 +1,12 @@
+[
+  {
+    "id": "wanderer",
+    "name": "Wanderer",
+    "hp": 100,
+    "mp": 50,
+    "atk": 12,
+    "def": 4,
+    "moveSpeed": 6,
+    "skillIds": ["slash", "shot", "mend"]
+  }
+]
