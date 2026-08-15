@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.runtime/
 *.log
 .env
 .DS_Store
@@ -11,3 +12,18 @@ dist/
 [Ll]ogs/
 [Uu]ser[Ss]ettings/
 *.csproj.user
+client/Unity/**/Library/
+client/Unity/**/Temp/
+client/Unity/**/Logs/
+client/Unity/**/UserSettings/
+client/Unity/**/obj/
+
+client/Unity/**/Library/
+client/Unity/**/Temp/
+client/Unity/**/Logs/
+client/Unity/**/UserSettings/
+client/Unity/**/obj/
+*.csproj
+*.sln
+*.slnx
+

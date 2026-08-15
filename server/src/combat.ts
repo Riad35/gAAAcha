@@ -1,8 +1,75 @@
-import { defaultMap, skillById } from "./data.js";
-import { findEntity } from "./world.js";
-import type { PlayerSession, ServerMessage } from "./types.js";
+import { defaultMap, skillById, spiritById, weaponById } from "./data.js";
+import type {
+  AttrName,
+  Element,
+  Entity,
+  PlayerSession,
+  Scaling,
+  ServerMessage,
+  SkillDef,
+  StatusInstance,
+  WeaponDef,
+} from "./types.js";
 
-const MAX_ACTIONS_PER_SEC = 10;
+const MAX_ACTIONS_PER_SEC = 12;
+const MAX_MOVES_PER_SEC = 30;
+const SHOVE_MOVE_LOCK_MS = 250;
+
+let findEntityHook: (id: string) => Entity | undefined = () => undefined;
+let getPlayersHook: () => PlayerSession[] = () => [];
+let listHostilesHook: () => Entity[] = () => [];
+let attachMonsterStatus: (id: string, status: StatusInstance) => void = () => undefined;
+
+export function bindCombatWorld(
+  findEntity: (id: string) => Entity | undefined,
+  getPlayers: () => PlayerSession[],
+  attachStatus: (id: string, status: StatusInstance) => void,
+  listHostiles: () => Entity[] = () => [],
+): void {
+  findEntityHook = findEntity;
+  getPlayersHook = getPlayers;
+  attachMonsterStatus = attachStatus;
+  listHostilesHook = listHostiles;
+}
+
+export type CastHit = {
+  targetId: string;
+  damage: number;
+  hpAfter: number;
+  crit: boolean;
+};
+
+export type CastAim = {
+  aimDx?: number;
+  aimDy?: number;
+  aimX?: number;
+  aimY?: number;
+};
+
+export type CastOk = {
+  ok: true;
+  hits: CastHit[];
+  mpAfter: number;
+  moved: boolean;
+  movedEntities: { id: string; x: number; y: number }[];
+  primaryTargetId: string;
+  aoe: boolean;
+  aimX?: number;
+  aimY?: number;
+  aoeRadius?: number;
+  projectile?: {
+    speed: number;
+    targetId: string;
+    skillId: string;
+    vx?: number;
+    vy?: number;
+    maxRange?: number;
+    width?: number;
+    pendingHits: { targetId: string; damage: number; crit: boolean }[];
+    pendingStatus: StatusInstance | null;
+    statusDurationMs: number;
+  };
+};
 
 function distance(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(ax - bx, ay - by);
@@ -27,14 +94,187 @@ function rateLimited(session: PlayerSession, now: number): boolean {
   return false;
 }
 
+function moveRateLimited(session: PlayerSession, now: number): boolean {
+  session.moveTimes = session.moveTimes.filter((time) => now - time < 1000);
+  if (session.moveTimes.length >= MAX_MOVES_PER_SEC) {
+    return true;
+  }
+  session.moveTimes.push(now);
+  return false;
+}
+
+function hitRadiusOf(entity: Entity): number {
+  return entity.hitRadius > 0 ? entity.hitRadius : 0.4;
+}
+
+/** Center distance minus both hit radii (edge-to-edge). */
+export function rangeGap(a: Entity, b: Entity): number {
+  return Math.max(0, distance(a.x, a.y, b.x, b.y) - hitRadiusOf(a) - hitRadiusOf(b));
+}
+
+/** True if mover at (x,y) would overlap a blocking entity. Monster–monster ignored. */
+export function entityBlockedAt(x: number, y: number, mover: Entity): boolean {
+  const moverR = hitRadiusOf(mover);
+  const overlaps = (other: Entity): boolean => {
+    if (other.id === mover.id || other.hp <= 0) {
+      return false;
+    }
+    if (mover.kind === "monster" && other.kind === "monster") {
+      return false;
+    }
+    return distance(x, y, other.x, other.y) < moverR + hitRadiusOf(other) - 0.02;
+  };
+
+  for (const session of getPlayersHook()) {
+    if (overlaps(session.entity)) {
+      return true;
+    }
+  }
+  for (const monster of listHostilesHook()) {
+    if (overlaps(monster)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isStunned(session: PlayerSession, now: number): boolean {
+  return session.statuses.some((status) => status.kind === "stun" && status.until > now);
+}
+
+export function isBlinded(session: PlayerSession, now: number): boolean {
+  return session.statuses.some((status) => status.kind === "blind" && status.until > now);
+}
+
+export function isMoveLocked(session: PlayerSession, now: number): boolean {
+  return session.moveLockUntil > now;
+}
+
+export function hasShoveResist(targetId: string, now: number): boolean {
+  const player = getPlayersHook().find((p) => p.entity.id === targetId);
+  if (player) {
+    return player.statuses.some((s) => s.kind === "shove_resist" && s.until > now);
+  }
+  return false;
+}
+
+export function pruneStatuses(session: PlayerSession, now: number): void {
+  session.statuses = session.statuses.filter((status) => {
+    if (status.until <= now) {
+      return false;
+    }
+    if ((status.kind === "shield_phys" || status.kind === "shield_mag") && (status.shieldHp ?? 0) <= 0) {
+      return false;
+    }
+    return true;
+  });
+}
+
+export function moveSpeedMult(session: PlayerSession, now: number): number {
+  pruneStatuses(session, now);
+  return session.statuses.reduce((mult, status) => {
+    if (status.kind === "speed_mult") {
+      return mult * (status.moveSpeedMult ?? 1);
+    }
+    return mult;
+  }, 1);
+}
+
+export function attackSpeedMult(session: PlayerSession, now: number): number {
+  pruneStatuses(session, now);
+  return session.statuses.reduce((mult, status) => {
+    if (status.kind === "speed_mult") {
+      return mult * (status.attackSpeedMult ?? 1);
+    }
+    return mult;
+  }, 1);
+}
+
+function attrBonus(session: PlayerSession, attr: AttrName, now: number): number {
+  pruneStatuses(session, now);
+  let bonus = 0;
+  for (const status of session.statuses) {
+    if (status.kind === "attr_up" && status.attr === attr) {
+      bonus += status.amount ?? 0;
+    }
+    if (attr === "atk" && status.atkBonus) {
+      bonus += status.atkBonus;
+    }
+  }
+  return bonus;
+}
+
+function resistFactor(targetResist: number): number {
+  return Math.max(0.25, 1 - targetResist / 100);
+}
+
+function rollCrit(chance: number, mult: number): { crit: boolean; mult: number } {
+  if (Math.random() < chance) {
+    return { crit: true, mult };
+  }
+  return { crit: false, mult: 1 };
+}
+
+export function resolveAttackElement(session: PlayerSession, skill: SkillDef, weapon: WeaponDef | undefined): Element {
+  if (skill.id === "auto_attack") {
+    const spirit = session.equippedSpiritId ? spiritById(session.equippedSpiritId) : undefined;
+    return spirit?.element ?? weapon?.element ?? skill.element;
+  }
+  return skill.element;
+}
+
+function elemDmgMult(session: PlayerSession, element: Element, now: number): number {
+  pruneStatuses(session, now);
+  const spirit = session.equippedSpiritId ? spiritById(session.equippedSpiritId) : undefined;
+  let mult = 1;
+  if (spirit && spirit.element === element) {
+    mult += spirit.elemDmgBonus;
+  }
+  for (const status of session.statuses) {
+    if (status.kind === "elem_dmg_up" && status.element === element) {
+      mult += status.elemDmgMult ?? 0;
+    }
+  }
+  return mult;
+}
+
+function absorbShield(targetId: string, damage: number, scaling: Scaling, now: number): number {
+  const player = getPlayersHook().find((p) => p.entity.id === targetId);
+  if (!player || damage <= 0) {
+    return damage;
+  }
+  pruneStatuses(player, now);
+  const kind = scaling === "magic" ? "shield_mag" : "shield_phys";
+  let remaining = damage;
+  for (const status of player.statuses) {
+    if (status.kind !== kind || (status.shieldHp ?? 0) <= 0) {
+      continue;
+    }
+    const absorbed = Math.min(status.shieldHp ?? 0, remaining);
+    status.shieldHp = (status.shieldHp ?? 0) - absorbed;
+    remaining -= absorbed;
+    if (remaining <= 0) {
+      break;
+    }
+  }
+  pruneStatuses(player, now);
+  return remaining;
+}
+
 export function validateMove(
   session: PlayerSession,
   x: number,
   y: number,
   now: number,
 ): ServerMessage | { ok: true; x: number; y: number } {
-  if (rateLimited(session, now)) {
-    return { type: "error", code: "rate_limited", message: "Too many actions" };
+  if (isStunned(session, now)) {
+    return { type: "error", code: "stunned", message: "You are stunned" };
+  }
+  if (isMoveLocked(session, now)) {
+    return { type: "error", code: "move_locked", message: "You were shoved" };
+  }
+  if (moveRateLimited(session, now)) {
+    return { type: "error", code: "rate_limited", message: "Too many moves" };
   }
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     return { type: "error", code: "invalid_move", message: "Coordinates must be numbers" };
@@ -42,9 +282,13 @@ export function validateMove(
   if (!inBounds(x, y) || isBlocked(x, y)) {
     return { type: "error", code: "blocked", message: "Tile is not walkable" };
   }
+  if (entityBlockedAt(x, y, session.entity)) {
+    return { type: "error", code: "blocked_entity", message: "Blocked by entity" };
+  }
 
   const elapsedSec = Math.max(0, (now - session.lastMoveAt) / 1000);
-  const maxDist = session.entity.moveSpeed * Math.max(elapsedSec, 1 / 20);
+  const speed = session.entity.moveSpeed * moveSpeedMult(session, now);
+  const maxDist = speed * Math.max(elapsedSec, 1 / 20);
   const dist = distance(session.entity.x, session.entity.y, x, y);
   if (dist > maxDist + 0.05) {
     return { type: "error", code: "too_fast", message: "Move exceeds walk speed" };
@@ -53,12 +297,335 @@ export function validateMove(
   return { ok: true, x, y };
 }
 
+function stepEntity(entity: Entity, dx: number, dy: number, tiles: number): boolean {
+  let moved = false;
+  for (let i = 0; i < tiles; i += 1) {
+    const nx = entity.x + dx;
+    const ny = entity.y + dy;
+    if (!inBounds(nx, ny) || isBlocked(nx, ny)) {
+      break;
+    }
+    if (entityBlockedAt(nx, ny, entity)) {
+      break;
+    }
+    entity.x = nx;
+    entity.y = ny;
+    moved = true;
+  }
+  return moved;
+}
+
+function needsProjectile(skill: SkillDef, weapon: WeaponDef | undefined): boolean {
+  if (skill.selfTarget || skill.damageType === "aoe" || skill.heal > 0) {
+    return false;
+  }
+  if (skill.movement) {
+    return false;
+  }
+  if (skill.id === "auto_attack") {
+    return weapon?.style === "ranged";
+  }
+  return (skill.projectileSpeed ?? 0) > 0;
+}
+
+function projectileSpeedOf(skill: SkillDef, weapon: WeaponDef | undefined): number {
+  if (skill.id === "auto_attack" && weapon?.style === "ranged") {
+    return skill.projectileSpeed && skill.projectileSpeed > 0 ? skill.projectileSpeed : 14;
+  }
+  return skill.projectileSpeed ?? 14;
+}
+
+function applyDash(session: PlayerSession, tiles: number): void {
+  const fx = session.facingX === 0 && session.facingY === 0 ? 1 : Math.sign(session.facingX) || 0;
+  const fy = fx === 0 ? Math.sign(session.facingY) || 0 : 0;
+  stepEntity(session.entity, fx, fy, Math.abs(tiles));
+}
+
+function dirFromTo(ax: number, ay: number, bx: number, by: number): { dx: number; dy: number } {
+  const dx = Math.sign(bx - ax);
+  const dy = Math.sign(by - ay);
+  if (dx === 0 && dy === 0) {
+    return { dx: 1, dy: 0 };
+  }
+  if (Math.abs(bx - ax) >= Math.abs(by - ay)) {
+    return { dx, dy: 0 };
+  }
+  return { dx: 0, dy };
+}
+
+function lockPlayerMove(targetId: string, now: number): void {
+  const player = getPlayersHook().find((p) => p.entity.id === targetId);
+  if (player) {
+    player.moveLockUntil = now + SHOVE_MOVE_LOCK_MS;
+  }
+}
+
+function resolveScaling(skill: SkillDef, weapon: WeaponDef | undefined): Scaling {
+  if (skill.id === "auto_attack") {
+    return weapon?.scaling ?? skill.scaling;
+  }
+  return skill.scaling;
+}
+
+function computeDamage(
+  session: PlayerSession,
+  target: Entity,
+  skill: SkillDef,
+  weapon: WeaponDef | undefined,
+  now: number,
+  absorb = true,
+): { damage: number; crit: boolean } {
+  const scaling = resolveScaling(skill, weapon);
+  const power = scaling === "magic"
+    ? session.entity.magicAtk + (weapon?.magicAtkBonus ?? 0) + attrBonus(session, "magicAtk", now)
+    : session.entity.atk + (weapon?.atkBonus ?? 0) + attrBonus(session, "atk", now);
+  const element = resolveAttackElement(session, skill, weapon);
+  const resist = (target.resist?.[element] ?? 0);
+  const mitigation = scaling === "magic"
+    ? target.magicResist + (target.kind === "player"
+      ? (getPlayersHook().find((p) => p.entity.id === target.id)
+        ? attrBonus(getPlayersHook().find((p) => p.entity.id === target.id)!, "magicResist", now)
+        : 0)
+      : 0)
+    : target.def + (target.kind === "player"
+      ? (getPlayersHook().find((p) => p.entity.id === target.id)
+        ? attrBonus(getPlayersHook().find((p) => p.entity.id === target.id)!, "def", now)
+        : 0)
+      : 0);
+
+  let raw = Math.max(1, power + skill.damage - mitigation);
+  if (skill.damageType === "maxHpPercent") {
+    raw = Math.max(1, Math.floor(target.maxHp * 0.08) + Math.floor(power * 0.25));
+  }
+  raw = Math.floor(raw * elemDmgMult(session, element, now));
+  raw = Math.floor(raw * resistFactor(resist));
+  const critChance = session.entity.critChance + attrBonus(session, "critChance", now);
+  const critRoll = rollCrit(critChance, session.entity.critDamage);
+  let damage = Math.max(1, Math.floor(raw * critRoll.mult));
+  if (absorb) {
+    damage = absorbShield(target.id, damage, scaling, now);
+  }
+  return { damage: Math.max(0, damage), crit: critRoll.crit };
+}
+
+function statusFromDef(def: NonNullable<SkillDef["status"]>, now: number, elementOverride?: Element): StatusInstance {
+  return {
+    id: def.id,
+    kind: def.kind,
+    until: now + def.durationMs,
+    nextTick: def.tickMs ? now + def.tickMs : undefined,
+    potency: def.potency,
+    atkBonus: def.atkBonus,
+    attr: def.attr,
+    amount: def.amount,
+    moveSpeedMult: def.moveSpeedMult,
+    attackSpeedMult: def.attackSpeedMult,
+    shieldHp: def.shieldHp,
+    element: def.kind === "elem_dmg_up" ? (elementOverride ?? def.element) : def.element,
+    elemDmgMult: def.elemDmgMult,
+  };
+}
+
+function applyStatusToTarget(targetId: string, status: StatusInstance, selfTarget: boolean, session: PlayerSession): void {
+  if (status.until <= Date.now()) {
+    return;
+  }
+  if (selfTarget) {
+    session.statuses = session.statuses.filter((s) => s.id !== status.id);
+    session.statuses.push(status);
+    return;
+  }
+  const playerTarget = getPlayersHook().find((p) => p.entity.id === targetId);
+  if (playerTarget) {
+    playerTarget.statuses = playerTarget.statuses.filter((s) => s.id !== status.id);
+    playerTarget.statuses.push(status);
+    return;
+  }
+  attachMonsterStatus(targetId, status);
+}
+
+function allCombatTargets(casterId: string): Entity[] {
+  const out: Entity[] = [];
+  for (const entity of listHostilesHook()) {
+    if (entity.id !== casterId && entity.hp > 0) {
+      out.push(entity);
+    }
+  }
+  for (const session of getPlayersHook()) {
+    if (session.entity.id !== casterId && session.entity.hp > 0) {
+      out.push(session.entity);
+    }
+  }
+  return out;
+}
+
+function collectAoeTargets(center: Entity, radius: number, casterId: string): Entity[] {
+  return allCombatTargets(casterId).filter((entity) => {
+    return rangeGap(center, entity) <= radius + 0.05;
+  });
+}
+
+function collectAoeAtPoint(cx: number, cy: number, radius: number, casterId: string): Entity[] {
+  return allCombatTargets(casterId).filter((entity) => {
+    const gap = Math.max(0, distance(cx, cy, entity.x, entity.y) - (entity.hitRadius || 0.4));
+    return gap <= radius + 0.05;
+  });
+}
+
+function aoeRadiusOf(skill: { range: number; aoeRadius?: number }): number {
+  if (skill.aoeRadius != null && skill.aoeRadius > 0) {
+    return skill.aoeRadius;
+  }
+  return Math.max(0.5, skill.range * 0.5);
+}
+
+function normalizeDir(dx: number, dy: number): { dx: number; dy: number } | null {
+  const len = Math.hypot(dx, dy);
+  if (len < 0.001) {
+    return null;
+  }
+  return { dx: dx / len, dy: dy / len };
+}
+
+/** Distance from point P to segment AB. */
+function distPointToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const ab2 = abx * abx + aby * aby;
+  if (ab2 < 1e-8) {
+    return Math.hypot(apx, apy);
+  }
+  let t = (apx * abx + apy * aby) / ab2;
+  t = Math.max(0, Math.min(1, t));
+  const qx = ax + abx * t;
+  const qy = ay + aby * t;
+  return Math.hypot(px - qx, py - qy);
+}
+
+function collectLinearTargets(
+  caster: Entity,
+  dx: number,
+  dy: number,
+  range: number,
+  width: number,
+  maxHits: number,
+): Entity[] {
+  const ax = caster.x;
+  const ay = caster.y;
+  const bx = ax + dx * range;
+  const by = ay + dy * range;
+  const hits: { entity: Entity; along: number }[] = [];
+  for (const entity of allCombatTargets(caster.id)) {
+    const d = distPointToSegment(entity.x, entity.y, ax, ay, bx, by);
+    const thresh = width * 0.5 + (entity.hitRadius || 0.4);
+    if (d > thresh) {
+      continue;
+    }
+    const along = (entity.x - ax) * dx + (entity.y - ay) * dy;
+    if (along < -0.05 || along > range + 0.05) {
+      continue;
+    }
+    hits.push({ entity, along });
+  }
+  hits.sort((a, b) => a.along - b.along);
+  return hits.slice(0, maxHits).map((h) => h.entity);
+}
+
+function collectConeTargets(
+  caster: Entity,
+  dx: number,
+  dy: number,
+  range: number,
+  coneAngleDeg: number,
+): Entity[] {
+  const half = (coneAngleDeg * Math.PI) / 180 / 2;
+  const out: Entity[] = [];
+  for (const entity of allCombatTargets(caster.id)) {
+    const ex = entity.x - caster.x;
+    const ey = entity.y - caster.y;
+    const dist = Math.hypot(ex, ey);
+    const gap = Math.max(0, dist - (entity.hitRadius || 0.4) - (caster.hitRadius || 0.4));
+    if (gap > range + 0.05) {
+      continue;
+    }
+    if (dist < 0.001) {
+      out.push(entity);
+      continue;
+    }
+    const nx = ex / dist;
+    const ny = ey / dist;
+    const dot = nx * dx + ny * dy;
+    const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+    if (ang <= half + 0.02) {
+      out.push(entity);
+    }
+  }
+  return out;
+}
+
+function resolveAimDir(
+  session: PlayerSession,
+  aim: CastAim | undefined,
+  targetId: string,
+): { dx: number; dy: number } | ServerMessage {
+  const fromAim = normalizeDir(aim?.aimDx ?? 0, aim?.aimDy ?? 0);
+  if (fromAim) {
+    return fromAim;
+  }
+  const target = findEntityHook(targetId);
+  if (target) {
+    const toward = normalizeDir(target.x - session.entity.x, target.y - session.entity.y);
+    if (toward) {
+      return toward;
+    }
+  }
+  const facing = normalizeDir(session.facingX, session.facingY);
+  if (facing) {
+    return facing;
+  }
+  return { type: "error", code: "bad_aim", message: "Missing aim direction" };
+}
+
+function resolveGroundPoint(
+  session: PlayerSession,
+  skill: SkillDef,
+  aim: CastAim | undefined,
+  targetId: string,
+): { x: number; y: number } | ServerMessage {
+  let gx = aim?.aimX;
+  let gy = aim?.aimY;
+  if (gx == null || gy == null || Number.isNaN(gx) || Number.isNaN(gy)) {
+    const target = findEntityHook(targetId);
+    if (target) {
+      gx = target.x;
+      gy = target.y;
+    } else {
+      return { type: "error", code: "bad_aim", message: "Missing aim point" };
+    }
+  }
+  const dx = gx - session.entity.x;
+  const dy = gy - session.entity.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > skill.range && dist > 0.001) {
+    const s = skill.range / dist;
+    gx = session.entity.x + dx * s;
+    gy = session.entity.y + dy * s;
+  }
+  return { x: gx, y: gy };
+}
+
 export function validateCast(
   session: PlayerSession,
   skillId: string,
   targetId: string,
   now: number,
-): ServerMessage | { ok: true; damage: number; hpAfter: number; mpAfter: number; targetId: string } {
+  aim?: CastAim,
+): ServerMessage | CastOk {
+  if (isStunned(session, now)) {
+    return { type: "error", code: "stunned", message: "You are stunned" };
+  }
   if (rateLimited(session, now)) {
     return { type: "error", code: "rate_limited", message: "Too many actions" };
   }
@@ -66,6 +633,10 @@ export function validateCast(
   const skill = skillById(skillId);
   if (!skill) {
     return { type: "error", code: "unknown_skill", message: `Unknown skill ${skillId}` };
+  }
+
+  if (!skill.selfTarget && isBlinded(session, now)) {
+    return { type: "error", code: "blinded", message: "You are blinded" };
   }
 
   const readyAt = session.skillReadyAt[skillId] ?? 0;
@@ -77,30 +648,262 @@ export function validateCast(
     return { type: "error", code: "not_enough_mana", message: "Not enough mana" };
   }
 
-  const resolvedTargetId = skill.selfTarget ? session.entity.id : targetId;
-  const target = findEntity(resolvedTargetId);
-  if (!target) {
-    return { type: "error", code: "invalid_target", message: "Target not found" };
+  const weapon = weaponById(session.equippedWeaponId);
+  const isAuto = skill.id === "auto_attack";
+  const isAoe = skill.damageType === "aoe";
+
+  let targets: Entity[] = [];
+  let resolvedTargetId = skill.selfTarget ? session.entity.id : targetId;
+  let primary: Entity | undefined = findEntityHook(resolvedTargetId);
+  let aimX: number | undefined;
+  let aimY: number | undefined;
+  let dirDx = 0;
+  let dirDy = 0;
+  let directionalProjectile = false;
+  const blastRadius = aoeRadiusOf(skill);
+
+  if (skill.targetingType === "GROUND_CIRCLE") {
+    const pt = resolveGroundPoint(session, skill, aim, targetId);
+    if ("type" in pt) {
+      return pt;
+    }
+    aimX = pt.x;
+    aimY = pt.y;
+    targets = collectAoeAtPoint(pt.x, pt.y, blastRadius, session.entity.id);
+    resolvedTargetId = targets[0]?.id ?? "";
+    primary = targets[0];
+  } else if (skill.targetingType === "SKILLSHOT_LINEAR" || skill.targetingType === "SKILLSHOT_CONE") {
+    const dir = resolveAimDir(session, aim, targetId);
+    if ("type" in dir) {
+      return dir;
+    }
+    dirDx = dir.dx;
+    dirDy = dir.dy;
+    session.facingX = dirDx;
+    session.facingY = dirDy;
+    if (skill.targetingType === "SKILLSHOT_LINEAR") {
+      const width = skill.width ?? 0.7;
+      if ((skill.projectileSpeed ?? 0) > 0) {
+        directionalProjectile = true;
+        targets = []; // hits resolved in flight
+      } else {
+        targets = collectLinearTargets(session.entity, dirDx, dirDy, skill.range, width, 3);
+      }
+    } else {
+      targets = collectConeTargets(session.entity, dirDx, dirDy, skill.range, skill.coneAngleDeg ?? 60);
+    }
+    resolvedTargetId = targets[0]?.id ?? "";
+    primary = targets[0];
+  } else {
+    // UNIT / NO_TARGET / self
+    if (!primary) {
+      return { type: "error", code: "invalid_target", message: "Target not found" };
+    }
+    if (primary.hp <= 0) {
+      return { type: "error", code: "target_dead", message: "Target is already dead" };
+    }
+
+    if (skill.movement?.kind === "dash" && isMoveLocked(session, now)) {
+      return { type: "error", code: "move_locked", message: "You were shoved" };
+    }
+
+    const range = rangeGap(session.entity, primary);
+    const rangeLimit = isAuto ? (weapon?.range ?? 1.5) : skill.range;
+    if (!skill.selfTarget && range > rangeLimit + 0.05) {
+      return { type: "error", code: "out_of_range", message: "Target out of range" };
+    }
+
+    targets = isAoe
+      ? skill.selfTarget
+        ? collectAoeTargets(session.entity, blastRadius, session.entity.id)
+        : collectAoeTargets(primary, blastRadius, session.entity.id)
+      : [primary];
   }
 
-  const range = distance(session.entity.x, session.entity.y, target.x, target.y);
-  if (!skill.selfTarget && range > skill.range) {
-    return { type: "error", code: "out_of_range", message: "Target out of range" };
+  if ((isAoe || skill.targetingType === "GROUND_CIRCLE" || skill.targetingType === "SKILLSHOT_CONE") &&
+      targets.length === 0 && !directionalProjectile) {
+    return { type: "error", code: "no_targets", message: "No targets in range" };
+  }
+
+  // Linear projectile may fire into empty air
+  if (skill.targetingType === "SKILLSHOT_LINEAR" && !directionalProjectile && targets.length === 0) {
+    return { type: "error", code: "no_targets", message: "No targets in range" };
   }
 
   session.entity.mp -= skill.manaCost;
-  session.skillReadyAt[skillId] = now + skill.cooldownMs;
+  const asMult = attackSpeedMult(session, now);
+  const as = Math.max(0.5, (session.entity.attackSpeed + (weapon?.attackSpeedBonus ?? 0)) * asMult);
+  const cdScale = Math.max(0.5, 1 / as);
+  session.skillReadyAt[skillId] = now + skill.cooldownMs * cdScale;
 
-  let hpAfter = target.hp;
-  let damage = 0;
-  if (skill.heal > 0) {
-    target.hp = Math.min(target.maxHp, target.hp + skill.heal);
-    hpAfter = target.hp;
-  } else {
-    damage = Math.max(1, session.entity.atk + skill.damage - target.def);
-    target.hp = Math.max(0, target.hp - damage);
-    hpAfter = target.hp;
+  const movedEntities: { id: string; x: number; y: number }[] = [];
+  let moved = false;
+
+  if (skill.movement?.kind === "dash") {
+    applyDash(session, skill.movement.tiles);
+    moved = true;
+    movedEntities.push({ id: session.entity.id, x: session.entity.x, y: session.entity.y });
   }
 
-  return { ok: true, damage, hpAfter, mpAfter: session.entity.mp, targetId: resolvedTargetId };
+  if ((skill.movement?.kind === "shove" || skill.movement?.kind === "pull") && primary) {
+    if (!hasShoveResist(primary.id, now)) {
+      const dir = skill.movement.kind === "shove"
+        ? dirFromTo(session.entity.x, session.entity.y, primary.x, primary.y)
+        : dirFromTo(primary.x, primary.y, session.entity.x, session.entity.y);
+      if (stepEntity(primary, dir.dx, dir.dy, skill.movement.tiles)) {
+        movedEntities.push({ id: primary.id, x: primary.x, y: primary.y });
+        lockPlayerMove(primary.id, now);
+      }
+    }
+  }
+
+  if (skill.status && skill.status.durationMs > 0 && skill.selfTarget) {
+    const focusElement = skill.id === "elemental_focus"
+      ? resolveAttackElement(session, { ...skill, id: "auto_attack" }, weapon)
+      : skill.status.element;
+    const status = statusFromDef(skill.status, now, focusElement);
+    applyStatusToTarget(session.entity.id, status, true, session);
+  }
+
+  const useProjectile = directionalProjectile || needsProjectile(skill, weapon);
+  let pendingStatus: StatusInstance | null = null;
+  let statusDurationMs = 0;
+  if (skill.status && skill.status.durationMs > 0 && !skill.selfTarget) {
+    statusDurationMs = skill.status.durationMs;
+    pendingStatus = statusFromDef(skill.status, now, skill.status.element);
+    if (!useProjectile && primary) {
+      applyStatusToTarget(primary.id, pendingStatus, false, session);
+      // apply to all cone/aoe targets
+      for (const t of targets) {
+        if (t.id !== primary.id) {
+          applyStatusToTarget(t.id, { ...pendingStatus, id: pendingStatus.id }, false, session);
+        }
+      }
+      pendingStatus = null;
+      statusDurationMs = 0;
+    }
+  }
+
+  const hits: CastHit[] = [];
+  const pendingHits: { targetId: string; damage: number; crit: boolean }[] = [];
+
+  for (const target of targets) {
+    if (skill.heal > 0 || (skill.healMp ?? 0) > 0) {
+      if (target.id !== session.entity.id && !skill.selfTarget) {
+        continue;
+      }
+      target.hp = Math.min(target.maxHp, target.hp + skill.heal);
+      if (skill.selfTarget) {
+        session.entity.mp = Math.min(session.entity.maxMp, session.entity.mp + (skill.healMp ?? 0));
+      }
+      hits.push({ targetId: target.id, damage: skill.heal, hpAfter: target.hp, crit: false });
+      continue;
+    }
+
+    if (skill.damage <= 0 && skill.damageType !== "maxHpPercent" && skill.damageType !== "aoe") {
+      hits.push({ targetId: target.id, damage: 0, hpAfter: target.hp, crit: false });
+      continue;
+    }
+
+    if (skill.damage > 0 || skill.damageType === "maxHpPercent" || skill.damageType === "aoe") {
+      const { damage, crit } = computeDamage(session, target, skill, weapon, now, !useProjectile);
+      if (useProjectile && !directionalProjectile) {
+        pendingHits.push({ targetId: target.id, damage, crit });
+      } else if (!directionalProjectile) {
+        target.hp = Math.max(0, target.hp - damage);
+        hits.push({ targetId: target.id, damage, hpAfter: target.hp, crit });
+      }
+    }
+  }
+
+  if (!useProjectile && hits.length === 0 && primary) {
+    hits.push({ targetId: primary.id, damage: 0, hpAfter: primary.hp, crit: false });
+  }
+  if (!useProjectile && hits.length === 0 && !primary && skill.selfTarget) {
+    hits.push({ targetId: session.entity.id, damage: 0, hpAfter: session.entity.hp, crit: false });
+  }
+
+  return {
+    ok: true,
+    hits,
+    mpAfter: session.entity.mp,
+    moved,
+    movedEntities,
+    primaryTargetId: resolvedTargetId || session.entity.id,
+    aoe: isAoe || skill.targetingType === "GROUND_CIRCLE",
+    aimX,
+    aimY,
+    aoeRadius: skill.targetingType === "GROUND_CIRCLE" ? blastRadius : undefined,
+    projectile: useProjectile
+      ? {
+          speed: projectileSpeedOf(skill, weapon),
+          targetId: directionalProjectile ? "" : resolvedTargetId,
+          skillId,
+          vx: directionalProjectile ? dirDx : undefined,
+          vy: directionalProjectile ? dirDy : undefined,
+          maxRange: directionalProjectile ? skill.range : undefined,
+          width: directionalProjectile ? (skill.width ?? 0.7) : undefined,
+          pendingHits,
+          pendingStatus,
+          statusDurationMs,
+        }
+      : undefined,
+  };
+}
+
+export function applyPendingHit(
+  targetId: string,
+  damage: number,
+  crit: boolean,
+  skillId: string,
+  now: number,
+): CastHit | null {
+  const target = findEntityHook(targetId);
+  if (!target || target.hp <= 0) {
+    return null;
+  }
+  const skill = skillById(skillId);
+  const scaling = skill?.scaling ?? "atk";
+  const finalDmg = absorbShield(targetId, damage, scaling, now);
+  target.hp = Math.max(0, target.hp - finalDmg);
+  return { targetId, damage: finalDmg, hpAfter: target.hp, crit };
+}
+
+/** Live skillshot collision: compute + apply damage from caster session. */
+export function hitFromCaster(
+  casterId: string,
+  targetId: string,
+  skillId: string,
+  now: number,
+): CastHit | null {
+  const caster = getPlayersHook().find((p) => p.entity.id === casterId);
+  const target = findEntityHook(targetId);
+  const skill = skillById(skillId);
+  if (!caster || !target || !skill || target.hp <= 0) {
+    return null;
+  }
+  const weapon = weaponById(caster.equippedWeaponId);
+  const { damage, crit } = computeDamage(caster, target, skill, weapon, now, true);
+  target.hp = Math.max(0, target.hp - damage);
+  return { targetId, damage, hpAfter: target.hp, crit };
+}
+
+export function findHostilesNearPoint(x: number, y: number, radius: number, excludeId: string): Entity[] {
+  return listHostilesHook().filter((entity) => {
+    if (entity.id === excludeId || entity.hp <= 0) {
+      return false;
+    }
+    return Math.hypot(entity.x - x, entity.y - y) <= radius + (entity.hitRadius || 0.4);
+  });
+}
+
+export function applyStatusOnHit(targetId: string, status: StatusInstance, durationMs: number, now: number): void {
+  const applied: StatusInstance = { ...status, until: now + durationMs };
+  const playerTarget = getPlayersHook().find((p) => p.entity.id === targetId);
+  if (playerTarget) {
+    playerTarget.statuses = playerTarget.statuses.filter((s) => s.id !== applied.id);
+    playerTarget.statuses.push(applied);
+    return;
+  }
+  attachMonsterStatus(targetId, applied);
 }

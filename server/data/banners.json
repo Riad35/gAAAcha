@@ -1,0 +1,16 @@
+[
+  {
+    "id": "starter",
+    "name": "Starter Banner",
+    "hardPity": 80,
+    "softPityStart": 50,
+    "baseSsrRate": 0.02,
+    "softStep": 0.02,
+    "baseSrRate": 0.1,
+    "pool": {
+      "ssr": ["char_aurel"],
+      "sr": ["char_nyla"],
+      "r": ["item_dust"]
+    }
+  }
+]

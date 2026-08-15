@@ -1,0 +1,20 @@
+[
+  {
+    "id": "char_aurel",
+    "name": "Aurel",
+    "rarity": "ssr",
+    "kind": "character"
+  },
+  {
+    "id": "char_nyla",
+    "name": "Nyla",
+    "rarity": "sr",
+    "kind": "character"
+  },
+  {
+    "id": "item_dust",
+    "name": "Star Dust",
+    "rarity": "r",
+    "kind": "material"
+  }
+]

@@ -1,0 +1,23 @@
+[
+  {
+    "id": "spirit_ember",
+    "name": "Ember Spirit",
+    "element": "fire",
+    "elemDmgBonus": 0.15,
+    "resistBonus": { "fire": 10 }
+  },
+  {
+    "id": "spirit_tide",
+    "name": "Tide Spirit",
+    "element": "water",
+    "elemDmgBonus": 0.15,
+    "resistBonus": { "water": 10 }
+  },
+  {
+    "id": "spirit_gale",
+    "name": "Gale Spirit",
+    "element": "wind",
+    "elemDmgBonus": 0.12,
+    "resistBonus": { "wind": 10 }
+  }
+]

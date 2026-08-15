@@ -14,6 +14,8 @@ type Incoming = {
   damage?: number;
   hpAfter?: number;
   mpAfter?: number;
+  results?: unknown[];
+  pity?: { count: number };
 };
 
 function send(ws: WebSocket, payload: unknown): void {
@@ -32,17 +34,20 @@ let seenMove = false;
 let seenSkill = false;
 let seenMana = false;
 let seenError = false;
+let seenGacha = false;
 
 ws.on("open", async () => {
   console.log("connected", url);
   await wait(400);
-  send(ws, { type: "request_move", x: 3, y: 6 });
+  send(ws, { type: "request_move", x: 4, y: 10 });
   await wait(200);
   if (monsterId) {
     send(ws, { type: "cast_skill", skillId: "shot", targetId: monsterId });
   }
   await wait(200);
   send(ws, { type: "cast_skill", skillId: "shot", targetId: monsterId || "missing" });
+  await wait(200);
+  send(ws, { type: "request_gacha", bannerId: "starter", count: 1 });
   await wait(400);
   ws.close();
 });
@@ -66,14 +71,17 @@ ws.on("message", (buf) => {
   if (msg.type === "error" && msg.code === "on_cooldown") {
     seenError = true;
   }
+  if (msg.type === "sync_gacha" && msg.results?.length === 1 && msg.pity) {
+    seenGacha = true;
+  }
 });
 
 ws.on("close", () => {
-  const ok = seenState && seenMove && seenSkill && seenMana && seenError;
+  const ok = seenState && seenMove && seenSkill && seenMana && seenError && seenGacha;
   console.log(
     ok
-      ? "test-client ok: sync_state, sync_move, sync_skill, mpAfter, on_cooldown"
-      : `test-client incomplete state=${seenState} move=${seenMove} skill=${seenSkill} mana=${seenMana} cooldown=${seenError}`,
+      ? "test-client ok: sync_state, sync_move, sync_skill, mpAfter, on_cooldown, sync_gacha"
+      : `test-client incomplete state=${seenState} move=${seenMove} skill=${seenSkill} mana=${seenMana} cooldown=${seenError} gacha=${seenGacha}`,
   );
   process.exit(ok ? 0 : 1);
 });

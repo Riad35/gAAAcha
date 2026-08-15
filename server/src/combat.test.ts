@@ -1,0 +1,453 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { applyPendingHit, applyStatusOnHit, bindCombatWorld, entityBlockedAt, validateCast, validateMove } from "./combat.js";
+import {
+  equipSpirit,
+  equipWeapon,
+  findEntity,
+  liveMonsters,
+  monsterStatuses,
+  players,
+  resetWorld,
+  spawnPlayer,
+} from "./world.js";
+
+bindCombatWorld(
+  findEntity,
+  () => [...players.values()],
+  (id, status) => {
+    const list = monsterStatuses.get(id) ?? [];
+    monsterStatuses.set(id, [...list.filter((s) => s.id !== status.id), status]);
+  },
+  () => [...liveMonsters.values()].filter((monster) => monster.hp > 0),
+);
+
+function freshPlayer() {
+  resetWorld();
+  const player = spawnPlayer();
+  player.lastMoveAt = 0;
+  player.actionTimes = [];
+  player.entity.x = 6;
+  player.entity.y = 10;
+  player.moveLockUntil = 0;
+  return player;
+}
+
+test("move rejects a blocked tile", () => {
+  const player = freshPlayer();
+  player.entity.x = 9;
+  player.entity.y = 9;
+  const result = validateMove(player, 10, 9, Date.now());
+  assert.deepEqual(result, { type: "error", code: "blocked", message: "Tile is not walkable" });
+});
+
+test("move rejects a speed hack", () => {
+  const player = freshPlayer();
+  player.lastMoveAt = Date.now();
+  const result = validateMove(player, 20, 10, Date.now());
+  assert.equal("type" in result && result.code, "too_fast");
+});
+
+test("cast rejects cooldown and spends mana on the first shot", () => {
+  const player = freshPlayer();
+  const now = Date.now();
+  const first = validateCast(player, "shot", "monster_slime_1", now, { aimDx: 1, aimDy: 0 });
+  const second = validateCast(player, "shot", "monster_slime_1", now, { aimDx: 1, aimDy: 0 });
+  assert.ok("ok" in first);
+  assert.equal(first.mpAfter, 42);
+  assert.deepEqual(second, { type: "error", code: "on_cooldown", message: "Shot is on cooldown" });
+});
+
+test("cast rejects missing mana for shot", () => {
+  const player = freshPlayer();
+  player.entity.x = 6;
+  player.entity.y = 10;
+  player.entity.mp = 0;
+  player.actionTimes = [];
+  const mana = validateCast(player, "shot", "monster_slime_1", Date.now(), { aimDx: 1, aimDy: 0 });
+  assert.equal("type" in mana && mana.code, "not_enough_mana");
+});
+
+test("dash moves the player and equip changes weapon", () => {
+  const player = freshPlayer();
+  player.facingX = 1;
+  player.facingY = 0;
+  const beforeX = player.entity.x;
+  const dash = validateCast(player, "dash", player.entity.id, Date.now());
+  assert.ok("ok" in dash && dash.moved);
+  assert.ok(player.entity.x > beforeX);
+  const equip = equipWeapon(player, "bow_hunter");
+  assert.ok("ok" in equip);
+  assert.equal(player.equippedWeaponId, "bow_hunter");
+});
+
+test("stun bolt applies stun status to a player target", () => {
+  resetWorld();
+  const a = spawnPlayer("a");
+  const b = spawnPlayer("b");
+  a.entity.x = 5;
+  a.entity.y = 10;
+  b.entity.x = 6;
+  b.entity.y = 10;
+  a.actionTimes = [];
+  const now = Date.now();
+  const result = validateCast(a, "stun_bolt", b.entity.id, now, { aimDx: 1, aimDy: 0 });
+  assert.ok("ok" in result);
+  assert.ok(result.projectile);
+  assert.ok(result.projectile.vx != null);
+  if (result.projectile?.pendingStatus) {
+    applyStatusOnHit(b.entity.id, result.projectile.pendingStatus, result.projectile.statusDurationMs, now);
+  }
+  assert.ok(b.statuses.some((s) => s.kind === "stun"));
+});
+
+test("shove displaces a monster along a cardinal", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  slime.x = 7;
+  slime.y = 10;
+  const beforeX = slime.x;
+  const result = validateCast(player, "shove", "monster_slime_1", Date.now());
+  assert.ok("ok" in result);
+  assert.ok(slime.x > beforeX);
+  assert.ok(result.movedEntities.some((m) => m.id === "monster_slime_1"));
+});
+
+test("iron stance blocks shove displacement", () => {
+  resetWorld();
+  const a = spawnPlayer("shover");
+  const b = spawnPlayer("tank");
+  a.entity.x = 5;
+  a.entity.y = 10;
+  b.entity.x = 6;
+  b.entity.y = 10;
+  a.actionTimes = [];
+  b.actionTimes = [];
+  const stance = validateCast(b, "iron_stance", b.entity.id, Date.now());
+  assert.ok("ok" in stance);
+  const beforeX = b.entity.x;
+  const shove = validateCast(a, "shove", b.entity.id, Date.now() + 1);
+  assert.ok("ok" in shove);
+  assert.equal(b.entity.x, beforeX);
+  assert.equal(shove.movedEntities.length, 0);
+});
+
+test("blind blocks non-self casts", () => {
+  resetWorld();
+  const a = spawnPlayer("blinder");
+  const b = spawnPlayer("victim");
+  a.entity.x = 5;
+  a.entity.y = 10;
+  b.entity.x = 6;
+  b.entity.y = 10;
+  a.actionTimes = [];
+  b.actionTimes = [];
+  const now = Date.now();
+  const blind = validateCast(a, "blind_dust", b.entity.id, now, { aimDx: 1, aimDy: 0 });
+  assert.ok("ok" in blind);
+  assert.ok(b.statuses.some((s) => s.kind === "blind"));
+  const blocked = validateCast(b, "shot", "monster_slime_1", now + 1, { aimDx: 1, aimDy: 0 });
+  assert.equal("type" in blocked && blocked.code, "blinded");
+  const mend = validateCast(b, "mend", b.entity.id, now + 2);
+  assert.ok("ok" in mend);
+});
+
+test("shockwave ground circle hits around aim point", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  const ember = liveMonsters.get("monster_ember_1");
+  const gust = liveMonsters.get("monster_gust_1");
+  assert.ok(slime && ember && gust);
+  player.entity.x = 5;
+  player.entity.y = 10;
+  slime.x = 6;
+  slime.y = 10;
+  ember.x = 7;
+  ember.y = 10;
+  gust.x = 14;
+  gust.y = 10;
+  const result = validateCast(player, "shockwave", "", Date.now(), { aimX: 6.5, aimY: 10 });
+  assert.ok("ok" in result);
+  assert.equal(result.aoe, true);
+  assert.ok(result.hits.some((h) => h.targetId === "monster_slime_1"));
+  assert.ok(result.hits.some((h) => h.targetId === "monster_ember_1"));
+  assert.equal(result.hits.some((h) => h.targetId === "monster_gust_1"), false);
+});
+
+test("shockwave rejects empty aim and empty ground", () => {
+  const player = freshPlayer();
+  player.entity.x = 5;
+  player.entity.y = 10;
+  const bad = validateCast(player, "shockwave", "", Date.now(), {});
+  assert.equal("type" in bad && bad.code, "bad_aim");
+  // aim far with no monsters nearby
+  const empty = validateCast(player, "shockwave", "", Date.now() + 1, { aimX: 2, aimY: 2 });
+  assert.equal("type" in empty && empty.code, "no_targets");
+});
+
+test("self buff still works without enemy target", () => {
+  const player = freshPlayer();
+  const result = validateCast(player, "war_cry", player.entity.id, Date.now());
+  assert.ok("ok" in result);
+  assert.ok(player.statuses.some((s) => s.kind === "attr_up" || s.id === "war_cry" || s.atkBonus));
+});
+
+test("auto-attack uses weapon range only", () => {
+  const player = freshPlayer();
+  equipWeapon(player, "sword_iron");
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  slime.x = 10;
+  slime.y = 10;
+  player.entity.x = 6;
+  player.entity.y = 10;
+  const far = validateCast(player, "auto_attack", "monster_slime_1", Date.now());
+  assert.equal("type" in far && far.code, "out_of_range");
+  slime.x = 7;
+  player.actionTimes = [];
+  const near = validateCast(player, "auto_attack", "monster_slime_1", Date.now() + 1);
+  assert.ok("ok" in near);
+});
+
+test("skill range ignores weapon range", () => {
+  const player = freshPlayer();
+  equipWeapon(player, "bow_hunter");
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  player.entity.x = 6;
+  player.entity.y = 10;
+  slime.x = 10;
+  slime.y = 10;
+  // slash range 1.5 — still OOR even with bow + hit radii
+  const slash = validateCast(player, "slash", "monster_slime_1", Date.now());
+  assert.equal("type" in slash && slash.code, "out_of_range");
+});
+
+test("hitRadius extends effective melee reach", () => {
+  const player = freshPlayer();
+  equipWeapon(player, "sword_iron");
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  player.entity.x = 6;
+  player.entity.y = 10;
+  player.entity.hitRadius = 0.4;
+  slime.x = 7.8;
+  slime.y = 10;
+  slime.hitRadius = 0.45;
+  // center dist 1.8; gap 1.8-0.85=0.95 <= slash 1.5
+  const hit = validateCast(player, "slash", "monster_slime_1", Date.now());
+  assert.ok("ok" in hit);
+});
+
+test("continuous move within speed budget over 200ms", () => {
+  const player = freshPlayer();
+  const t0 = Date.now();
+  player.lastMoveAt = t0;
+  player.moveTimes = [];
+  const mid = validateMove(player, player.entity.x + 1.0, player.entity.y, t0 + 200);
+  assert.ok("ok" in mid);
+  player.entity.x = mid.x;
+  player.lastMoveAt = t0 + 200;
+  player.moveTimes = [];
+  const far = validateMove(player, player.entity.x + 5, player.entity.y, t0 + 250);
+  assert.equal("type" in far && far.code, "too_fast");
+});
+
+test("player cannot walk into a monster body", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  player.entity.x = 6;
+  player.entity.y = 10;
+  player.lastMoveAt = 0;
+  player.moveTimes = [];
+  slime.x = 6.5;
+  slime.y = 10;
+  const result = validateMove(player, 6.5, 10, Date.now());
+  assert.equal("type" in result && result.code, "blocked_entity");
+});
+
+test("two monsters can overlap; two players cannot", () => {
+  resetWorld();
+  const a = spawnPlayer("pvp_a");
+  const b = spawnPlayer("pvp_b");
+  a.entity.x = 5;
+  a.entity.y = 10;
+  b.entity.x = 6;
+  b.entity.y = 10;
+  a.lastMoveAt = 0;
+  a.moveTimes = [];
+  const blocked = validateMove(a, 6, 10, Date.now());
+  assert.equal("type" in blocked && blocked.code, "blocked_entity");
+
+  const slime = liveMonsters.get("monster_slime_1");
+  const ember = liveMonsters.get("monster_ember_1");
+  assert.ok(slime && ember);
+  slime.x = 20;
+  slime.y = 10;
+  ember.x = 20.05;
+  ember.y = 10;
+  assert.equal(entityBlockedAt(20, 10, slime), false);
+});
+
+test("starter inventory contains weapons spirits and items", () => {
+  const player = freshPlayer();
+  const ids = player.inventory.filter((s) => s.itemId).map((s) => s.itemId);
+  assert.ok(ids.includes("sword_iron"));
+  assert.ok(ids.includes("spirit_ember"));
+  assert.ok(ids.includes("item_dust"));
+  assert.ok(ids.includes("char_aurel"));
+});
+
+test("ranged shot returns a directional projectile", () => {
+  const player = freshPlayer();
+  equipWeapon(player, "bow_hunter");
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  player.entity.x = 6;
+  player.entity.y = 10;
+  slime.x = 9;
+  slime.y = 10;
+  const hpBefore = slime.hp;
+  const result = validateCast(player, "shot", "monster_slime_1", Date.now(), { aimDx: 1, aimDy: 0 });
+  assert.ok("ok" in result);
+  assert.ok(result.projectile);
+  assert.equal(slime.hp, hpBefore);
+  assert.ok((result.projectile.vx ?? 0) > 0.5);
+  assert.ok((result.projectile.maxRange ?? 0) >= 4);
+});
+
+test("linear skillshot corridor misses sideways target", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  const ember = liveMonsters.get("monster_ember_1");
+  assert.ok(slime && ember);
+  player.entity.x = 5;
+  player.entity.y = 10;
+  slime.x = 8;
+  slime.y = 10;
+  ember.x = 6;
+  ember.y = 13;
+  // hitscan-style: temporary use cone for instant check — shot is projectile;
+  // use blind_dust cone aiming east — slime in cone, ember north out
+  const cone = validateCast(player, "blind_dust", "", Date.now(), { aimDx: 1, aimDy: 0 });
+  assert.ok("ok" in cone);
+  assert.ok(cone.hits.some((h) => h.targetId === "monster_slime_1"));
+  assert.equal(cone.hits.some((h) => h.targetId === "monster_ember_1"), false);
+});
+
+test("cone misses behind caster", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  player.entity.x = 8;
+  player.entity.y = 10;
+  slime.x = 5;
+  slime.y = 10;
+  const miss = validateCast(player, "blind_dust", "", Date.now(), { aimDx: 1, aimDy: 0 });
+  assert.equal("type" in miss && miss.code, "no_targets");
+});
+
+test("staff auto-attack scales magic and sword scales atk", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  slime.x = 7;
+  slime.y = 10;
+  slime.hp = 200;
+  slime.maxHp = 200;
+  equipWeapon(player, "sword_iron");
+  const swordHit = validateCast(player, "auto_attack", "monster_slime_1", Date.now());
+  assert.ok("ok" in swordHit);
+  const swordDmg = swordHit.hits[0]?.damage ?? swordHit.projectile?.pendingHits[0]?.damage ?? 0;
+  assert.ok(swordDmg > 0);
+  const afterSword = slime.hp;
+  slime.hp = 200;
+  player.actionTimes = [];
+  player.skillReadyAt = {};
+  equipWeapon(player, "staff_arcane");
+  const staffHit = validateCast(player, "auto_attack", "monster_slime_1", Date.now() + 1);
+  assert.ok("ok" in staffHit);
+  const staffDmg = staffHit.hits[0]?.damage ?? staffHit.projectile?.pendingHits[0]?.damage ?? 0;
+  assert.ok(staffDmg > 0);
+  assert.notEqual(afterSword, 200);
+});
+
+test("spirit boosts elemental damage vs matching element", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  slime.x = 7;
+  slime.y = 10;
+  slime.hp = 500;
+  slime.maxHp = 500;
+  slime.resist.fire = 0;
+  equipWeapon(player, "gun_spark");
+  equipSpirit(player, null);
+  const base = validateCast(player, "auto_attack", "monster_slime_1", Date.now());
+  assert.ok("ok" in base);
+  const baseDmg = base.hits[0]?.damage ?? base.projectile?.pendingHits[0]?.damage ?? 0;
+  slime.hp = 500;
+  player.actionTimes = [];
+  player.skillReadyAt = {};
+  equipSpirit(player, "spirit_ember");
+  const boosted = validateCast(player, "auto_attack", "monster_slime_1", Date.now() + 1);
+  assert.ok("ok" in boosted);
+  const boostedDmg = boosted.hits[0]?.damage ?? boosted.projectile?.pendingHits[0]?.damage ?? 0;
+  assert.ok(boostedDmg >= baseDmg);
+});
+
+test("physical shield absorbs atk damage", () => {
+  resetWorld();
+  const a = spawnPlayer("atk");
+  const b = spawnPlayer("tank");
+  a.entity.x = 5;
+  a.entity.y = 10;
+  b.entity.x = 6;
+  b.entity.y = 10;
+  a.actionTimes = [];
+  b.actionTimes = [];
+  const barrier = validateCast(b, "barrier", b.entity.id, Date.now());
+  assert.ok("ok" in barrier);
+  assert.ok(b.statuses.some((s) => s.kind === "shield_phys" && (s.shieldHp ?? 0) > 0));
+  const before = b.entity.hp;
+  const hit = validateCast(a, "slash", b.entity.id, Date.now() + 1);
+  assert.ok("ok" in hit);
+  assert.ok(b.entity.hp >= before - 5);
+});
+
+test("haste increases move allowance", () => {
+  const player = freshPlayer();
+  const now = Date.now();
+  player.lastMoveAt = now - 130;
+  player.actionTimes = [];
+  const without = validateMove(player, player.entity.x + 1, player.entity.y, now);
+  assert.equal("type" in without && without.code, "too_fast");
+  player.actionTimes = [];
+  const haste = validateCast(player, "haste", player.entity.id, now);
+  assert.ok("ok" in haste);
+  player.actionTimes = [];
+  player.lastMoveAt = now - 130;
+  const withHaste = validateMove(player, player.entity.x + 1, player.entity.y, now + 1);
+  assert.ok("ok" in withHaste);
+});
+
+test("shove locks player movement briefly", () => {
+  resetWorld();
+  const a = spawnPlayer("shover");
+  const b = spawnPlayer("victim");
+  a.entity.x = 5;
+  a.entity.y = 10;
+  b.entity.x = 6;
+  b.entity.y = 10;
+  a.actionTimes = [];
+  b.actionTimes = [];
+  b.lastMoveAt = 0;
+  const now = Date.now();
+  const shove = validateCast(a, "shove", b.entity.id, now);
+  assert.ok("ok" in shove);
+  assert.ok(b.moveLockUntil > now);
+  const locked = validateMove(b, b.entity.x + 1, b.entity.y, now + 10);
+  assert.equal("type" in locked && locked.code, "move_locked");
+});

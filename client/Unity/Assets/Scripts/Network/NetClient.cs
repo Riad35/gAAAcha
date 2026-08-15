@@ -46,11 +46,6 @@ public sealed class NetClient
             $"{{\"type\":\"request_gacha\",\"bannerId\":\"{bannerId}\",\"count\":{count}}}");
     }
 
-    public Task SendRawAsync(string json)
-    {
-        return SendAsync(json);
-    }
-
     public async Task DisconnectAsync()
     {
         var socket = _socket;
