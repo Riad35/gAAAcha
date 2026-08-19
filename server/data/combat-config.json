@@ -1,0 +1,23 @@
+{
+  "mitigationK": 50,
+  "critDamageDefault": 1.5,
+  "damageVarianceMin": 0.95,
+  "damageVarianceMax": 1.05,
+  "hitChanceMin": 0.05,
+  "hitChanceMax": 0.95,
+  "element": {
+    "advantageDamage": 0.25,
+    "disadvantageDamage": -0.15,
+    "advantageResMul": 0.5,
+    "resClampMax": 0.75,
+    "cycle": ["water", "fire", "wind", "earth"],
+    "duality": [["light", "shadow"], ["shadow", "light"]]
+  },
+  "transform": {
+    "durationSec": 10,
+    "gaugeFromDamageDealt": 0.02,
+    "gaugeFromDamageTaken": 0.01
+  },
+  "tickHz": 12,
+  "sessionTtlSec": 900
+}

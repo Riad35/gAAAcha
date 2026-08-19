@@ -1,4 +1,5 @@
 import type { ChatChannel, PlayerSession, ServerMessage } from "./types.js";
+import { DEFAULT_GUILD_ID, getPartyId, getPartyMembers } from "./party.js";
 import { players } from "./world.js";
 
 const lastChatAt = new Map<string, number>();
@@ -22,24 +23,6 @@ export function handleChat(
     return { messages: [], error: { type: "error", code: "rate_limited", message: "Chat too fast" } };
   }
   lastChatAt.set(session.entity.id, now);
-
-  if (channel === "guild") {
-    return {
-      messages: [
-        {
-          wsId: session.entity.id,
-          msg: {
-            type: "sync_chat",
-            channel: "guild",
-            fromId: "system",
-            fromName: "System",
-            text: "Guild chat is not available yet.",
-            serverTime: now,
-          },
-        },
-      ],
-    };
-  }
 
   const payload: ServerMessage = {
     type: "sync_chat",
@@ -72,12 +55,45 @@ export function handleChat(
     };
   }
 
+  if (channel === "party") {
+    const partyId = getPartyId(session.entity.id);
+    if (!partyId) {
+      return {
+        messages: [
+          {
+            wsId: session.entity.id,
+            msg: {
+              type: "sync_chat",
+              channel: "party",
+              fromId: "system",
+              fromName: "System",
+              text: "You are not in a party.",
+              serverTime: now,
+            },
+          },
+        ],
+      };
+    }
+    return {
+      messages: getPartyMembers(partyId).map((wsId) => ({ wsId, msg: payload })),
+    };
+  }
+
+  if (channel === "guild") {
+    const guildId = session.guildId ?? DEFAULT_GUILD_ID;
+    const recipients = [...players.values()]
+      .filter((p) => (p.guildId ?? DEFAULT_GUILD_ID) === guildId)
+      .map((p) => p.entity.id);
+    return {
+      messages: recipients.map((wsId) => ({ wsId, msg: payload })),
+    };
+  }
+
   const recipients: string[] = [];
   for (const other of players.values()) {
     if (channel === "map" && other.entity.mapId !== session.entity.mapId) {
       continue;
     }
-    // world + server: all connected
     recipients.push(other.entity.id);
   }
 

@@ -10,7 +10,7 @@ import type {
   ServerMessage,
 } from "./types.js";
 
-export const INVENTORY_SIZE = 20;
+export const INVENTORY_SIZE = 144;
 export type Rng = () => number;
 
 export function emptyInventory(size = INVENTORY_SIZE): InventorySlot[] {
@@ -19,6 +19,28 @@ export function emptyInventory(size = INVENTORY_SIZE): InventorySlot[] {
     itemId: null,
     quantity: 0,
   }));
+}
+
+/** Expand/truncate legacy saves to INVENTORY_SIZE. */
+export function padInventory(slots?: InventorySlot[] | null): InventorySlot[] {
+  const out = emptyInventory();
+  if (!slots?.length) {
+    return out;
+  }
+  for (const s of slots) {
+    if (!s || typeof s.slotIndex !== "number") {
+      continue;
+    }
+    if (s.slotIndex < 0 || s.slotIndex >= INVENTORY_SIZE) {
+      continue;
+    }
+    out[s.slotIndex] = {
+      slotIndex: s.slotIndex,
+      itemId: s.itemId ?? null,
+      quantity: s.quantity ?? 0,
+    };
+  }
+  return out;
 }
 
 /** Gray-box starter: all current weapons, spirits, characters, dust. */

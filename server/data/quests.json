@@ -1,0 +1,209 @@
+[
+  {
+    "id": "q_meet_trainer",
+    "name": "Meet the Trainer",
+    "giverNpcId": "npc_quest_mira",
+    "turnInNpcId": "npc_trainer",
+    "steps": [
+      {
+        "kind": "talk",
+        "npcId": "npc_trainer",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 30,
+      "items": [
+        {
+          "itemId": "item_homestone",
+          "quantity": 1
+        }
+      ]
+    },
+    "dialogue": "Speak with Trainer Kael in the square."
+  },
+  {
+    "id": "q_clear_pests",
+    "name": "Clear the Pests",
+    "giverNpcId": "npc_quest_ryn",
+    "turnInNpcId": "npc_quest_ryn",
+    "steps": [
+      {
+        "kind": "kill",
+        "monsterType": "pest",
+        "count": 3
+      }
+    ],
+    "rewards": {
+      "gold": 50,
+      "items": [
+        {
+          "itemId": "item_dust",
+          "quantity": 3
+        }
+      ]
+    },
+    "dialogue": "Slay 3 Ridge Pests beyond the east gate."
+  },
+  {
+    "id": "q_deliver_stew",
+    "name": "Hot Delivery",
+    "giverNpcId": "npc_cook",
+    "turnInNpcId": "npc_quest_mira",
+    "steps": [
+      {
+        "kind": "deliver",
+        "itemId": "item_stew",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 40,
+      "items": [
+        {
+          "itemId": "item_bread",
+          "quantity": 2
+        }
+      ]
+    },
+    "dialogue": "Buy stew from Cook Maro and bring it to Sister Mira."
+  },
+  {
+    "id": "q_tower_ascend",
+    "name": "Ascend the Tower",
+    "giverNpcId": "npc_tower_ascend",
+    "turnInNpcId": "npc_tower_ascend",
+    "steps": [
+      {
+        "kind": "talk",
+        "npcId": "npc_tower_ascend",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 20,
+      "items": [
+        {
+          "itemId": "item_ration",
+          "quantity": 2
+        }
+      ]
+    },
+    "dialogue": "Enter the Tower gate north of town and begin your ascent."
+  },
+  {
+    "id": "q_tower_f1",
+    "name": "Floor 1 Clearance",
+    "giverNpcId": "npc_tower_ascend",
+    "turnInNpcId": "npc_tower_ascend",
+    "steps": [
+      {
+        "kind": "kill",
+        "monsterType": "tower_rat",
+        "count": 3
+      }
+    ],
+    "rewards": {
+      "gold": 60,
+      "items": [
+        {
+          "itemId": "item_dust",
+          "quantity": 5
+        }
+      ]
+    },
+    "dialogue": "Slay 3 Tower Rats on Floor 1 and report back."
+  },
+  {
+    "id": "q_tower_f2",
+    "name": "Floor 2 Warden",
+    "giverNpcId": "npc_town2_quest",
+    "turnInNpcId": "npc_town2_quest",
+    "steps": [
+      {
+        "kind": "kill",
+        "monsterType": "tower_boss_f2",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 120,
+      "items": [
+        {
+          "itemId": "item_stew",
+          "quantity": 2
+        }
+      ]
+    },
+    "dialogue": "Defeat the Floor 2 Warden."
+  },
+  {
+    "id": "q_tower_f3",
+    "name": "Floor 3 Cull",
+    "giverNpcId": "npc_town2_quest",
+    "turnInNpcId": "npc_town2_quest",
+    "steps": [
+      {
+        "kind": "kill",
+        "monsterType": "tower_brute",
+        "count": 2
+      }
+    ],
+    "rewards": {
+      "gold": 100,
+      "items": [
+        {
+          "itemId": "item_bread",
+          "quantity": 3
+        }
+      ]
+    },
+    "dialogue": "Cull 2 Stone Brutes on Floor 3."
+  },
+  {
+    "id": "q_tower_f4",
+    "name": "Ash Knight Hunt",
+    "giverNpcId": "npc_town3_quest",
+    "turnInNpcId": "npc_town3_quest",
+    "steps": [
+      {
+        "kind": "kill",
+        "monsterType": "tower_knight",
+        "count": 2
+      }
+    ],
+    "rewards": {
+      "gold": 140,
+      "items": [
+        {
+          "itemId": "item_ration",
+          "quantity": 3
+        }
+      ]
+    },
+    "dialogue": "Defeat 2 Ash Knights on Floor 4."
+  },
+  {
+    "id": "q_tower_f5",
+    "name": "Apex Conquered",
+    "giverNpcId": "npc_town3_quest",
+    "turnInNpcId": "npc_tower_ascend",
+    "steps": [
+      {
+        "kind": "kill",
+        "monsterType": "tower_boss_f5",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 300,
+      "items": [
+        {
+          "itemId": "item_dust",
+          "quantity": 20
+        }
+      ]
+    },
+    "dialogue": "Defeat the Tower Apex and return to Rhea."
+  }
+]

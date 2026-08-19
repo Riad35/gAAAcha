@@ -23,6 +23,7 @@ client/Unity/**/Temp/
 client/Unity/**/Logs/
 client/Unity/**/UserSettings/
 client/Unity/**/obj/
+client/Unity/**/Assets/_ToReview/
 *.csproj
 *.sln
 *.slnx

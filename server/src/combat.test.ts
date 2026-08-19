@@ -27,6 +27,7 @@ function freshPlayer() {
   const player = spawnPlayer();
   player.lastMoveAt = 0;
   player.actionTimes = [];
+  player.entity.mapId = "field_ridge";
   player.entity.x = 6;
   player.entity.y = 10;
   player.moveLockUntil = 0;
@@ -51,10 +52,11 @@ test("move rejects a speed hack", () => {
 test("cast rejects cooldown and spends mana on the first shot", () => {
   const player = freshPlayer();
   const now = Date.now();
+  const before = player.entity.mp;
   const first = validateCast(player, "shot", "monster_slime_1", now, { aimDx: 1, aimDy: 0 });
   const second = validateCast(player, "shot", "monster_slime_1", now, { aimDx: 1, aimDy: 0 });
   assert.ok("ok" in first);
-  assert.equal(first.mpAfter, 42);
+  assert.equal(first.mpAfter, before - 8);
   assert.deepEqual(second, { type: "error", code: "on_cooldown", message: "Shot is on cooldown" });
 });
 
@@ -345,6 +347,12 @@ test("cone misses behind caster", () => {
   player.entity.y = 10;
   slime.x = 5;
   slime.y = 10;
+  for (const m of liveMonsters.values()) {
+    if (m.id !== "monster_slime_1" && m.mapId === "field_ridge") {
+      m.x = 1;
+      m.y = 1;
+    }
+  }
   const miss = validateCast(player, "blind_dust", "", Date.now(), { aimDx: 1, aimDy: 0 });
   assert.equal("type" in miss && miss.code, "no_targets");
 });

@@ -1,8 +1,10 @@
-import { defaultMap, skillById, spiritById, weaponById } from "./data.js";
+import { mapById, skillById, spiritById, weaponById } from "./data.js";
+import { resolveBaseMapId } from "./instance.js";
 import type {
   AttrName,
   Element,
   Entity,
+  MapDef,
   PlayerSession,
   Scaling,
   ServerMessage,
@@ -18,18 +20,29 @@ const SHOVE_MOVE_LOCK_MS = 250;
 let findEntityHook: (id: string) => Entity | undefined = () => undefined;
 let getPlayersHook: () => PlayerSession[] = () => [];
 let listHostilesHook: () => Entity[] = () => [];
+let listNpcsHook: () => Entity[] = () => [];
 let attachMonsterStatus: (id: string, status: StatusInstance) => void = () => undefined;
+let clampImmortalHook: (entity: Entity) => void = () => undefined;
 
 export function bindCombatWorld(
   findEntity: (id: string) => Entity | undefined,
   getPlayers: () => PlayerSession[],
   attachStatus: (id: string, status: StatusInstance) => void,
   listHostiles: () => Entity[] = () => [],
+  listNpcs: () => Entity[] = () => [],
+  clampImmortal: (entity: Entity) => void = () => undefined,
 ): void {
   findEntityHook = findEntity;
   getPlayersHook = getPlayers;
   attachMonsterStatus = attachStatus;
   listHostilesHook = listHostiles;
+  listNpcsHook = listNpcs;
+  clampImmortalHook = clampImmortal;
+}
+
+function applyDamageHp(target: Entity, damage: number): void {
+  target.hp = Math.max(0, target.hp - damage);
+  clampImmortalHook(target);
 }
 
 export type CastHit = {
@@ -75,14 +88,18 @@ function distance(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(ax - bx, ay - by);
 }
 
-function inBounds(x: number, y: number): boolean {
-  return x >= 0 && y >= 0 && x <= defaultMap.width - 1 && y <= defaultMap.height - 1;
+function mapFor(entity: Entity): MapDef {
+  return mapById(resolveBaseMapId(entity.mapId)) ?? mapById("town_ashen")!;
 }
 
-function isBlocked(x: number, y: number): boolean {
+function inBounds(x: number, y: number, map: MapDef): boolean {
+  return x >= 0 && y >= 0 && x <= map.width - 1 && y <= map.height - 1;
+}
+
+function isBlocked(x: number, y: number, map: MapDef): boolean {
   const tx = Math.round(x);
   const ty = Math.round(y);
-  return defaultMap.blocked.some((tile) => tile.x === tx && tile.y === ty);
+  return map.blocked.some((tile) => tile.x === tx && tile.y === ty);
 }
 
 function rateLimited(session: PlayerSession, now: number): boolean {
@@ -113,10 +130,21 @@ export function rangeGap(a: Entity, b: Entity): number {
 }
 
 /** True if mover at (x,y) would overlap a blocking entity. Monster–monster ignored. */
-export function entityBlockedAt(x: number, y: number, mover: Entity): boolean {
+export function entityBlockedAt(
+  x: number,
+  y: number,
+  mover: Entity,
+  ignoreIds?: ReadonlySet<string> | string[],
+): boolean {
+  const ignore = ignoreIds
+    ? (ignoreIds instanceof Set ? ignoreIds : new Set(ignoreIds))
+    : null;
   const moverR = hitRadiusOf(mover);
   const overlaps = (other: Entity): boolean => {
-    if (other.id === mover.id || other.hp <= 0) {
+    if (other.id === mover.id || other.hp <= 0 || other.mapId !== mover.mapId) {
+      return false;
+    }
+    if (ignore?.has(other.id)) {
       return false;
     }
     if (mover.kind === "monster" && other.kind === "monster") {
@@ -132,6 +160,11 @@ export function entityBlockedAt(x: number, y: number, mover: Entity): boolean {
   }
   for (const monster of listHostilesHook()) {
     if (overlaps(monster)) {
+      return true;
+    }
+  }
+  for (const npc of listNpcsHook()) {
+    if (overlaps(npc)) {
       return true;
     }
   }
@@ -279,7 +312,8 @@ export function validateMove(
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     return { type: "error", code: "invalid_move", message: "Coordinates must be numbers" };
   }
-  if (!inBounds(x, y) || isBlocked(x, y)) {
+  const map = mapFor(session.entity);
+  if (!inBounds(x, y, map) || isBlocked(x, y, map)) {
     return { type: "error", code: "blocked", message: "Tile is not walkable" };
   }
   if (entityBlockedAt(x, y, session.entity)) {
@@ -297,15 +331,27 @@ export function validateMove(
   return { ok: true, x, y };
 }
 
-function stepEntity(entity: Entity, dx: number, dy: number, tiles: number): boolean {
+function stepEntity(
+  entity: Entity,
+  dx: number,
+  dy: number,
+  tiles: number,
+  ignoreIds?: ReadonlySet<string> | string[],
+): boolean {
   let moved = false;
-  for (let i = 0; i < tiles; i += 1) {
-    const nx = entity.x + dx;
-    const ny = entity.y + dy;
-    if (!inBounds(nx, ny) || isBlocked(nx, ny)) {
+  const map = mapFor(entity);
+  // Normalize to unit cardinal/diagonal steps so fractional dirs still advance.
+  const len = Math.hypot(dx, dy);
+  const stepX = len > 1e-6 ? dx / len : 0;
+  const stepY = len > 1e-6 ? dy / len : 0;
+  const steps = Math.max(1, Math.abs(tiles));
+  for (let i = 0; i < steps; i += 1) {
+    const nx = entity.x + stepX;
+    const ny = entity.y + stepY;
+    if (!inBounds(nx, ny, map) || isBlocked(nx, ny, map)) {
       break;
     }
-    if (entityBlockedAt(nx, ny, entity)) {
+    if (entityBlockedAt(nx, ny, entity, ignoreIds)) {
       break;
     }
     entity.x = nx;
@@ -445,14 +491,16 @@ function applyStatusToTarget(targetId: string, status: StatusInstance, selfTarge
 }
 
 function allCombatTargets(casterId: string): Entity[] {
+  const caster = findEntityHook(casterId);
+  const mapId = caster?.mapId;
   const out: Entity[] = [];
   for (const entity of listHostilesHook()) {
-    if (entity.id !== casterId && entity.hp > 0) {
+    if (entity.id !== casterId && entity.hp > 0 && (!mapId || entity.mapId === mapId)) {
       out.push(entity);
     }
   }
   for (const session of getPlayersHook()) {
-    if (session.entity.id !== casterId && session.entity.hp > 0) {
+    if (session.entity.id !== casterId && session.entity.hp > 0 && (!mapId || session.entity.mapId === mapId)) {
       out.push(session.entity);
     }
   }
@@ -634,6 +682,13 @@ export function validateCast(
   if (!skill) {
     return { type: "error", code: "unknown_skill", message: `Unknown skill ${skillId}` };
   }
+  if (
+    session.unlockedSkillIds.length > 0 &&
+    !session.unlockedSkillIds.includes(skillId) &&
+    skillId !== "auto_attack"
+  ) {
+    return { type: "error", code: "locked_skill", message: "Skill not unlocked" };
+  }
 
   if (!skill.selfTarget && isBlinded(session, now)) {
     return { type: "error", code: "blinded", message: "You are blinded" };
@@ -747,10 +802,12 @@ export function validateCast(
 
   if ((skill.movement?.kind === "shove" || skill.movement?.kind === "pull") && primary) {
     if (!hasShoveResist(primary.id, now)) {
+      // Ignore caster so adjacent melee shove isn't blocked by the player's hitbox.
+      const ignore = [session.entity.id];
       const dir = skill.movement.kind === "shove"
-        ? dirFromTo(session.entity.x, session.entity.y, primary.x, primary.y)
-        : dirFromTo(primary.x, primary.y, session.entity.x, session.entity.y);
-      if (stepEntity(primary, dir.dx, dir.dy, skill.movement.tiles)) {
+        ? { dx: primary.x - session.entity.x, dy: primary.y - session.entity.y }
+        : { dx: session.entity.x - primary.x, dy: session.entity.y - primary.y };
+      if (stepEntity(primary, dir.dx, dir.dy, skill.movement.tiles, ignore)) {
         movedEntities.push({ id: primary.id, x: primary.x, y: primary.y });
         lockPlayerMove(primary.id, now);
       }
@@ -811,6 +868,7 @@ export function validateCast(
         pendingHits.push({ targetId: target.id, damage, crit });
       } else if (!directionalProjectile) {
         target.hp = Math.max(0, target.hp - damage);
+        clampImmortalHook(target);
         hits.push({ targetId: target.id, damage, hpAfter: target.hp, crit });
       }
     }
@@ -866,6 +924,7 @@ export function applyPendingHit(
   const scaling = skill?.scaling ?? "atk";
   const finalDmg = absorbShield(targetId, damage, scaling, now);
   target.hp = Math.max(0, target.hp - finalDmg);
+  clampImmortalHook(target);
   return { targetId, damage: finalDmg, hpAfter: target.hp, crit };
 }
 
@@ -885,6 +944,7 @@ export function hitFromCaster(
   const weapon = weaponById(caster.equippedWeaponId);
   const { damage, crit } = computeDamage(caster, target, skill, weapon, now, true);
   target.hp = Math.max(0, target.hp - damage);
+  clampImmortalHook(target);
   return { targetId, damage, hpAfter: target.hp, crit };
 }
 

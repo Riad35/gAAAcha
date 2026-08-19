@@ -1,0 +1,174 @@
+[
+  {
+    "id": "shop_weapon",
+    "npcId": "npc_weapon",
+    "entries": [
+      {
+        "itemId": "sword_iron",
+        "buyPrice": 40,
+        "sellPrice": 15
+      },
+      {
+        "itemId": "dagger_twin",
+        "buyPrice": 45,
+        "sellPrice": 18
+      },
+      {
+        "itemId": "bow_hunter",
+        "buyPrice": 50,
+        "sellPrice": 20
+      },
+      {
+        "itemId": "staff_arcane",
+        "buyPrice": 55,
+        "sellPrice": 22
+      },
+      {
+        "itemId": "gun_spark",
+        "buyPrice": 60,
+        "sellPrice": 24
+      },
+      {
+        "itemId": "armor_leather",
+        "buyPrice": 35,
+        "sellPrice": 12
+      },
+      {
+        "itemId": "helm_cap",
+        "buyPrice": 20,
+        "sellPrice": 8
+      },
+      {
+        "itemId": "boots_leather",
+        "buyPrice": 22,
+        "sellPrice": 8
+      },
+      {
+        "itemId": "gloves_wrap",
+        "buyPrice": 18,
+        "sellPrice": 6
+      },
+      {
+        "itemId": "acc_ring",
+        "buyPrice": 40,
+        "sellPrice": 15
+      }
+    ]
+  },
+  {
+    "id": "shop_item",
+    "npcId": "npc_item",
+    "entries": [
+      {
+        "itemId": "item_dust",
+        "buyPrice": 5,
+        "sellPrice": 2
+      },
+      {
+        "itemId": "item_homestone",
+        "buyPrice": 25,
+        "sellPrice": 10
+      },
+      {
+        "itemId": "item_ration",
+        "buyPrice": 12,
+        "sellPrice": 4
+      }
+    ]
+  },
+  {
+    "id": "shop_cook",
+    "npcId": "npc_cook",
+    "entries": [
+      {
+        "itemId": "item_stew",
+        "buyPrice": 18,
+        "sellPrice": 6
+      },
+      {
+        "itemId": "item_bread",
+        "buyPrice": 8,
+        "sellPrice": 3
+      }
+    ]
+  },
+  {
+    "id": "shop_skill",
+    "npcId": "npc_skill",
+    "entries": [
+      {
+        "itemId": "item_skill_tome",
+        "buyPrice": 80,
+        "sellPrice": 30
+      }
+    ]
+  },
+  {
+    "id": "shop_cards",
+    "npcId": "npc_card_vendor",
+    "entries": [
+      {
+        "itemId": "card_fighter",
+        "buyPrice": 500,
+        "sellPrice": 100
+      },
+      {
+        "itemId": "card_mage",
+        "buyPrice": 500,
+        "sellPrice": 100
+      },
+      {
+        "itemId": "card_marksman",
+        "buyPrice": 500,
+        "sellPrice": 100
+      },
+      {
+        "itemId": "card_rogue",
+        "buyPrice": 500,
+        "sellPrice": 100
+      }
+    ]
+  },
+  {
+    "id": "shop_town2",
+    "npcId": "npc_town2_rest",
+    "entries": [
+      {
+        "itemId": "item_ration",
+        "buyPrice": 12,
+        "sellPrice": 4
+      },
+      {
+        "itemId": "item_bread",
+        "buyPrice": 8,
+        "sellPrice": 3
+      },
+      {
+        "itemId": "item_homestone",
+        "buyPrice": 25,
+        "sellPrice": 10
+      }
+    ]
+  },
+  {
+    "id": "shop_town3",
+    "npcId": "npc_town3_rest",
+    "entries": [
+      {
+        "itemId": "item_stew",
+        "buyPrice": 18,
+        "sellPrice": 6
+      },
+      {
+        "itemId": "item_ration",
+        "buyPrice": 12,
+        "sellPrice": 4
+      },
+      {
+        "itemId": "item_homestone",
+        "buyPrice": 25,
+        "sellPrice": 10
+      }
+    ]
+  }
+]

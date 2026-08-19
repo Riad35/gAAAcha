@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using UnityEngine;
@@ -45,10 +46,35 @@ public sealed class NetworkBootstrap : MonoBehaviour
         { "shockwave", new AimDef { Kind = AimKind.Ground, Range = 3.5f, AoeRadius = 2.5f } },
     };
 
-    private static readonly string[] ChatTabs = { "world", "server", "guild", "map" };
+    /// <summary>Client skill cast ranges (must match server skills.json; AA uses weapon).</summary>
+    private static readonly Dictionary<string, float> SkillRanges = new Dictionary<string, float>
+    {
+        { "auto_attack", 0f },
+        { "slash", 1.5f },
+        { "shot", 5f },
+        { "mend", 0f },
+        { "dash", 3f },
+        { "stun_bolt", 4f },
+        { "ember_dot", 3.5f },
+        { "war_cry", 0f },
+        { "shove", 1.5f },
+        { "pull", 4.5f },
+        { "blind_dust", 3.5f },
+        { "iron_stance", 0f },
+        { "shockwave", 3.5f },
+        { "power_chant", 0f },
+        { "haste", 0f },
+        { "barrier", 0f },
+        { "ward", 0f },
+        { "elemental_focus", 0f },
+    };
+
+    private static readonly string[] ChatTabs = { "world", "server", "guild", "party", "map" };
 
     private NetClient _net;
     private InputSender _input;
+    private PredictionReconciler _prediction = new PredictionReconciler();
+    private string _lastCastRequestId = "";
     private GrayBoxWorld _world;
     private VirtualJoystick _joystick;
     private float _x = 3f;
@@ -88,9 +114,28 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private readonly List<BuffView> _buffs = new List<BuffView>();
     private double _serverSkewMs;
     private string[] _skillIds = ClassSkills;
-    private bool _showInventory = true;
-    private readonly string[] _invSlots = new string[20];
-    private readonly int[] _invQty = new int[20];
+    private bool _showInventory = false;
+    private const int InvSize = 144;
+    private const int InvCols = 12;
+    private readonly string[] _invSlots = new string[InvSize];
+    private readonly int[] _invQty = new int[InvSize];
+    private Vector2 _invPanelPos = new Vector2(-1f, -1f);
+    private bool _invDragging;
+    private Vector2 _invDragOffset;
+    private string _armor = "none";
+    private string _helm = "none";
+    private string _boots = "none";
+    private string _gloves = "none";
+    private string _accessory = "none";
+    private string _playerLabel = "You";
+    private int _resPresetIndex;
+    private static readonly Vector2Int[] ResPresets =
+    {
+        new Vector2Int(1280, 720),
+        new Vector2Int(1600, 900),
+        new Vector2Int(1920, 1080),
+        new Vector2Int(0, 0), // native
+    };
 
     // Context menu
     private bool _showCtxMenu;
@@ -124,6 +169,99 @@ public sealed class NetworkBootstrap : MonoBehaviour
     // Coming soon toast
     private string _comingSoonToast = "";
     private float _comingSoonUntil;
+
+    // Party / guild
+    private string _partyInviteId = "";
+    private string _partyInviteFrom = "";
+    private float _partyInviteUntil;
+    private string _partyId = "";
+    private string _partyMembersLine = "";
+    private readonly List<string> _partyMemberIds = new List<string>();
+    private readonly List<string> _partyMemberNames = new List<string>();
+    private readonly List<int> _partyMemberHp = new List<int>();
+    private readonly List<int> _partyMemberMaxHp = new List<int>();
+    private readonly List<int> _partyMemberMp = new List<int>();
+    private readonly List<int> _partyMemberMaxMp = new List<int>();
+    private readonly List<int> _partyMemberLevel = new List<int>();
+    private readonly List<string> _partyMemberClass = new List<string>();
+    private string _guildName = "Ashen Legion";
+    private string _guildInviteId = "";
+    private string _guildInviteFrom = "";
+    private string _guildInviteName = "";
+    private float _guildInviteUntil;
+    private string _tradeInviteId = "";
+    private string _tradeInviteFrom = "";
+    private float _tradeInviteUntil;
+    private string _tradeId = "";
+    private int _tradeMyGold;
+    private int _tradeTheirGold;
+    private bool _tradeMyConfirm;
+    private bool _tradeTheirConfirm;
+    private string _tradeTheirName = "";
+    private string _tradeOfferSummary = "";
+    private bool _showFriends;
+    private bool _showSettings;
+    private readonly List<string> _friendNames = new List<string>();
+    private readonly List<string> _friendTokens = new List<string>();
+    private readonly List<bool> _friendOnline = new List<bool>();
+    private readonly List<string> _friendPlayerIds = new List<string>();
+    private string _guildCreateDraft = "My Guild";
+    private bool _showNameplates = true;
+    private float _uiScale = 1f;
+    private int _skillPoints;
+    private bool _showSkillTree;
+    private readonly List<string> _unlockableSkills = new List<string>();
+    private readonly List<string> _unlockedSkills = new List<string>();
+    private bool _showAuction;
+    private readonly List<string> _auctionIds = new List<string>();
+    private readonly List<string> _auctionLabels = new List<string>();
+    private long _instanceExpiresAt;
+    private int _bossPhase;
+    private readonly List<int> _tradeOfferSlots = new List<int>();
+    private readonly List<int> _tradeOfferQtys = new List<int>();
+    private string _auctionSellItem = "item_dust";
+
+    // Hub loop
+    private int _gold = 100;
+    private int _level = 1;
+    private int _xp;
+    private int _xpToLevel = 75;
+    private bool _charNameSet = true;
+    private string _charNameDraft = "Adventurer";
+    private bool _showLogin;
+    private string _loginUser = "";
+    private string _loginPass = "";
+    private string _authStatus = "";
+    // Gate: 0 login, 1 server, 2 chars, 3 in-world
+    private int _gatePhase;
+    private readonly List<string> _serverIds = new List<string>();
+    private readonly List<string> _serverNames = new List<string>();
+    private string _selectedServerId = "local";
+    private readonly bool[] _charEmpty = new bool[8];
+    private readonly string[] _charNames = new string[8];
+    private readonly string[] _charClasses = new string[8];
+    private readonly int[] _charLevels = new int[8];
+    private int _selectedSlot;
+    private bool _confirmDelete;
+    private string _classId = "adventurer";
+    private string _weapon2 = "none";
+    private int _towerFloor;
+    private bool _inWorld = true;
+    private bool _showQuestLog;
+    private string _questLogText = "";
+    private bool _showInteract;
+    private string _interactKind = "";
+    private string _interactLine = "";
+    private string _interactTargetId = "";
+    private string _shopId = "";
+    private readonly List<string> _shopItemIds = new List<string>();
+    private readonly List<int> _shopBuyPrices = new List<int>();
+    private readonly List<string> _questIds = new List<string>();
+    private readonly List<string> _questStates = new List<string>();
+    private readonly List<string> _questNames = new List<string>();
+    private readonly List<string> _portalIds = new List<string>();
+    private readonly List<float> _portalXs = new List<float>();
+    private readonly List<float> _portalYs = new List<float>();
 
     // Indicator-cast aim (empty = idle)
     private string _aimSkillId = "";
@@ -166,10 +304,22 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         _status = "Awake";
+        _gatePhase = 0;
+        _inWorld = false;
+        _uiScale = Mathf.Clamp(PlayerPrefs.GetFloat("gaaacha_ui_scale", 1f), 0.8f, 1.4f);
+        _resPresetIndex = PlayerPrefs.GetInt("gaaacha_res_preset", 2);
+        for (var i = 0; i < 8; i++)
+        {
+            _charEmpty[i] = true;
+            _charNames[i] = "";
+            _charClasses[i] = "";
+            _charLevels[i] = 1;
+        }
     }
 
     private async void Start()
     {
+        ApplyResolutionPreset(_resPresetIndex, savePrefs: false);
         _status = "connecting…";
         _net = new NetClient();
         _net.MessageReceived += msg => _inbox.Enqueue(msg);
@@ -180,7 +330,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
             await _net.ConnectAsync(NetClient.DefaultUrl);
             await _net.SendRawAsync(
                 "{\"type\":\"request_hello\",\"guestToken\":\"" + _guestToken + "\"}");
-            _status = "CONNECTED";
+            _status = "CONNECTED — choose login or guest";
+            _gatePhase = 0;
+            _inWorld = false;
         }
         catch (System.Exception ex)
         {
@@ -189,6 +341,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
     }
 
+    private bool _clickMoveActive;
+    private float _clickMoveX;
+    private float _clickMoveY;
+    private string _pendingSkillId = "";
+    private string _pendingSkillTarget = "";
+    private float _pendingSkillRange;
+    private float _pendingSkillUntil;
+
     private void Update()
     {
         while (_inbox.TryDequeue(out var json))
@@ -196,12 +356,21 @@ public sealed class NetworkBootstrap : MonoBehaviour
             HandlePacket(json);
         }
 
+        if (_gatePhase < 3 || !_inWorld)
+        {
+            return;
+        }
+
         _joystick?.Tick();
         TickAiming();
+        TickPendingSkillChase();
         HandleContinuousMove();
+        TryAutoPortal();
         HandleActionKeys();
         TrySkillBarClicks();
         TryInventoryClicks();
+        TryWorldTargetClicks();
+        TryWorldMoveClicks();
         TryContextMenuOpen();
         TryContextMenuClicks();
         TryChat();
@@ -209,6 +378,43 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void OnGUI()
     {
+        var scale = UiScaleSafe;
+        var prevMatrix = GUI.matrix;
+        GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(scale, scale, 1f));
+        try
+        {
+            OnGuiScaled();
+        }
+        finally
+        {
+            GUI.matrix = prevMatrix;
+        }
+    }
+
+    private float UiScaleSafe => Mathf.Clamp(_uiScale, 0.8f, 1.4f);
+    private float GuiW => Screen.width / Mathf.Max(0.1f, UiScaleSafe);
+    private float GuiH => Screen.height / Mathf.Max(0.1f, UiScaleSafe);
+
+    private Vector2 ScreenToGui(Vector2 screenPx)
+    {
+        var s = Mathf.Max(0.1f, UiScaleSafe);
+        return new Vector2(screenPx.x / s, (Screen.height - screenPx.y) / s);
+    }
+
+    private void PersistUiScale()
+    {
+        PlayerPrefs.SetFloat("gaaacha_ui_scale", UiScaleSafe);
+        PlayerPrefs.Save();
+    }
+
+    private void OnGuiScaled()
+    {
+        if (_gatePhase < 3 || !_inWorld)
+        {
+            DrawGate();
+            return;
+        }
+
         DrawHud();
         DrawInventory();
         DrawSkillBar();
@@ -217,6 +423,20 @@ public sealed class NetworkBootstrap : MonoBehaviour
         DrawContextMenu();
         DrawInspectSheet();
         DrawChatBox();
+        DrawPartyInvite();
+        DrawGuildInvite();
+        DrawTradeInvite();
+        DrawTradePanel();
+        DrawPartyPanel();
+        DrawFriendsPanel();
+        DrawSettingsPanel();
+        DrawSkillTreePanel();
+        DrawAuctionPanel();
+        DrawInstanceHud();
+        DrawLoginPanel();
+        DrawCharCreate();
+        DrawInteractPanel();
+        DrawQuestLog();
         DrawToast();
         DrawItemTooltip();
         _joystick?.Draw();
@@ -230,6 +450,29 @@ public sealed class NetworkBootstrap : MonoBehaviour
     {
         Debug.Log("gAAAcha recv: " + json);
         _world.HandleMessage(json);
+
+        if (json.Contains("\"type\":\"error\""))
+        {
+            var code = JsonUtil.ExtractString(json, "code");
+            var msg = JsonUtil.ExtractString(json, "message");
+            _status = string.IsNullOrEmpty(msg)
+                ? ("error " + code)
+                : (code + ": " + msg);
+            if (code == "out_of_range" && _world != null &&
+                !string.IsNullOrEmpty(_world.LockTargetId) &&
+                !string.IsNullOrEmpty(_lastCastRequestId))
+            {
+                // Re-approach and retry last skill kind from status if pending empty.
+                var lockId = _world.LockTargetId;
+                if (!HasPendingSkillChase() && _status.Contains("→"))
+                {
+                    // keep lock; user can recast — start generic chase for AA range
+                    BeginPendingSkill("auto_attack", lockId, ResolveSkillRange("auto_attack"));
+                }
+            }
+
+            return;
+        }
 
         if (json.Contains("\"type\":\"sync_state\""))
         {
@@ -300,7 +543,190 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 _spiritIndex = System.Array.IndexOf(_spirits, spirit);
             }
 
+            if (JsonUtil.TryInt(json, "gold", out var gold))
+            {
+                _gold = gold;
+            }
+
+            if (JsonUtil.TryInt(json, "level", out var level))
+            {
+                _level = level;
+            }
+
+            if (JsonUtil.TryInt(json, "xp", out var xp))
+            {
+                _xp = xp;
+            }
+
+            if (JsonUtil.TryInt(json, "xpToLevel", out var xpn))
+            {
+                _xpToLevel = xpn;
+            }
+
+            _charNameSet = !json.Contains("\"charNameSet\":false");
+            var cid = JsonUtil.ExtractString(json, "classId");
+            if (!string.IsNullOrEmpty(cid))
+            {
+                _classId = cid;
+            }
+
+            if (JsonUtil.TryInt(json, "towerClearedFloor", out var tf))
+            {
+                _towerFloor = tf;
+            }
+
+            var w2 = JsonUtil.ExtractString(json, "equippedWeapon2Id");
+            _weapon2 = string.IsNullOrEmpty(w2) || w2 == "null" ? "none" : w2;
+            var ew = JsonUtil.ExtractString(json, "equippedWeaponId");
+            if (!string.IsNullOrEmpty(ew) && ew != "null")
+            {
+                _weapon = ew;
+            }
+
+            ApplyGearIdsFromJson(json);
+            var youSlice = JsonUtil.SliceAround(json, "\"you\"", 0, 280);
+            var nm = JsonUtil.ExtractString(youSlice, "name");
+            if (string.IsNullOrEmpty(nm))
+            {
+                nm = JsonUtil.ExtractString(json, "name");
+            }
+
+            if (!string.IsNullOrEmpty(nm))
+            {
+                _playerLabel = nm;
+            }
+
+            _inWorld = !json.Contains("\"inWorld\":false");
+            if (_inWorld && _charNameSet)
+            {
+                _gatePhase = 3;
+            }
+
+            ApplyQuestFromState(json);
+            ApplyPortalsFromState(json);
+
             _status = "sync_state";
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_xp\""))
+        {
+            if (JsonUtil.TryInt(json, "level", out var lv))
+            {
+                _level = lv;
+            }
+
+            if (JsonUtil.TryInt(json, "xp", out var xpNow))
+            {
+                _xp = xpNow;
+            }
+
+            if (JsonUtil.TryInt(json, "xpToLevel", out var need))
+            {
+                _xpToLevel = need;
+            }
+
+            if (JsonUtil.TryInt(json, "skillPoints", out var pts))
+            {
+                _skillPoints = pts;
+            }
+
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_auth\""))
+        {
+            var token = JsonUtil.ExtractString(json, "guestToken");
+            if (!string.IsNullOrEmpty(token))
+            {
+                _guestToken = token;
+                PlayerPrefs.SetString("gaaacha_guest", token);
+                PlayerPrefs.Save();
+            }
+
+            _authStatus = "logged in as " + (JsonUtil.ExtractString(json, "username") ?? "?");
+            _showLogin = false;
+            _gatePhase = 1;
+            _inWorld = false;
+            _input?.RequestServerList();
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_server_list\""))
+        {
+            _serverIds.Clear();
+            _serverNames.Clear();
+            var cursor = 0;
+            while (true)
+            {
+                var idAt = json.IndexOf("\"id\":", cursor, System.StringComparison.Ordinal);
+                if (idAt < 0)
+                {
+                    break;
+                }
+
+                var id = JsonUtil.ExtractString(json.Substring(idAt), "id");
+                var nameAt = json.IndexOf("\"name\":", idAt, System.StringComparison.Ordinal);
+                var name = nameAt > 0 ? JsonUtil.ExtractString(json.Substring(nameAt), "name") : id;
+                if (!string.IsNullOrEmpty(id))
+                {
+                    _serverIds.Add(id);
+                    _serverNames.Add(name ?? id);
+                }
+
+                cursor = idAt + 5;
+            }
+
+            if (_serverIds.Count == 0)
+            {
+                _serverIds.Add("local");
+                _serverNames.Add("Local Dev");
+            }
+
+            if (_gatePhase < 1)
+            {
+                _gatePhase = 1;
+            }
+
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_char_list\""))
+        {
+            for (var i = 0; i < 8; i++)
+            {
+                _charEmpty[i] = true;
+                _charNames[i] = "";
+                _charClasses[i] = "";
+                _charLevels[i] = 1;
+            }
+
+            var cursor = 0;
+            while (true)
+            {
+                var slotAt = json.IndexOf("\"slotIndex\":", cursor, System.StringComparison.Ordinal);
+                if (slotAt < 0)
+                {
+                    break;
+                }
+
+                if (JsonUtil.TryInt(json.Substring(slotAt), "slotIndex", out var slot) && slot >= 0 && slot < 8)
+                {
+                    var chunk = json.Substring(slotAt, System.Math.Min(280, json.Length - slotAt));
+                    _charEmpty[slot] = chunk.Contains("\"empty\":true");
+                    _charNames[slot] = JsonUtil.ExtractString(chunk, "name") ?? "";
+                    _charClasses[slot] = JsonUtil.ExtractString(chunk, "classId") ?? "";
+                    if (JsonUtil.TryInt(chunk, "level", out var lv))
+                    {
+                        _charLevels[slot] = lv;
+                    }
+                }
+
+                cursor = slotAt + 12;
+            }
+
+            _gatePhase = 2;
+            _inWorld = false;
             return;
         }
 
@@ -348,6 +774,180 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (json.Contains("\"type\":\"sync_chat\""))
         {
             ApplyChatFromJson(json);
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_party_invite\""))
+        {
+            _partyInviteId = JsonUtil.ExtractString(json, "inviteId");
+            _partyInviteFrom = JsonUtil.ExtractString(json, "fromName");
+            if (string.IsNullOrEmpty(_partyInviteFrom))
+            {
+                _partyInviteFrom = JsonUtil.ExtractString(json, "fromId");
+            }
+
+            _partyInviteUntil = Time.time + 60f;
+            _status = "party invite from " + _partyInviteFrom;
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_party\""))
+        {
+            _partyId = JsonUtil.ExtractString(json, "partyId");
+            if (_partyId == "null")
+            {
+                _partyId = "";
+            }
+
+            ParsePartyMembersFull(json);
+            _status = string.IsNullOrEmpty(_partyId) ? "left party" : "party " + _partyMembersLine;
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_guild_invite\""))
+        {
+            _guildInviteId = JsonUtil.ExtractString(json, "inviteId");
+            _guildInviteFrom = JsonUtil.ExtractString(json, "fromName");
+            _guildInviteName = JsonUtil.ExtractString(json, "guildName");
+            _guildInviteUntil = Time.time + 60f;
+            _status = "guild invite " + _guildInviteName;
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_guild\""))
+        {
+            var name = JsonUtil.ExtractString(json, "guildName");
+            if (!string.IsNullOrEmpty(name))
+            {
+                _guildName = name;
+            }
+
+            _status = "guild " + _guildName;
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_trade_invite\""))
+        {
+            _tradeInviteId = JsonUtil.ExtractString(json, "inviteId");
+            _tradeInviteFrom = JsonUtil.ExtractString(json, "fromName");
+            _tradeInviteUntil = Time.time + 60f;
+            _status = "trade invite from " + _tradeInviteFrom;
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_trade\""))
+        {
+            _tradeId = JsonUtil.ExtractString(json, "tradeId");
+            if (_tradeId == "null")
+            {
+                _tradeId = "";
+            }
+
+            var you = JsonUtil.SliceAround(json, "\"you\"", 0, 400);
+            var them = JsonUtil.SliceAround(json, "\"them\"", 0, 500);
+            if (JsonUtil.TryInt(you, "gold", out var yg))
+            {
+                _tradeMyGold = yg;
+            }
+
+            _tradeMyConfirm = you.Contains("\"confirmed\":true");
+            if (JsonUtil.TryInt(them, "gold", out var tg))
+            {
+                _tradeTheirGold = tg;
+            }
+
+            _tradeTheirConfirm = them.Contains("\"confirmed\":true");
+            _tradeTheirName = JsonUtil.ExtractString(them, "name") ?? "";
+            _tradeOfferSummary = "you " + _tradeMyGold + "g / them " + _tradeTheirGold + "g";
+            if (string.IsNullOrEmpty(_tradeId))
+            {
+                _tradeOfferSlots.Clear();
+                _tradeOfferQtys.Clear();
+            }
+
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_friends\""))
+        {
+            ParseFriends(json);
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_skills\""))
+        {
+            if (JsonUtil.TryInt(json, "skillPoints", out var sp))
+            {
+                _skillPoints = sp;
+            }
+
+            ParseSkillLists(json);
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_auction\""))
+        {
+            ParseAuction(json);
+            _showAuction = true;
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_instance\""))
+        {
+            if (JsonUtil.TryInt(json, "expiresAt", out var exp))
+            {
+                _instanceExpiresAt = exp;
+            }
+            else if (JsonUtil.TryNumber(json, "expiresAt", out var expN))
+            {
+                _instanceExpiresAt = (long)expN;
+            }
+
+            if (JsonUtil.TryInt(json, "phase", out var ph))
+            {
+                _bossPhase = ph;
+            }
+
+            var iid = JsonUtil.ExtractString(json, "instanceId");
+            if (iid == "null" || string.IsNullOrEmpty(iid))
+            {
+                _instanceExpiresAt = 0;
+            }
+
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_interact\""))
+        {
+            ApplyInteractFromJson(json);
+            _showInteract = true;
+            if (_interactKind == "trainer")
+            {
+                _showSkillTree = true;
+            }
+
+            if (_interactKind == "auction")
+            {
+                _showAuction = true;
+            }
+
+            _status = "talk " + _interactKind;
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_quest\""))
+        {
+            ApplyQuestFromState(json);
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_gold\""))
+        {
+            if (JsonUtil.TryInt(json, "gold", out var g))
+            {
+                _gold = g;
+            }
+
             return;
         }
 
@@ -401,9 +1001,20 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
 
             var target = JsonUtil.ExtractString(json, "targetId");
-            if (target == _world.SelfId && JsonUtil.TryInt(json, "hpAfter", out var hpAfter))
+            if (target == _world.SelfId && JsonUtil.TryInt(json, "hpAfter", out var hpAfterSelf))
             {
-                _hp = hpAfter;
+                _hp = hpAfterSelf;
+            }
+
+            if (JsonUtil.TryInt(json, "hpAfter", out var hpAfter))
+            {
+                var corr = _prediction.ReconcileSkill(_lastCastRequestId, target, hpAfter);
+                if (corr.HasValue && !string.IsNullOrEmpty(corr.Value.EntityId) && corr.Value.Hp.HasValue)
+                {
+                    _world?.ApplyReconcileHp(corr.Value.EntityId, corr.Value.Hp.Value, corr.Value.Hard);
+                }
+
+                _lastCastRequestId = "";
             }
 
             _status = "skill " + JsonUtil.ExtractString(json, "skillId");
@@ -422,6 +1033,42 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 if (JsonUtil.TryInt(json, "mp", out var mp))
                 {
                     _mp = mp;
+                }
+                if (JsonUtil.TryInt(json, "maxHp", out var maxHp) && maxHp > 0)
+                {
+                    _maxHp = maxHp;
+                }
+                if (JsonUtil.TryInt(json, "maxMp", out var maxMp) && maxMp > 0)
+                {
+                    _maxMp = maxMp;
+                }
+            }
+
+            for (var i = 0; i < _partyMemberIds.Count; i++)
+            {
+                if (_partyMemberIds[i] != id)
+                {
+                    continue;
+                }
+
+                if (JsonUtil.TryInt(json, "hp", out var php))
+                {
+                    _partyMemberHp[i] = php;
+                }
+
+                if (JsonUtil.TryInt(json, "maxHp", out var pmax) && pmax > 0)
+                {
+                    _partyMemberMaxHp[i] = pmax;
+                }
+
+                if (JsonUtil.TryInt(json, "mp", out var pmp))
+                {
+                    _partyMemberMp[i] = pmp;
+                }
+
+                if (JsonUtil.TryInt(json, "maxMp", out var pmaxMp) && pmaxMp > 0)
+                {
+                    _partyMemberMaxMp[i] = pmaxMp;
                 }
             }
 
@@ -483,6 +1130,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 }
             }
 
+            ApplyGearIdsFromJson(json);
             _status = "equipped " + _weapon + " / " + _spirit;
             return;
         }
@@ -636,6 +1284,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             tab = "guild";
         }
+        else if (channel == "party")
+        {
+            tab = "party";
+        }
         else if (channel == "server")
         {
             tab = "server";
@@ -751,17 +1403,83 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         var dir = ReadMoveIntent();
-        if (dir.sqrMagnitude < 0.01f)
+        var keyboardOrStick = dir.sqrMagnitude >= 0.01f;
+        if (keyboardOrStick)
+        {
+            // Manual move cancels click-path and pending skill chase (keeps target lock).
+            CancelClickMove();
+            ClearPendingSkill(false);
+        }
+        else if (_clickMoveActive || HasPendingSkillChase())
+        {
+            dir = ComputeAutoMoveDir();
+            if (dir.sqrMagnitude < 0.01f)
+            {
+                return;
+            }
+        }
+        else
         {
             return;
         }
 
         dir.Normalize();
+        if (_world != null)
+        {
+            if (keyboardOrStick)
+            {
+                _world.GetCameraBasisXY(out var scrRight, out var scrUp);
+                var intentX = dir.x;
+                var intentY = dir.y;
+                dir = intentX * scrRight + intentY * scrUp;
+                if (dir.sqrMagnitude > 1e-8f)
+                {
+                    dir.Normalize();
+                }
+
+                int facing;
+                if (Mathf.Abs(intentX) > Mathf.Abs(intentY))
+                {
+                    facing = intentX < 0f ? 1 : 2;
+                }
+                else
+                {
+                    facing = intentY < 0f ? 0 : 3;
+                }
+
+                _world.SetLocalFacing(facing);
+            }
+            else
+            {
+                int facing;
+                if (Mathf.Abs(dir.x) > Mathf.Abs(dir.y))
+                {
+                    facing = dir.x < 0f ? 1 : 2;
+                }
+                else
+                {
+                    facing = dir.y < 0f ? 0 : 3;
+                }
+
+                _world.SetLocalFacing(facing);
+            }
+        }
+
         var speed = _moveSpeed * _moveSpeedMult;
         var dt = Time.deltaTime;
         _x += dir.x * speed * dt;
         _y += dir.y * speed * dt;
         _world.SetLocalPos(_x, _y);
+
+        if (_clickMoveActive)
+        {
+            var dx = _clickMoveX - _x;
+            var dy = _clickMoveY - _y;
+            if (dx * dx + dy * dy <= 0.12f * 0.12f)
+            {
+                CancelClickMove();
+            }
+        }
 
         _moveSendAcc += dt;
         if (_moveSendAcc < 0.05f)
@@ -773,8 +1491,103 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (_input != null && _net != null && _net.IsConnected)
         {
             _input.RequestMove(_x, _y);
-            _status = "move " + _x.ToString("0.0") + "," + _y.ToString("0.0");
+            if (!_clickMoveActive && !HasPendingSkillChase())
+            {
+                _status = "move " + _x.ToString("0.0") + "," + _y.ToString("0.0");
+            }
         }
+    }
+
+    private Vector2 ComputeAutoMoveDir()
+    {
+        float tx;
+        float ty;
+        if (HasPendingSkillChase() && _world != null &&
+            _world.TryGetMapXY(_pendingSkillTarget, out tx, out ty))
+        {
+            // Approach until inside skill range (stop short of stacking on target).
+            var dx = tx - _x;
+            var dy = ty - _y;
+            var dist = Mathf.Sqrt(dx * dx + dy * dy);
+            var stopAt = Mathf.Max(0.55f, _pendingSkillRange + 0.55f);
+            if (dist <= stopAt)
+            {
+                return Vector2.zero;
+            }
+
+            return new Vector2(dx, dy);
+        }
+
+        if (_clickMoveActive)
+        {
+            return new Vector2(_clickMoveX - _x, _clickMoveY - _y);
+        }
+
+        return Vector2.zero;
+    }
+
+    private bool HasPendingSkillChase()
+    {
+        return !string.IsNullOrEmpty(_pendingSkillId) && Time.time < _pendingSkillUntil;
+    }
+
+    private void CancelClickMove()
+    {
+        _clickMoveActive = false;
+    }
+
+    private void ClearPendingSkill(bool announce)
+    {
+        if (announce && !string.IsNullOrEmpty(_pendingSkillId))
+        {
+            _status = "skill chase cancelled";
+        }
+
+        _pendingSkillId = "";
+        _pendingSkillTarget = "";
+        _pendingSkillRange = 0f;
+        _pendingSkillUntil = 0f;
+    }
+
+    private void BeginPendingSkill(string skillId, string targetId, float range)
+    {
+        _pendingSkillId = skillId;
+        _pendingSkillTarget = targetId;
+        _pendingSkillRange = range;
+        _pendingSkillUntil = Time.time + 8f;
+        CancelClickMove();
+        _status = skillId + " → approach " + targetId;
+    }
+
+    private void TickPendingSkillChase()
+    {
+        if (!HasPendingSkillChase() || _world == null || _input == null)
+        {
+            if (!string.IsNullOrEmpty(_pendingSkillId) && Time.time >= _pendingSkillUntil)
+            {
+                ClearPendingSkill(true);
+            }
+
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_pendingSkillTarget) || !_world.TryGetMapXY(_pendingSkillTarget, out _, out _))
+        {
+            ClearPendingSkill(true);
+            return;
+        }
+
+        var center = _world.DistanceSelfTo(_pendingSkillTarget);
+        var gap = Mathf.Max(0f, center - 0.85f);
+        if (gap > _pendingSkillRange + 0.08f)
+        {
+            return;
+        }
+
+        var skillId = _pendingSkillId;
+        var targetId = _pendingSkillTarget;
+        ClearPendingSkill(false);
+        ExecuteCastNow(skillId, targetId);
     }
 
     private Vector2 ReadMoveIntent()
@@ -825,18 +1638,39 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 return;
             }
 
-            _showCtxMenu = false;
-            _showInspect = false;
-            _chatFocused = false;
-            _itemTooltip = "";
+            if (_showCtxMenu || _showInspect || _chatFocused || !string.IsNullOrEmpty(_itemTooltip))
+            {
+                _showCtxMenu = false;
+                _showInspect = false;
+                _chatFocused = false;
+                _itemTooltip = "";
+                return;
+            }
+
+            _showSettings = !_showSettings;
+            _status = _showSettings ? "settings on" : "settings off";
             return;
         }
 
         if (kb.tabKey.wasPressedThisFrame && !_chatFocused)
         {
-            var target = _world.CycleLockTarget();
-            _input?.SetTarget(target);
-            _status = "lock-on " + target;
+            if (_world == null)
+            {
+                return;
+            }
+
+            var target = _world.ToggleLockClosest();
+            _input?.SetTarget(target ?? "");
+            if (string.IsNullOrEmpty(target))
+            {
+                _status = "target cleared";
+            }
+            else
+            {
+                _status = "lock-on " + target;
+            }
+
+            return;
         }
 
         if (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame)
@@ -870,7 +1704,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
 
             if (kb.spaceKey.wasPressedThisFrame || kb.digit1Key.wasPressedThisFrame ||
-                kb.digit3Key.wasPressedThisFrame || kb.qKey.wasPressedThisFrame ||
+                kb.digit3Key.wasPressedThisFrame ||
                 kb.rKey.wasPressedThisFrame || kb.digit4Key.wasPressedThisFrame ||
                 kb.digit5Key.wasPressedThisFrame || kb.digit7Key.wasPressedThisFrame ||
                 kb.uKey.wasPressedThisFrame || kb.iKey.wasPressedThisFrame ||
@@ -897,14 +1731,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             CastSkill("mend");
         }
-        if (kb.qKey.wasPressedThisFrame)
-        {
-            CastSkill("dash");
-        }
-        if (kb.eKey.wasPressedThisFrame)
-        {
-            BeginOrConfirmAim("stun_bolt");
-        }
+        // Q/E reserved for camera yaw (see GrayBoxWorld). Dash/stun via skill bar.
         if (kb.rKey.wasPressedThisFrame)
         {
             CastSkill("ember_dot");
@@ -933,18 +1760,27 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             BeginOrConfirmAim("shockwave");
         }
+        if (kb.tKey.wasPressedThisFrame)
+        {
+            CastSkill("war_cry");
+        }
         if (kb.uKey.wasPressedThisFrame)
         {
             CastSkill("power_chant");
         }
         if (kb.bKey.wasPressedThisFrame)
         {
-            _showInventory = !_showInventory;
-            _status = _showInventory ? "inventory on" : "inventory off";
+            CastSkill("haste");
         }
         if (kb.iKey.wasPressedThisFrame)
         {
-            CastSkill("haste");
+            _showInventory = !_showInventory;
+            _status = _showInventory ? "inventory on" : "inventory off";
+        }
+        if (kb.jKey.wasPressedThisFrame)
+        {
+            _showQuestLog = !_showQuestLog;
+            _status = _showQuestLog ? "quests on" : "quests off";
         }
         if (kb.oKey.wasPressedThisFrame)
         {
@@ -966,6 +1802,30 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             _input.RequestGacha(1);
             _status = "sent gacha";
+        }
+        if (kb.hKey.wasPressedThisFrame)
+        {
+            TryUseNearestPortal();
+        }
+        if (kb.nKey.wasPressedThisFrame)
+        {
+            _input.RequestWeaponSwap();
+            _status = "weapon swap";
+        }
+        if (kb.lKey.wasPressedThisFrame)
+        {
+            _showLogin = !_showLogin;
+            _status = _showLogin ? "login panel" : "login closed";
+        }
+        if (kb.kKey.wasPressedThisFrame)
+        {
+            _showFriends = !_showFriends;
+            _status = _showFriends ? "friends on" : "friends off";
+        }
+        if (kb.uKey.wasPressedThisFrame)
+        {
+            _showSettings = !_showSettings;
+            _status = _showSettings ? "settings on" : "settings off";
         }
         if (kb.tKey.wasPressedThisFrame)
         {
@@ -1065,57 +1925,377 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (IndicatorSkills.ContainsKey(skillId))
         {
-            BeginAim(skillId, fromBar: false);
+            if (!TryCastIndicatorAtLock(skillId))
+            {
+                BeginAim(skillId, fromBar: false);
+            }
+
             return;
         }
 
         if (NoTargetSkills.Contains(skillId))
         {
+            ClearPendingSkill(false);
             _input.SetTarget(_world.SelfId);
             _input.Cast(skillId);
             _status = skillId;
             return;
         }
 
+        var lockId = _world.LockTargetId;
         if (skillId == "auto_attack")
         {
-            var closest = _world.FindClosestEnemyInRange(_weaponRange);
-            if (string.IsNullOrEmpty(closest))
+            if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId)
             {
-                _status = "AA — no enemy in range";
+                lockId = _world.FindClosestEnemyInRange(_weaponRange);
+                if (string.IsNullOrEmpty(lockId))
+                {
+                    lockId = _world.LockClosestEnemy();
+                }
+            }
+
+            if (string.IsNullOrEmpty(lockId))
+            {
+                _status = "AA — no enemy";
                 return;
             }
 
-            _world.SetLockTarget(closest);
-            _input.SetTarget(closest);
-            _input.Cast(skillId);
-            _status = "AA → " + closest;
+            _world.SetLockTarget(lockId);
+        }
+        else if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId)
+        {
+            lockId = _world.LockClosestEnemy();
+        }
+
+        if (string.IsNullOrEmpty(lockId))
+        {
+            _status = skillId + " — need target (Tab / LMB)";
             return;
+        }
+
+        TryCastOrChase(skillId, lockId);
+    }
+
+    private float ResolveSkillRange(string skillId)
+    {
+        if (skillId == "auto_attack")
+        {
+            return Mathf.Max(0.8f, _weaponRange);
+        }
+
+        if (SkillRanges.TryGetValue(skillId, out var r) && r > 0f)
+        {
+            return r;
+        }
+
+        if (IndicatorSkills.TryGetValue(skillId, out var def))
+        {
+            return def.Range;
+        }
+
+        return 1.5f;
+    }
+
+    private void TryCastOrChase(string skillId, string targetId)
+    {
+        var range = ResolveSkillRange(skillId);
+        // Match server rangeGap ≈ centerDist - hitRadii (~0.8).
+        var center = _world.DistanceSelfTo(targetId);
+        var gap = Mathf.Max(0f, center - 0.85f);
+        if (gap > range + 0.08f)
+        {
+            BeginPendingSkill(skillId, targetId, range);
+            return;
+        }
+
+        ExecuteCastNow(skillId, targetId);
+    }
+
+    private void ExecuteCastNow(string skillId, string targetId)
+    {
+        if (_input == null || _world == null)
+        {
+            return;
+        }
+
+        _world.SetLockTarget(targetId);
+        _input.SetTarget(targetId);
+
+        // Snap local pos into world so range checks / prediction match what we send.
+        _world.SetLocalPos(_x, _y, instant: true);
+
+        var reqId = _prediction.NextRequestId("cast");
+        _lastCastRequestId = reqId;
+        var predictedHp = 0;
+        if (_world.TryGetTargetInfo(out var info) && info.Id == targetId)
+        {
+            predictedHp = Mathf.Max(0, info.Hp - 8);
+        }
+
+        _prediction.Predict(new PredictionReconciler.PredictedAction
+        {
+            RequestId = reqId,
+            Kind = skillId,
+            TargetId = targetId,
+            PredictedHpAfter = predictedHp,
+            PredictedX = 0f,
+            PredictedY = 0f,
+        });
+
+        if (IndicatorSkills.TryGetValue(skillId, out var def))
+        {
+            var selfPos = _world.GetEntityWorldPos(_world.SelfId);
+            var tgtPos = _world.GetEntityWorldPos(targetId);
+            if (!selfPos.HasValue || !tgtPos.HasValue)
+            {
+                return;
+            }
+
+            var dx = tgtPos.Value.x - selfPos.Value.x;
+            var dy = tgtPos.Value.y - selfPos.Value.y;
+            var len = Mathf.Sqrt(dx * dx + dy * dy);
+            if (len < 1e-4f)
+            {
+                dx = 1f;
+                dy = 0f;
+            }
+            else
+            {
+                dx /= len;
+                dy /= len;
+            }
+
+            CancelAim();
+            if (def.Kind == AimKind.Ground)
+            {
+                _input.Cast(skillId, targetId, null, null, tgtPos.Value.x, tgtPos.Value.y);
+            }
+            else
+            {
+                _input.Cast(skillId, targetId, dx, dy);
+            }
+
+            _status = skillId + " → " + targetId;
+            return;
+        }
+
+        _input.Cast(skillId);
+        _status = skillId + " → " + targetId;
+    }
+
+    /// <summary>Cast skillshot/AoE toward current lock (or closest). Returns false if no target.</summary>
+    private bool TryCastIndicatorAtLock(string skillId)
+    {
+        if (_world == null || _input == null || !IndicatorSkills.TryGetValue(skillId, out var def))
+        {
+            return false;
         }
 
         var lockId = _world.LockTargetId;
         if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId)
         {
-            lockId = _world.FindClosestEnemyInRange(10f);
-            if (!string.IsNullOrEmpty(lockId))
-            {
-                _world.SetLockTarget(lockId);
-            }
+            lockId = _world.LockClosestEnemy();
         }
 
         if (string.IsNullOrEmpty(lockId))
         {
-            _status = skillId + " — need target";
+            return false;
+        }
+
+        var selfPos = _world.GetEntityWorldPos(_world.SelfId);
+        var tgtPos = _world.GetEntityWorldPos(lockId);
+        if (!selfPos.HasValue || !tgtPos.HasValue)
+        {
+            return false;
+        }
+
+        var dx = tgtPos.Value.x - selfPos.Value.x;
+        var dy = tgtPos.Value.y - selfPos.Value.y;
+        var len = Mathf.Sqrt(dx * dx + dy * dy);
+        if (len > def.Range + 0.05f)
+        {
+            BeginPendingSkill(skillId, lockId, def.Range);
+            return true;
+        }
+
+        if (len < 1e-4f)
+        {
+            dx = 1f;
+            dy = 0f;
+        }
+        else
+        {
+            dx /= len;
+            dy /= len;
+        }
+
+        _world.SetLockTarget(lockId);
+        _input.SetTarget(lockId);
+        CancelAim();
+        if (def.Kind == AimKind.Ground)
+        {
+            _input.Cast(skillId, lockId, null, null, tgtPos.Value.x, tgtPos.Value.y);
+        }
+        else
+        {
+            _input.Cast(skillId, lockId, dx, dy);
+        }
+
+        _status = skillId + " → " + lockId;
+        return true;
+    }
+
+    private void TryWorldTargetClicks()
+    {
+        if (_world == null || _showSettings || _showCtxMenu || _showInspect || _chatFocused ||
+            !string.IsNullOrEmpty(_aimSkillId))
+        {
             return;
         }
 
-        _input.SetTarget(lockId);
-        _input.Cast(skillId);
-        _status = skillId + " → " + lockId;
+        var mouse = Mouse.current;
+        if (mouse == null || !mouse.leftButton.wasPressedThisFrame)
+        {
+            return;
+        }
+
+        var screen = mouse.position.ReadValue();
+        var gui = ScreenToGui(screen);
+
+        // Ignore HUD / inventory panel clicks (inventory open must not block the whole map).
+        if (gui.y > GuiH - 140f)
+        {
+            return;
+        }
+
+        if (_showInventory && InventoryWindowRect().Contains(gui))
+        {
+            return;
+        }
+
+        var cam = Camera.main;
+        if (cam == null || !TryScreenToMap(cam, screen, out var mx, out var my))
+        {
+            return;
+        }
+
+        // Click a gate → use it.
+        var portalId = _world.PickPortalNear(mx, my, 1.1f);
+        if (!string.IsNullOrEmpty(portalId))
+        {
+            _input?.RequestPortal(portalId);
+            _status = "portal " + portalId;
+            return;
+        }
+
+        var id = _world.PickCombatTargetNear(mx, my, 1.25f);
+        if (!string.IsNullOrEmpty(id))
+        {
+            _world.SetLockTarget(id);
+            _input?.SetTarget(id);
+            _status = "lock-on " + id;
+            return;
+        }
+
+        // Empty LMB: keep current target (no clear / no move).
+    }
+
+    private void TryWorldMoveClicks()
+    {
+        if (_world == null || _input == null || _showSettings || _showCtxMenu || _showInspect || _chatFocused ||
+            !string.IsNullOrEmpty(_aimSkillId))
+        {
+            return;
+        }
+
+        var mouse = Mouse.current;
+        if (mouse == null || !mouse.rightButton.wasPressedThisFrame)
+        {
+            return;
+        }
+
+        var screen = mouse.position.ReadValue();
+        var gui = ScreenToGui(screen);
+        if (gui.y > GuiH - 140f)
+        {
+            return;
+        }
+
+        if (_showInventory && InventoryWindowRect().Contains(gui))
+        {
+            return;
+        }
+
+        var cam = Camera.main;
+        if (cam == null || !TryScreenToMap(cam, screen, out var mx, out var my))
+        {
+            return;
+        }
+
+        // RMB always click-to-move. Cancel pending skill chase; keep target lock (2A).
+        ClearPendingSkill(false);
+        _clickMoveActive = true;
+        _clickMoveX = mx;
+        _clickMoveY = my;
+        _status = "move-to " + mx.ToString("0.0") + "," + my.ToString("0.0");
+    }
+
+    private static bool TryScreenToMap(Camera cam, Vector2 screenPx, out float mapX, out float mapY)
+    {
+        mapX = 0f;
+        mapY = 0f;
+        var ray = cam.ScreenPointToRay(screenPx);
+        // Map lives on the XY plane (z ≈ 0).
+        var plane = new Plane(Vector3.forward, Vector3.zero);
+        if (!plane.Raycast(ray, out var enter))
+        {
+            return false;
+        }
+
+        var p = ray.GetPoint(enter);
+        mapX = p.x;
+        mapY = p.y;
+        return true;
+    }
+
+    private float _portalCooldownUntil;
+
+    private void TryAutoPortal()
+    {
+        if (_input == null || _world == null || _portalIds.Count == 0 || Time.time < _portalCooldownUntil)
+        {
+            return;
+        }
+
+        var best = -1;
+        var bestD = 1.55f;
+        for (var i = 0; i < _portalIds.Count; i++)
+        {
+            var d = Vector2.Distance(new Vector2(_x, _y), new Vector2(_portalXs[i], _portalYs[i]));
+            if (d < bestD)
+            {
+                bestD = d;
+                best = i;
+            }
+        }
+
+        if (best < 0)
+        {
+            return;
+        }
+
+        _portalCooldownUntil = Time.time + 1.2f;
+        _input.RequestPortal(_portalIds[best]);
+        _status = "gate " + _portalIds[best];
     }
 
     private void BeginOrConfirmAim(string skillId)
     {
+        if (TryCastIndicatorAtLock(skillId))
+        {
+            return;
+        }
+
         if (!string.IsNullOrEmpty(_aimSkillId))
         {
             if (_aimSkillId == skillId && Time.frameCount > _aimStartFrame)
@@ -1328,7 +2508,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (skillId == "stun_bolt")
         {
-            return kb.eKey.wasPressedThisFrame;
+            return kb.digit9Key.wasPressedThisFrame;
         }
 
         if (skillId == "blind_dust")
@@ -1353,7 +2533,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (skillId == "stun_bolt")
         {
-            return kb.eKey.isPressed;
+            return kb.digit9Key.isPressed;
         }
 
         if (skillId == "blind_dust")
@@ -1378,7 +2558,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (skillId == "stun_bolt")
         {
-            return kb.eKey.wasReleasedThisFrame;
+            return kb.digit9Key.wasReleasedThisFrame;
         }
 
         if (skillId == "blind_dust")
@@ -1426,17 +2606,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         var p = mouse.position.ReadValue();
-        var guiY = Screen.height - p.y;
+        var gui = ScreenToGui(p); var guiY = gui.y;
         var slotW = 56f;
         var slotH = 56f;
         var startX = 20f;
-        var y = Screen.height - 120f;
+        var y = GuiH - 120f;
         for (var i = 0; i < _skillIds.Length; i++)
         {
             var row = i / 9;
             var col = i % 9;
             var rect = new Rect(startX + col * (slotW + 6), y - row * (slotH + 8), slotW, slotH);
-            if (!rect.Contains(new Vector2(p.x, guiY)))
+            if (!rect.Contains(new Vector2(gui.x, guiY)))
             {
                 continue;
             }
@@ -1447,14 +2627,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 return;
             }
 
-            if (IndicatorSkills.ContainsKey(skillId))
-            {
-                BeginAim(skillId, fromBar: true);
-            }
-            else
-            {
-                CastSkill(skillId);
-            }
+            CastSkill(skillId);
 
             break;
         }
@@ -1462,8 +2635,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void TryContextMenuOpen()
     {
+        // Context menu: middle-click entity (RMB is click-to-move).
         var mouse = Mouse.current;
-        if (mouse == null || !mouse.rightButton.wasPressedThisFrame)
+        if (mouse == null || !mouse.middleButton.wasPressedThisFrame)
         {
             return;
         }
@@ -1475,19 +2649,31 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         var screen = mouse.position.ReadValue();
-        var world = cam.ScreenToWorldPoint(screen);
-        var id = _world.PickEntityNear(world.x, world.y, 0.9f);
+        if (!TryScreenToMap(cam, screen, out var mx, out var my))
+        {
+            return;
+        }
+
+        var id = _world.PickEntityNear(mx, my, 1.1f);
         if (string.IsNullOrEmpty(id) || id == _world.SelfId)
         {
             _showCtxMenu = false;
             return;
         }
 
+        OpenContextMenuAt(id, screen);
+    }
+
+    private void OpenContextMenuAt(string id, Vector2 screen)
+    {
+        if (_world == null || string.IsNullOrEmpty(id))
+        {
+            return;
+        }
+
         _ctxTargetId = id;
         _ctxTargetKind = InferKind(id);
         _ctxTargetLabel = id;
-        // Prefer live label via temporary lock query without changing lock permanently —
-        // use current lock info if it matches, else id.
         if (_world.TryGetTargetInfo(out var info) && info.Id == id && !string.IsNullOrEmpty(info.Label))
         {
             _ctxTargetLabel = info.Label;
@@ -1498,7 +2684,6 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
         else
         {
-            // Peek label by locking briefly then restoring previous lock
             var prev = _world.LockTargetId;
             _world.SetLockTarget(id);
             if (_world.TryGetTargetInfo(out var peek) && !string.IsNullOrEmpty(peek.Label))
@@ -1516,7 +2701,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
         }
 
-        _ctxMenuScreen = new Vector2(screen.x, Screen.height - screen.y);
+        _ctxMenuScreen = ScreenToGui(screen);
         _showCtxMenu = true;
         _status = "menu " + _ctxTargetLabel;
     }
@@ -1526,6 +2711,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (string.IsNullOrEmpty(id))
         {
             return "monster";
+        }
+
+        if (id.StartsWith("npc_") || id.Contains("npc_"))
+        {
+            return "npc";
         }
 
         if (id.StartsWith("monster") || id.Contains("monster_"))
@@ -1550,7 +2740,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         var p = mouse.position.ReadValue();
-        var gui = new Vector2(p.x, Screen.height - p.y);
+        var gui = ScreenToGui(p);
         var items = BuildCtxMenuItems();
         var menu = CtxMenuRect(items.Length);
         if (!menu.Contains(gui))
@@ -1577,7 +2767,12 @@ public sealed class NetworkBootstrap : MonoBehaviour
     {
         if (_ctxTargetKind == "player")
         {
-            return new[] { "Target", "Attack", "Inspect", "Whisper", "Invite party" };
+            return new[] { "Target", "Attack", "Inspect", "Whisper", "Invite party", "Trade", "Add friend", "Invite guild" };
+        }
+
+        if (_ctxTargetKind == "npc")
+        {
+            return new[] { "Target", "Talk", "Inspect" };
         }
 
         return new[] { "Target", "Attack", "Inspect" };
@@ -1587,8 +2782,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
     {
         var w = 140f;
         var h = 8f + itemCount * 24f;
-        var x = Mathf.Clamp(_ctxMenuScreen.x, 4f, Screen.width - w - 4f);
-        var y = Mathf.Clamp(_ctxMenuScreen.y, 4f, Screen.height - h - 4f);
+        var x = Mathf.Clamp(_ctxMenuScreen.x, 4f, GuiW - w - 4f);
+        var y = Mathf.Clamp(_ctxMenuScreen.y, 4f, GuiH - h - 4f);
         return new Rect(x, y, w, h);
     }
 
@@ -1639,6 +2834,34 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             _input?.RequestPartyInvite(_ctxTargetId);
             _status = "party invite " + _ctxTargetId;
+            return;
+        }
+
+        if (action == "Trade")
+        {
+            _input?.RequestTradeInvite(_ctxTargetId);
+            _status = "trade invite " + _ctxTargetId;
+            return;
+        }
+
+        if (action == "Add friend")
+        {
+            _input?.RequestFriendAdd(_ctxTargetId);
+            _status = "friend add " + _ctxTargetId;
+            return;
+        }
+
+        if (action == "Invite guild")
+        {
+            _input?.RequestGuildInvite(_ctxTargetId);
+            _status = "guild invite " + _ctxTargetId;
+            return;
+        }
+
+        if (action == "Talk")
+        {
+            _input?.RequestInteract(_ctxTargetId);
+            _status = "talk " + _ctxTargetId;
         }
     }
 
@@ -1717,7 +2940,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var part = json.Substring(invIdx);
         var cursor = 0;
         var slot = 0;
-        while (slot < 20 && cursor < part.Length)
+        while (slot < InvSize && cursor < part.Length)
         {
             var idToken = part.IndexOf("\"itemId\":", cursor);
             if (idToken < 0)
@@ -1734,12 +2957,59 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
             JsonUtil.TryInt(slice, "quantity", out var qty);
             JsonUtil.TryInt(slice, "slotIndex", out var si);
-            var index = si >= 0 && si < 20 ? si : slot;
+            var index = si >= 0 && si < InvSize ? si : slot;
             _invSlots[index] = string.IsNullOrEmpty(itemId) ? null : itemId;
             _invQty[index] = qty;
             cursor = idToken + 9;
             slot += 1;
         }
+    }
+
+    private void ApplyGearIdsFromJson(string json)
+    {
+        SetGearField(json, "equippedArmorId", "armorId", ref _armor);
+        SetGearField(json, "equippedHelmId", "helmId", ref _helm);
+        SetGearField(json, "equippedBootsId", "bootsId", ref _boots);
+        SetGearField(json, "equippedGlovesId", "glovesId", ref _gloves);
+        SetGearField(json, "equippedAccessoryId", "accessoryId", ref _accessory);
+    }
+
+    private static void SetGearField(string json, string longKey, string shortKey, ref string field)
+    {
+        var v = JsonUtil.ExtractString(json, longKey);
+        if (string.IsNullOrEmpty(v))
+        {
+            v = JsonUtil.ExtractString(json, shortKey);
+        }
+
+        if (string.IsNullOrEmpty(v) || v == "null")
+        {
+            if (json.Contains("\"" + longKey + "\":null") || json.Contains("\"" + shortKey + "\":null"))
+            {
+                field = "none";
+            }
+
+            return;
+        }
+
+        field = v;
+    }
+
+    private Rect InventoryWindowRect()
+    {
+        const float charW = 200f;
+        const float slot = 28f;
+        const float gap = 2f;
+        var gridW = InvCols * (slot + gap);
+        var gridH = InvCols * (slot + gap);
+        var w = 16f + charW + 12f + gridW + 16f;
+        var h = 36f + Mathf.Max(gridH, 220f) + 16f;
+        if (_invPanelPos.x < 0f)
+        {
+            _invPanelPos = new Vector2(GuiW - w - 16f, 90f);
+        }
+
+        return new Rect(_invPanelPos.x, _invPanelPos.y, w, h);
     }
 
     private void DrawInventory()
@@ -1749,16 +3019,48 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        const float slotW = 52f;
-        const float slotH = 40f;
-        var startX = Screen.width - 20f - 4 * (slotW + 4);
-        var startY = 120f;
-        GUI.Label(new Rect(startX, startY - 18, 220, 18), "Inventory (B) — click equip");
-        for (var i = 0; i < 20; i++)
+        const float charW = 200f;
+        const float slot = 28f;
+        const float gap = 2f;
+        var win = InventoryWindowRect();
+        GUI.color = new Color(0.08f, 0.09f, 0.12f, 0.94f);
+        GUI.DrawTexture(win, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+
+        var title = new Rect(win.x, win.y, win.width, 28f);
+        GUI.Label(title,
+            string.IsNullOrEmpty(_tradeId)
+                ? "  Inventory (I) — drag title · LMB equip / RMB use"
+                : "  Inventory — LMB add to TRADE");
+        HandleInvDrag(title);
+
+        var charRect = new Rect(win.x + 10f, win.y + 34f, charW, win.height - 46f);
+        GUI.color = new Color(0.12f, 0.14f, 0.18f, 0.95f);
+        GUI.DrawTexture(charRect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(charRect.x + 8, charRect.y + 6, charW - 16, 20), _playerLabel);
+        GUI.Label(new Rect(charRect.x + 8, charRect.y + 28, charW - 16, 80),
+            "Class " + _classId + "\nLv " + _level + "  XP " + _xp + "/" + _xpToLevel +
+            "\nHP " + _hp + "/" + _maxHp + "  MP " + _mp + "/" + _maxMp +
+            "\nGold " + _gold + "  Tower F" + _towerFloor);
+        GUI.Label(new Rect(charRect.x + 8, charRect.y + 120, charW - 16, 140),
+            "Equipment\n" +
+            "Wpn " + ShortInv(_weapon) + "\n" +
+            "2nd " + ShortInv(_weapon2) + "\n" +
+            "Spirit " + ShortInv(_spirit) + "\n" +
+            "Armor " + ShortInv(_armor) + "\n" +
+            "Helm " + ShortInv(_helm) + "\n" +
+            "Boots " + ShortInv(_boots) + "\n" +
+            "Gloves " + ShortInv(_gloves) + "\n" +
+            "Acc " + ShortInv(_accessory));
+
+        var startX = win.x + 10f + charW + 12f;
+        var startY = win.y + 34f;
+        for (var i = 0; i < InvSize; i++)
         {
-            var col = i % 4;
-            var row = i / 4;
-            var rect = new Rect(startX + col * (slotW + 4), startY + row * (slotH + 4), slotW, slotH);
+            var col = i % InvCols;
+            var row = i / InvCols;
+            var rect = new Rect(startX + col * (slot + gap), startY + row * (slot + gap), slot, slot);
             var id = _invSlots[i];
             GUI.color = InventoryColor(id);
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
@@ -1768,11 +3070,38 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 var label = ShortInv(id);
                 if (_invQty[i] > 1)
                 {
-                    label += " x" + _invQty[i];
+                    label += "x" + _invQty[i];
                 }
 
-                GUI.Label(new Rect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4), label);
+                GUI.Label(new Rect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2), label);
             }
+        }
+    }
+
+    private void HandleInvDrag(Rect titleBar)
+    {
+        var mouse = Mouse.current;
+        if (mouse == null)
+        {
+            return;
+        }
+
+        var p = mouse.position.ReadValue();
+        var gui = ScreenToGui(p);
+        if (mouse.leftButton.wasPressedThisFrame && titleBar.Contains(gui))
+        {
+            _invDragging = true;
+            _invDragOffset = gui - _invPanelPos;
+        }
+
+        if (mouse.leftButton.wasReleasedThisFrame)
+        {
+            _invDragging = false;
+        }
+
+        if (_invDragging && mouse.leftButton.isPressed)
+        {
+            _invPanelPos = gui - _invDragOffset;
         }
     }
 
@@ -1784,23 +3113,43 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         var mouse = Mouse.current;
-        if (mouse == null || !mouse.leftButton.wasPressedThisFrame || _input == null)
+        if (mouse == null || _input == null)
+        {
+            return;
+        }
+
+        var lmb = mouse.leftButton.wasPressedThisFrame;
+        var rmb = mouse.rightButton.wasPressedThisFrame;
+        if (!lmb && !rmb)
+        {
+            return;
+        }
+
+        if (_invDragging)
         {
             return;
         }
 
         var p = mouse.position.ReadValue();
-        var guiY = Screen.height - p.y;
-        const float slotW = 52f;
-        const float slotH = 40f;
-        var startX = Screen.width - 20f - 4 * (slotW + 4);
-        var startY = 120f;
-        for (var i = 0; i < 20; i++)
+        var gui = ScreenToGui(p); var guiY = gui.y;
+        const float charW = 200f;
+        const float slot = 28f;
+        const float gap = 2f;
+        var win = InventoryWindowRect();
+        var title = new Rect(win.x, win.y, win.width, 28f);
+        if (title.Contains(gui))
         {
-            var col = i % 4;
-            var row = i / 4;
-            var rect = new Rect(startX + col * (slotW + 4), startY + row * (slotH + 4), slotW, slotH);
-            if (!rect.Contains(new Vector2(p.x, guiY)))
+            return;
+        }
+
+        var startX = win.x + 10f + charW + 12f;
+        var startY = win.y + 34f;
+        for (var i = 0; i < InvSize; i++)
+        {
+            var col = i % InvCols;
+            var row = i / InvCols;
+            var rect = new Rect(startX + col * (slot + gap), startY + row * (slot + gap), slot, slot);
+            if (!rect.Contains(gui))
             {
                 continue;
             }
@@ -1811,31 +3160,111 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 return;
             }
 
-            var kind = id.StartsWith("spirit_") ? "spirit"
-                : id.StartsWith("char_") ? "character"
-                : id.StartsWith("item_") ? "item"
-                : "equipment";
-            _itemTooltip = id + "\nkind: " + kind + "\nqty: " + _invQty[i];
+            HandleInventorySlotClick(i, id, lmb, rmb);
+            return;
+        }
+    }
 
-            if (id.StartsWith("spirit_"))
+    private void HandleInventorySlotClick(int i, string id, bool lmb, bool rmb)
+    {
+        var kind = id.StartsWith("spirit_") ? "spirit"
+            : id.StartsWith("char_") ? "character"
+            : id.StartsWith("card_") ? "class card (RMB use)"
+            : id.StartsWith("item_") ? "item"
+            : id.Contains("sword") || id.Contains("dagger") || id.Contains("bow") || id.Contains("gun") || id.Contains("staff")
+                ? "weapon (RMB=secondary, N=swap)"
+            : "equipment";
+        _itemTooltip = id + "\nkind: " + kind + "\nqty: " + _invQty[i];
+
+        if (rmb)
+        {
+            _input.RequestUseItem(i);
+            _status = "use slot " + i;
+            return;
+        }
+
+        if (!lmb)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(_tradeId))
+        {
+            if (id == "item_homestone")
             {
-                _input.EquipSpirit(id);
-                _spirit = id;
-                _status = "equip spirit " + id;
+                _status = "cannot trade Homestone";
+                return;
             }
-            else if (id.Contains("sword") || id.Contains("dagger") || id.Contains("staff") || id.Contains("bow") || id.Contains("gun"))
+
+            var found = _tradeOfferSlots.IndexOf(i);
+            if (found >= 0)
             {
-                _input.EquipWeapon(id);
-                _weapon = id;
-                RefreshWeaponMeta();
-                _status = "equip " + id;
+                _tradeOfferQtys[found] = Mathf.Min(_invQty[i], _tradeOfferQtys[found] + 1);
+            }
+            else if (_tradeOfferSlots.Count < 5)
+            {
+                _tradeOfferSlots.Add(i);
+                _tradeOfferQtys.Add(1);
+            }
+
+            SendTradeOffers();
+            _status = "trade offer updated";
+            return;
+        }
+
+        if (id.StartsWith("spirit_"))
+        {
+            _input.EquipSpirit(id);
+            _spirit = id;
+            _status = "equip spirit " + id;
+        }
+        else if (id.StartsWith("armor_") || id == "armor_leather")
+        {
+            _input.RequestEquipGear("armor", id);
+            _status = "equip armor " + id;
+        }
+        else if (id.StartsWith("helm_"))
+        {
+            _input.RequestEquipGear("helm", id);
+            _status = "equip helm " + id;
+        }
+        else if (id.StartsWith("boots_"))
+        {
+            _input.RequestEquipGear("boots", id);
+            _status = "equip boots " + id;
+        }
+        else if (id.StartsWith("gloves_"))
+        {
+            _input.RequestEquipGear("gloves", id);
+            _status = "equip gloves " + id;
+        }
+        else if (id.StartsWith("acc_"))
+        {
+            _input.RequestEquipGear("accessory", id);
+            _status = "equip accessory " + id;
+        }
+        else if (id.StartsWith("card_"))
+        {
+            _input.RequestUseItem(i);
+            _status = "use class card " + id;
+        }
+        else if (id.Contains("sword") || id.Contains("dagger") || id.Contains("staff") || id.Contains("bow") || id.Contains("gun"))
+        {
+            if (_weapon == id)
+            {
+                _status = "already primary";
             }
             else
             {
-                _status = "item " + id;
+                _input.RequestUseItem(i);
+                _weapon2 = id;
+                _status = "secondary " + id;
             }
-
-            return;
+        }
+        else
+        {
+            _input.RequestUseItem(i);
+            _status = "use " + id;
         }
     }
 
@@ -1852,6 +3281,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (id.StartsWith("char_"))
         {
             return new Color(0.55f, 0.3f, 0.7f, 0.9f);
+        }
+        if (id.StartsWith("card_"))
+        {
+            return new Color(0.55f, 0.4f, 0.2f, 0.9f);
         }
         if (id.StartsWith("item_"))
         {
@@ -1889,17 +3322,23 @@ public sealed class NetworkBootstrap : MonoBehaviour
             wordWrap = true,
             padding = new RectOffset(10, 10, 10, 10),
         };
-        GUI.Box(new Rect(10, 10, Screen.width - 20, 100),
+        GUI.Box(new Rect(10, 10, GuiW - 20, 118),
             "gAAAcha  |  " + _status + "\n" +
             "HP " + _hp + "/" + _maxHp + "  MP " + _mp + "/" + _maxMp +
+            "  Lv " + _level + " XP " + _xp + "/" + _xpToLevel + " SP " + _skillPoints +
+            "  Gold " + _gold +
             "  spd " + (_moveSpeed * _moveSpeedMult).ToString("0.0") +
-            "  " + _weapon + " r" + _weaponRange + "  spirit " + _spirit + "\n" +
+            "  class " + _classId + " towerF" + _towerFloor + "\n" +
+            "  " + _weapon + " r" + _weaponRange + "  2nd " + _weapon2 + "  spirit " + _spirit + "\n" +
             "Pity " + _pity + "/" + _hardPity + "  Lock: " + _world.LockTargetId +
-            "  Tab·Space AA·2/E/6/8 aim-cast·Esc cancel aim·F inspect·Enter chat·B inv",
+            "  Guild: " + _guildName +
+            (string.IsNullOrEmpty(_partyId) ? "" : "  Party: " + _partyMembersLine) + "\n" +
+            "Tab·Space AA·I inv·J quests·K friends·U settings·H gate·L login·F inspect",
             box);
 
-        DrawResourceBar(new Rect(20, Screen.height - 54, 180, 12), (float)_hp / _maxHp, Color.red, "HP");
-        DrawResourceBar(new Rect(20, Screen.height - 36, 180, 12), (float)_mp / _maxMp, new Color(0.3f, 0.55f, 1f), "MP");
+
+        DrawResourceBar(new Rect(20, GuiH - 54, 180, 12), (float)_hp / _maxHp, Color.red, "HP");
+        DrawResourceBar(new Rect(20, GuiH - 36, 180, 12), (float)_mp / _maxMp, new Color(0.3f, 0.55f, 1f), "MP");
     }
 
     private void DrawTargetFrame()
@@ -1909,7 +3348,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var frame = new Rect(Screen.width - 280f, 110f, 260f, 118f);
+        var frame = new Rect(GuiW - 280f, 110f, 260f, 118f);
         var border = new Color(0.45f, 0.45f, 0.5f, 0.95f);
         if (!string.IsNullOrEmpty(info.ThreatTopId) && info.ThreatTopId == _world.SelfId)
         {
@@ -1929,7 +3368,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var portrait = new Rect(frame.x + 10, frame.y + 12, 48, 48);
         GUI.color = info.Kind == "player"
             ? new Color(0.15f, 0.85f, 1f, 1f)
-            : new Color(0.2f, 1f, 0.25f, 1f);
+            : info.Kind == "npc"
+                ? new Color(0.95f, 0.85f, 0.35f, 1f)
+                : new Color(0.2f, 1f, 0.25f, 1f);
         GUI.DrawTexture(portrait, Texture2D.whiteTexture);
         GUI.color = Color.white;
 
@@ -2005,7 +3446,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var model = new Rect(sheet.x + 16, sheet.y + 40, 100, 140);
         GUI.color = _inspectKind == "player"
             ? new Color(0.15f, 0.85f, 1f, 1f)
-            : new Color(0.2f, 1f, 0.25f, 1f);
+            : _inspectKind == "npc"
+                ? new Color(0.95f, 0.85f, 0.35f, 1f)
+                : new Color(0.2f, 1f, 0.25f, 1f);
         GUI.DrawTexture(model, Texture2D.whiteTexture);
         GUI.color = Color.white;
         GUI.Label(new Rect(model.x, model.y + model.height + 4, model.width, 20), "model");
@@ -2050,7 +3493,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void DrawChatBox()
     {
-        var box = new Rect(Screen.width - 340f, Screen.height - 210f, 320f, 190f);
+        var box = new Rect(GuiW - 340f, GuiH - 210f, 320f, 190f);
         GUI.color = new Color(0.08f, 0.09f, 0.12f, 0.88f);
         GUI.DrawTexture(box, Texture2D.whiteTexture);
         GUI.color = Color.white;
@@ -2115,6 +3558,1103 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
     }
 
+    private void TryUseNearestPortal()
+    {
+        if (_input == null || _world == null || _portalIds.Count == 0)
+        {
+            return;
+        }
+
+        var best = -1;
+        var bestD = 2.4f;
+        for (var i = 0; i < _portalIds.Count; i++)
+        {
+            var d = Vector2.Distance(new Vector2(_x, _y), new Vector2(_portalXs[i], _portalYs[i]));
+            if (d < bestD)
+            {
+                bestD = d;
+                best = i;
+            }
+        }
+
+        if (best < 0)
+        {
+            _status = "no portal nearby (walk onto orange Gate or press H)";
+            return;
+        }
+
+        _portalCooldownUntil = Time.time + 1.2f;
+        _input.RequestPortal(_portalIds[best]);
+        _status = "portal " + _portalIds[best];
+    }
+
+    private void ApplyPortalsFromState(string json)
+    {
+        _portalIds.Clear();
+        _portalXs.Clear();
+        _portalYs.Clear();
+        var idx = json.IndexOf("\"portals\"");
+        if (idx < 0)
+        {
+            return;
+        }
+
+        var part = json.Substring(idx);
+        var cursor = 0;
+        while (cursor < part.Length && _portalIds.Count < 48)
+        {
+            var idIdx = part.IndexOf("\"id\":\"portal_", cursor);
+            if (idIdx < 0)
+            {
+                break;
+            }
+
+            var slice = part.Substring(idIdx, Mathf.Min(280, part.Length - idIdx));
+            var id = JsonUtil.ExtractString(slice, "id");
+            if (string.IsNullOrEmpty(id) || !JsonUtil.TryNumber(slice, "x", out var px) || !JsonUtil.TryNumber(slice, "y", out var py))
+            {
+                cursor = idIdx + 8;
+                continue;
+            }
+
+            _portalIds.Add(id);
+            _portalXs.Add(px);
+            _portalYs.Add(py);
+            _world?.UpsertPortalMarker(id, px, py);
+            cursor = idIdx + 8;
+        }
+
+        if (_portalIds.Count > 0)
+        {
+            _status = "gates " + _portalIds.Count;
+        }
+    }
+
+    private void ApplyQuestFromState(string json)
+    {
+        _questLogText = "";
+        var idx = json.IndexOf("\"quests\"");
+        if (idx < 0)
+        {
+            return;
+        }
+
+        var part = json.Substring(idx, Mathf.Min(1200, json.Length - idx));
+        var cursor = 0;
+        while (cursor < part.Length)
+        {
+            var qIdx = part.IndexOf("\"questId\":\"", cursor);
+            if (qIdx < 0)
+            {
+                break;
+            }
+
+            var slice = part.Substring(qIdx, Mathf.Min(160, part.Length - qIdx));
+            var qid = JsonUtil.ExtractString(slice, "questId");
+            JsonUtil.TryInt(slice, "progress", out var prog);
+            JsonUtil.TryInt(slice, "stepIndex", out var step);
+            var done = slice.Contains("\"completed\":true");
+            _questLogText += qid + " step " + step + " (" + prog + ")" + (done ? " READY" : "") + "\n";
+            cursor = qIdx + 10;
+        }
+    }
+
+    private void ApplyInteractFromJson(string json)
+    {
+        _interactTargetId = JsonUtil.ExtractString(json, "targetId");
+        _interactKind = JsonUtil.ExtractString(json, "interact");
+        _interactLine = JsonUtil.ExtractString(json, "line");
+        _shopId = "";
+        _shopItemIds.Clear();
+        _shopBuyPrices.Clear();
+        _questIds.Clear();
+        _questStates.Clear();
+        _questNames.Clear();
+
+        var shopIdx = json.IndexOf("\"shop\"");
+        if (shopIdx >= 0)
+        {
+            var shopSlice = json.Substring(shopIdx, Mathf.Min(800, json.Length - shopIdx));
+            _shopId = JsonUtil.ExtractString(shopSlice, "id");
+            var cursor = 0;
+            while (cursor < shopSlice.Length && _shopItemIds.Count < 8)
+            {
+                var iIdx = shopSlice.IndexOf("\"itemId\":\"", cursor);
+                if (iIdx < 0)
+                {
+                    break;
+                }
+
+                var slice = shopSlice.Substring(iIdx, Mathf.Min(80, shopSlice.Length - iIdx));
+                var itemId = JsonUtil.ExtractString(slice, "itemId");
+                JsonUtil.TryInt(slice, "buyPrice", out var price);
+                if (!string.IsNullOrEmpty(itemId))
+                {
+                    _shopItemIds.Add(itemId);
+                    _shopBuyPrices.Add(price);
+                }
+
+                cursor = iIdx + 10;
+            }
+        }
+
+        var qIdx = json.IndexOf("\"quests\"");
+        if (qIdx >= 0)
+        {
+            var qPart = json.Substring(qIdx, Mathf.Min(1200, json.Length - qIdx));
+            var cursor = 0;
+            while (cursor < qPart.Length && _questIds.Count < 6)
+            {
+                var idAt = qPart.IndexOf("\"id\":\"q_", cursor);
+                if (idAt < 0)
+                {
+                    break;
+                }
+
+                var slice = qPart.Substring(idAt, Mathf.Min(200, qPart.Length - idAt));
+                var id = JsonUtil.ExtractString(slice, "id");
+                var name = JsonUtil.ExtractString(slice, "name");
+                var state = "available";
+                if (slice.Contains("\"state\":\"ready\"")) state = "ready";
+                else if (slice.Contains("\"state\":\"active\"")) state = "active";
+                else if (slice.Contains("\"state\":\"done\"")) state = "done";
+                if (!string.IsNullOrEmpty(id))
+                {
+                    _questIds.Add(id);
+                    _questNames.Add(string.IsNullOrEmpty(name) ? id : name);
+                    _questStates.Add(state);
+                }
+
+                cursor = idAt + 6;
+            }
+        }
+    }
+
+    private void DrawLoginPanel()
+    {
+        if (!_showLogin)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 170f, GuiH * 0.18f, 340f, 170f);
+        GUI.color = new Color(0.08f, 0.1f, 0.14f, 0.96f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 12, rect.y + 8, 320, 20), "Account (Postgres when DATABASE_URL set)");
+        _loginUser = GUI.TextField(new Rect(rect.x + 12, rect.y + 36, 316, 24), _loginUser ?? "");
+        _loginPass = GUI.PasswordField(new Rect(rect.x + 12, rect.y + 66, 316, 24), _loginPass ?? "", '*');
+        if (GUI.Button(new Rect(rect.x + 12, rect.y + 100, 150, 28), "Register"))
+        {
+            _input?.RequestRegister(_loginUser, _loginPass);
+            _authStatus = "registering…";
+        }
+
+        if (GUI.Button(new Rect(rect.x + 178, rect.y + 100, 150, 28), "Login"))
+        {
+            _input?.RequestLogin(_loginUser, _loginPass);
+            _authStatus = "logging in…";
+        }
+
+        GUI.Label(new Rect(rect.x + 12, rect.y + 136, 316, 24), _authStatus ?? "");
+    }
+
+    private void DrawGate()
+    {
+        GUI.color = new Color(0.05f, 0.06f, 0.09f, 0.97f);
+        GUI.DrawTexture(new Rect(0, 0, GuiW, GuiH), Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        var panel = new Rect(GuiW * 0.5f - 220f, GuiH * 0.12f, 440f, 420f);
+        GUI.color = new Color(0.1f, 0.12f, 0.16f, 0.98f);
+        GUI.DrawTexture(panel, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(panel.x + 16, panel.y + 10, 400, 24), "Ashen Realm — Login Gate");
+        GUI.Label(new Rect(panel.x + 16, panel.y + 34, 400, 20), _status ?? "");
+
+        if (_gatePhase <= 0)
+        {
+            GUI.Label(new Rect(panel.x + 16, panel.y + 70, 400, 20), "Login / Register");
+            _loginUser = GUI.TextField(new Rect(panel.x + 16, panel.y + 96, 408, 26), _loginUser ?? "");
+            _loginPass = GUI.PasswordField(new Rect(panel.x + 16, panel.y + 128, 408, 26), _loginPass ?? "", '*');
+            if (GUI.Button(new Rect(panel.x + 16, panel.y + 168, 196, 32), "Register"))
+            {
+                _input?.RequestRegister(_loginUser, _loginPass);
+                _authStatus = "registering…";
+            }
+
+            if (GUI.Button(new Rect(panel.x + 228, panel.y + 168, 196, 32), "Login"))
+            {
+                _input?.RequestLogin(_loginUser, _loginPass);
+                _authStatus = "logging in…";
+            }
+
+            if (GUI.Button(new Rect(panel.x + 16, panel.y + 214, 408, 32), "Continue as Guest"))
+            {
+                _gatePhase = 3;
+                _inWorld = true;
+                _status = "guest world";
+            }
+
+            GUI.Label(new Rect(panel.x + 16, panel.y + 260, 408, 40), _authStatus ?? "");
+            return;
+        }
+
+        if (_gatePhase == 1)
+        {
+            GUI.Label(new Rect(panel.x + 16, panel.y + 70, 400, 20), "Select server");
+            for (var i = 0; i < _serverIds.Count; i++)
+            {
+                var selected = _selectedServerId == _serverIds[i];
+                if (selected)
+                {
+                    GUI.color = new Color(0.3f, 0.45f, 0.35f);
+                }
+
+                if (GUI.Button(new Rect(panel.x + 16, panel.y + 100 + i * 36, 408, 32), _serverNames[i]))
+                {
+                    _selectedServerId = _serverIds[i];
+                }
+
+                GUI.color = Color.white;
+            }
+
+            if (GUI.Button(new Rect(panel.x + 16, panel.y + 280, 408, 32), "Confirm server"))
+            {
+                _input?.RequestCharList();
+                _status = "loading characters…";
+            }
+
+            return;
+        }
+
+        if (_gatePhase == 2)
+        {
+            GUI.Label(new Rect(panel.x + 16, panel.y + 64, 400, 20), "Character slots (8)");
+            for (var i = 0; i < 8; i++)
+            {
+                var col = i % 4;
+                var row = i / 4;
+                var r = new Rect(panel.x + 16 + col * 102, panel.y + 92 + row * 70, 96, 60);
+                var label = _charEmpty[i]
+                    ? "Empty " + i
+                    : (_charNames[i] ?? "?") + "\n" + (_charClasses[i] ?? "") + " Lv" + _charLevels[i];
+                if (_selectedSlot == i)
+                {
+                    GUI.color = new Color(0.35f, 0.5f, 0.4f);
+                }
+
+                if (GUI.Button(r, label))
+                {
+                    _selectedSlot = i;
+                    _confirmDelete = false;
+                }
+
+                GUI.color = Color.white;
+            }
+
+            _charNameDraft = GUI.TextField(new Rect(panel.x + 16, panel.y + 250, 408, 26), _charNameDraft ?? "Adventurer");
+            if (_charEmpty[_selectedSlot])
+            {
+                if (GUI.Button(new Rect(panel.x + 16, panel.y + 290, 408, 32), "Create Adventurer in slot " + _selectedSlot))
+                {
+                    var nm = string.IsNullOrEmpty(_charNameDraft) ? "Adventurer" : _charNameDraft;
+                    if (nm.Trim().Length < 2)
+                    {
+                        _status = "name too short";
+                    }
+                    else
+                    {
+                        _input?.RequestCharCreateSlot(_selectedSlot, nm);
+                        _status = "creating…";
+                    }
+                }
+            }
+            else
+            {
+                if (GUI.Button(new Rect(panel.x + 16, panel.y + 290, 200, 32), "Enter world"))
+                {
+                    _input?.RequestCharSelect(_selectedSlot);
+                    _status = "entering…";
+                }
+
+                if (!_confirmDelete)
+                {
+                    if (GUI.Button(new Rect(panel.x + 224, panel.y + 290, 200, 32), "Delete…"))
+                    {
+                        _confirmDelete = true;
+                    }
+                }
+                else if (GUI.Button(new Rect(panel.x + 224, panel.y + 290, 200, 32), "Confirm delete"))
+                {
+                    _input?.RequestCharDelete(_selectedSlot);
+                    _confirmDelete = false;
+                    _status = "deleted slot";
+                }
+            }
+        }
+    }
+
+    private void DrawCharCreate()
+    {
+        if (_charNameSet || _gatePhase < 3)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 180f, GuiH * 0.28f, 360f, 140f);
+        GUI.color = new Color(0.1f, 0.12f, 0.16f, 0.96f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 12, rect.y + 8, 336, 20), "Create Adventurer");
+        _charNameDraft = GUI.TextField(new Rect(rect.x + 12, rect.y + 36, 336, 24), _charNameDraft ?? "Adventurer");
+        if (GUI.Button(new Rect(rect.x + 100, rect.y + 80, 160, 28), "Enter Ashen Town"))
+        {
+            _input?.RequestCharCreate(
+                string.IsNullOrEmpty(_charNameDraft) ? "Adventurer" : _charNameDraft,
+                "adventurer");
+            _status = "creating character";
+        }
+    }
+
+    private void DrawInteractPanel()
+    {
+        if (!_showInteract)
+        {
+            return;
+        }
+
+        var rect = new Rect(40f, 140f, 360f, 260f);
+        GUI.color = new Color(0.1f, 0.11f, 0.14f, 0.95f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 340, 40), _interactKind + "\n" + _interactLine);
+
+        var y = rect.y + 55f;
+        if (!string.IsNullOrEmpty(_shopId))
+        {
+            for (var i = 0; i < _shopItemIds.Count; i++)
+            {
+                if (GUI.Button(new Rect(rect.x + 10, y, 340, 22),
+                        "Buy " + _shopItemIds[i] + " (" + _shopBuyPrices[i] + "g)"))
+                {
+                    _input?.RequestShopBuy(_shopId, _shopItemIds[i]);
+                }
+
+                y += 24f;
+            }
+        }
+
+        for (var i = 0; i < _questIds.Count; i++)
+        {
+            var label = _questNames[i] + " [" + _questStates[i] + "]";
+            if (_questStates[i] == "available" && GUI.Button(new Rect(rect.x + 10, y, 340, 22), "Accept " + label))
+            {
+                _input?.RequestQuestAccept(_questIds[i]);
+            }
+            else if (_questStates[i] == "ready" && GUI.Button(new Rect(rect.x + 10, y, 340, 22), "Turn in " + label))
+            {
+                _input?.RequestQuestTurnIn(_questIds[i]);
+            }
+            else
+            {
+                GUI.Label(new Rect(rect.x + 10, y, 340, 22), label);
+            }
+
+            y += 24f;
+        }
+
+        if (_interactKind == "homestone")
+        {
+            if (GUI.Button(new Rect(rect.x + 10, y, 160, 24), "Set home"))
+            {
+                _input?.RequestHomestone("set");
+            }
+
+            if (GUI.Button(new Rect(rect.x + 180, y, 160, 24), "Teleport home"))
+            {
+                _input?.RequestHomestone("teleport");
+            }
+
+            y += 28f;
+        }
+
+        if (GUI.Button(new Rect(rect.x + rect.width - 80, rect.y + rect.height - 30, 70, 24), "Close"))
+        {
+            _showInteract = false;
+        }
+    }
+
+    private void DrawQuestLog()
+    {
+        if (!_showQuestLog)
+        {
+            return;
+        }
+
+        var rect = new Rect(20f, 180f, 280f, 140f);
+        GUI.color = new Color(0.08f, 0.1f, 0.12f, 0.92f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 8, rect.y + 6, 260, 20), "Quests (J)");
+        GUI.Label(new Rect(rect.x + 8, rect.y + 28, 260, 100),
+            string.IsNullOrEmpty(_questLogText) ? "(none active)" : _questLogText);
+    }
+
+    private void DrawPartyInvite()
+    {
+        if (string.IsNullOrEmpty(_partyInviteId) || Time.time > _partyInviteUntil)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 160f, 120f, 320f, 72f);
+        GUI.color = new Color(0.12f, 0.14f, 0.18f, 0.95f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, rect.width - 20, 22),
+            "Party invite from " + _partyInviteFrom);
+        if (GUI.Button(new Rect(rect.x + 20, rect.y + 36, 120, 26), "Accept"))
+        {
+            _input?.RequestPartyRespond(_partyInviteId, true);
+            _partyInviteId = "";
+            _status = "accepted party";
+        }
+
+        if (GUI.Button(new Rect(rect.x + 160, rect.y + 36, 120, 26), "Decline"))
+        {
+            _input?.RequestPartyRespond(_partyInviteId, false);
+            _partyInviteId = "";
+            _status = "declined party";
+        }
+    }
+
+    private void DrawPartyPanel()
+    {
+        if (string.IsNullOrEmpty(_partyId))
+        {
+            return;
+        }
+
+        var rows = Mathf.Max(1, _partyMemberNames.Count);
+        var rect = new Rect(10f, 118f, 240f, 28f + rows * 28f);
+        GUI.color = new Color(0.1f, 0.12f, 0.16f, 0.92f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 8, rect.y + 4, rect.width - 16, 18), "Party HUD");
+        for (var i = 0; i < _partyMemberNames.Count; i++)
+        {
+            var y = rect.y + 24f + i * 28f;
+            var label = "Lv" + _partyMemberLevel[i] + " " + _partyMemberClass[i] + " " + _partyMemberNames[i];
+            GUI.Label(new Rect(rect.x + 8, y, 220, 14), label);
+            var hpRatio = _partyMemberMaxHp[i] <= 0 ? 0f : (float)_partyMemberHp[i] / _partyMemberMaxHp[i];
+            var mpRatio = _partyMemberMaxMp[i] <= 0 ? 0f : (float)_partyMemberMp[i] / _partyMemberMaxMp[i];
+            DrawResourceBar(new Rect(rect.x + 8, y + 14, 160, 5), hpRatio, Color.red, "");
+            DrawResourceBar(new Rect(rect.x + 8, y + 20, 160, 4), mpRatio, new Color(0.3f, 0.55f, 1f), "");
+        }
+
+        if (GUI.Button(new Rect(rect.x + rect.width - 70f, rect.y + 4, 60, 20), "Leave"))
+        {
+            _input?.RequestPartyLeave();
+            _status = "leaving party";
+        }
+    }
+
+    private void DrawGuildInvite()
+    {
+        if (string.IsNullOrEmpty(_guildInviteId) || Time.time > _guildInviteUntil)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 160f, 80f, 320f, 70f);
+        GUI.color = new Color(0.12f, 0.14f, 0.2f, 0.95f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 300, 20),
+            _guildInviteFrom + " → guild " + _guildInviteName);
+        if (GUI.Button(new Rect(rect.x + 20, rect.y + 36, 120, 26), "Join"))
+        {
+            _input?.RequestGuildRespond(_guildInviteId, true);
+            _guildInviteId = "";
+        }
+
+        if (GUI.Button(new Rect(rect.x + 160, rect.y + 36, 120, 26), "Decline"))
+        {
+            _input?.RequestGuildRespond(_guildInviteId, false);
+            _guildInviteId = "";
+        }
+    }
+
+    private void DrawTradeInvite()
+    {
+        if (string.IsNullOrEmpty(_tradeInviteId) || Time.time > _tradeInviteUntil)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 160f, 80f, 320f, 70f);
+        GUI.color = new Color(0.14f, 0.12f, 0.1f, 0.95f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 300, 20), "Trade from " + _tradeInviteFrom);
+        if (GUI.Button(new Rect(rect.x + 20, rect.y + 36, 120, 26), "Accept"))
+        {
+            _input?.RequestTradeRespond(_tradeInviteId, true);
+            _tradeInviteId = "";
+        }
+
+        if (GUI.Button(new Rect(rect.x + 160, rect.y + 36, 120, 26), "Decline"))
+        {
+            _input?.RequestTradeRespond(_tradeInviteId, false);
+            _tradeInviteId = "";
+        }
+    }
+
+    private void DrawTradePanel()
+    {
+        if (string.IsNullOrEmpty(_tradeId))
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 180f, GuiH * 0.52f, 360f, 160f);
+        GUI.color = new Color(0.1f, 0.11f, 0.14f, 0.96f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        var offerLine = "";
+        for (var i = 0; i < _tradeOfferSlots.Count; i++)
+        {
+            var sid = _invSlots[_tradeOfferSlots[i]];
+            offerLine += (sid ?? "?") + "x" + _tradeOfferQtys[i] + " ";
+        }
+
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 340, 50),
+            "Trade with " + _tradeTheirName + "\n" + _tradeOfferSummary +
+            "\nItems: " + (string.IsNullOrEmpty(offerLine) ? "(LMB inventory)" : offerLine) +
+            "\nYou " + (_tradeMyConfirm ? "READY" : "…") +
+            " / Them " + (_tradeTheirConfirm ? "READY" : "…"));
+        if (GUI.Button(new Rect(rect.x + 10, rect.y + 70, 80, 24), "+10g"))
+        {
+            _tradeMyGold += 10;
+            SendTradeOffers();
+        }
+
+        if (GUI.Button(new Rect(rect.x + 100, rect.y + 70, 80, 24), "Clear items"))
+        {
+            _tradeOfferSlots.Clear();
+            _tradeOfferQtys.Clear();
+            SendTradeOffers();
+        }
+
+        if (GUI.Button(new Rect(rect.x + 190, rect.y + 70, 80, 24), "Confirm"))
+        {
+            _input?.RequestTradeConfirm();
+        }
+
+        if (GUI.Button(new Rect(rect.x + 280, rect.y + 70, 70, 24), "Cancel"))
+        {
+            _input?.RequestTradeCancel();
+            _tradeId = "";
+            _tradeOfferSlots.Clear();
+            _tradeOfferQtys.Clear();
+        }
+    }
+
+    private void SendTradeOffers()
+    {
+        var parts = new List<string>();
+        for (var i = 0; i < _tradeOfferSlots.Count; i++)
+        {
+            parts.Add("{\"slotIndex\":" + _tradeOfferSlots[i] + ",\"quantity\":" + _tradeOfferQtys[i] + "}");
+        }
+
+        _input?.RequestTradeOfferRaw(_tradeMyGold, "[" + string.Join(",", parts) + "]");
+    }
+
+    private void DrawSkillTreePanel()
+    {
+        if (!_showSkillTree)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 160f, 160f, 320f, 200f);
+        GUI.color = new Color(0.09f, 0.1f, 0.14f, 0.96f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 8, rect.y + 6, 300, 20),
+            "Skills — points: " + _skillPoints + " (Trainer / level-ups)");
+        var y = rect.y + 30f;
+        for (var i = 0; i < _unlockableSkills.Count && i < 6; i++)
+        {
+            var sid = _unlockableSkills[i];
+            if (GUI.Button(new Rect(rect.x + 8, y, 300, 22), "Unlock " + sid + " (1pt)"))
+            {
+                _input?.RequestSkillUnlock(sid);
+            }
+
+            y += 24f;
+        }
+
+        if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 28, 100, 22), "Close"))
+        {
+            _showSkillTree = false;
+        }
+    }
+
+    private void DrawAuctionPanel()
+    {
+        if (!_showAuction)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 200f, 140f, 400f, 240f);
+        GUI.color = new Color(0.09f, 0.1f, 0.14f, 0.96f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 8, rect.y + 6, 380, 18), "Auction (talk to Auctioneer Lira)");
+        var y = rect.y + 28f;
+        for (var i = 0; i < _auctionIds.Count && i < 6; i++)
+        {
+            if (GUI.Button(new Rect(rect.x + 8, y, 300, 22), "Buy " + _auctionLabels[i]))
+            {
+                _input?.RequestAuctionBuy(_auctionIds[i]);
+            }
+
+            y += 24f;
+        }
+
+        _auctionSellItem = GUI.TextField(new Rect(rect.x + 8, rect.y + rect.height - 56, 160, 22), _auctionSellItem ?? "item_dust");
+        if (GUI.Button(new Rect(rect.x + 176, rect.y + rect.height - 56, 100, 22), "Sell 1 @20g"))
+        {
+            _input?.RequestAuctionSell(_auctionSellItem, 1, 20);
+        }
+
+        if (GUI.Button(new Rect(rect.x + 286, rect.y + rect.height - 56, 100, 22), "Refresh"))
+        {
+            _input?.RequestAuctionList();
+        }
+
+        if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 28, 100, 22), "Close"))
+        {
+            _showAuction = false;
+        }
+    }
+
+    private void DrawInstanceHud()
+    {
+        if (_instanceExpiresAt <= 0)
+        {
+            return;
+        }
+
+        var leftMs = _instanceExpiresAt - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (leftMs < 0)
+        {
+            leftMs = 0;
+        }
+
+        var mins = leftMs / 60000;
+        var secs = (leftMs % 60000) / 1000;
+        var phase = _bossPhase > 0 ? "  phase " + _bossPhase : "";
+        GUI.Label(new Rect(GuiW * 0.5f - 90f, 90f, 200, 20),
+            "Instance " + mins + "m " + secs + "s" + phase);
+    }
+
+    private void ParseSkillLists(string json)
+    {
+        _unlockableSkills.Clear();
+        _unlockedSkills.Clear();
+        var uIdx = json.IndexOf("\"unlockable\"");
+        if (uIdx >= 0)
+        {
+            var cursor = uIdx;
+            while (true)
+            {
+                var q = json.IndexOf('"', cursor);
+                if (q < 0 || q > uIdx + 800)
+                {
+                    break;
+                }
+
+                // crude: find quoted skill ids after unlockable
+                break;
+            }
+        }
+
+        // Parse unlockable array strings
+        var unlockSlice = JsonUtil.SliceAround(json, "\"unlockable\"", 0, 800);
+        var skillSlice = JsonUtil.SliceAround(json, "\"skillIds\"", 0, 800);
+        ExtractQuotedIds(unlockSlice, _unlockableSkills);
+        ExtractQuotedIds(skillSlice, _unlockedSkills);
+    }
+
+    private static void ExtractQuotedIds(string slice, List<string> into)
+    {
+        if (string.IsNullOrEmpty(slice))
+        {
+            return;
+        }
+
+        var cursor = 0;
+        while (cursor < slice.Length)
+        {
+            var a = slice.IndexOf('"', cursor);
+            if (a < 0)
+            {
+                break;
+            }
+
+            var b = slice.IndexOf('"', a + 1);
+            if (b < 0)
+            {
+                break;
+            }
+
+            var s = slice.Substring(a + 1, b - a - 1);
+            if (s.Length > 2 && !s.Contains(":") && s != "unlockable" && s != "skillIds")
+            {
+                into.Add(s);
+            }
+
+            cursor = b + 1;
+        }
+    }
+
+    private void ParseAuction(string json)
+    {
+        _auctionIds.Clear();
+        _auctionLabels.Clear();
+        var idx = json.IndexOf("\"listings\"");
+        if (idx < 0)
+        {
+            return;
+        }
+
+        var cursor = idx;
+        while (true)
+        {
+            var idAt = json.IndexOf("\"id\":\"", cursor);
+            if (idAt < 0 || idAt > idx + 5000)
+            {
+                break;
+            }
+
+            var slice = json.Substring(idAt, Math.Min(220, json.Length - idAt));
+            var id = JsonUtil.ExtractString(slice, "id");
+            var item = JsonUtil.ExtractString(slice, "itemId");
+            var seller = JsonUtil.ExtractString(slice, "sellerName");
+            JsonUtil.TryInt(slice, "price", out var price);
+            JsonUtil.TryInt(slice, "quantity", out var qty);
+            if (!string.IsNullOrEmpty(id))
+            {
+                _auctionIds.Add(id);
+                _auctionLabels.Add((item ?? "?") + " x" + qty + " @" + price + "g (" + seller + ")");
+            }
+
+            cursor = idAt + 6;
+        }
+    }
+
+    private void DrawFriendsPanel()
+    {
+        if (!_showFriends)
+        {
+            return;
+        }
+
+        var rect = new Rect(10f, 300f, 260f, 180f);
+        GUI.color = new Color(0.09f, 0.1f, 0.14f, 0.95f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 8, rect.y + 6, 240, 18), "Friends (K) — RMB context Add");
+        var y = rect.y + 28f;
+        for (var i = 0; i < _friendNames.Count && i < 6; i++)
+        {
+            var line = (_friendOnline[i] ? "[on] " : "[off] ") + _friendNames[i];
+            if (GUI.Button(new Rect(rect.x + 8, y, 170, 20), line))
+            {
+                if (_friendOnline[i] && !string.IsNullOrEmpty(_friendPlayerIds[i]))
+                {
+                    _whisperTargetName = _friendNames[i];
+                    _chatFocused = true;
+                }
+            }
+
+            if (GUI.Button(new Rect(rect.x + 184, y, 60, 20), "X"))
+            {
+                _input?.RequestFriendRemove(_friendTokens[i]);
+            }
+
+            y += 22f;
+        }
+
+        _guildCreateDraft = GUI.TextField(new Rect(rect.x + 8, rect.y + rect.height - 48, 150, 20), _guildCreateDraft ?? "");
+        if (GUI.Button(new Rect(rect.x + 164, rect.y + rect.height - 48, 80, 20), "Create guild"))
+        {
+            _input?.RequestGuildCreate(_guildCreateDraft);
+        }
+
+        if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 24, 120, 20), "Leave guild"))
+        {
+            _input?.RequestGuildLeave();
+        }
+    }
+
+    private void DrawSettingsPanel()
+    {
+        if (!_showSettings)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 160f, GuiH * 0.5f - 160f, 320f, 320f);
+        GUI.color = new Color(0.09f, 0.1f, 0.14f, 0.96f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 8, rect.y + 6, 300, 18), "Settings (Esc / U)");
+        _showNameplates = GUI.Toggle(new Rect(rect.x + 8, rect.y + 32, 300, 20), _showNameplates, " Show nameplates");
+        GUI.Label(new Rect(rect.x + 8, rect.y + 56, 300, 18), "UI scale " + _uiScale.ToString("0.0"));
+        var prevScale = _uiScale;
+        _uiScale = GUI.HorizontalSlider(new Rect(rect.x + 8, rect.y + 78, 300, 18), _uiScale, 0.8f, 1.4f);
+        if (Mathf.Abs(_uiScale - prevScale) > 0.001f)
+        {
+            PersistUiScale();
+        }
+
+        GUI.Label(new Rect(rect.x + 8, rect.y + 104, 300, 18), "Resolution");
+        var labels = new[] { "1280x720", "1600x900", "1920x1080", "Native" };
+        for (var i = 0; i < labels.Length; i++)
+        {
+            var r = new Rect(rect.x + 8 + (i % 2) * 150, rect.y + 126 + (i / 2) * 26, 144, 22);
+            var on = _resPresetIndex == i;
+            if (GUI.Toggle(r, on, " " + labels[i]) && !on)
+            {
+                _resPresetIndex = i;
+            }
+        }
+
+        if (GUI.Button(new Rect(rect.x + 8, rect.y + 186, 140, 26), "Apply resolution"))
+        {
+            ApplyResolutionPreset(_resPresetIndex);
+        }
+
+#if UNITY_EDITOR
+        GUI.Label(new Rect(rect.x + 8, rect.y + 218, 300, 36),
+            "Editor: set Game view size to match. Builds apply Screen.SetResolution.");
+#else
+        GUI.Label(new Rect(rect.x + 8, rect.y + 218, 300, 36),
+            "Cam: Z/C or RMB-drag  |  WASD move  |  I inventory");
+#endif
+
+        if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 40, 140, 28), "Log out"))
+        {
+            LogoutToLogin();
+        }
+
+        if (GUI.Button(new Rect(rect.x + 160, rect.y + rect.height - 40, 140, 28), "Close"))
+        {
+            _showSettings = false;
+        }
+    }
+
+    private void ApplyResolutionPreset(int index, bool savePrefs = true)
+    {
+        index = Mathf.Clamp(index, 0, ResPresets.Length - 1);
+        _resPresetIndex = index;
+        if (savePrefs)
+        {
+            PlayerPrefs.SetInt("gaaacha_res_preset", index);
+            PlayerPrefs.Save();
+        }
+
+        var p = ResPresets[index];
+        if (p.x <= 0 || p.y <= 0)
+        {
+            var w = Display.main != null ? Display.main.systemWidth : Screen.currentResolution.width;
+            var h = Display.main != null ? Display.main.systemHeight : Screen.currentResolution.height;
+            Screen.fullScreenMode = FullScreenMode.FullScreenWindow;
+            Screen.SetResolution(w, h, FullScreenMode.FullScreenWindow);
+            _status = "resolution native " + w + "x" + h;
+            return;
+        }
+
+        Screen.fullScreenMode = FullScreenMode.Windowed;
+        Screen.SetResolution(p.x, p.y, FullScreenMode.Windowed);
+#if UNITY_EDITOR
+        _status = "resolution " + p.x + "x" + p.y + " (set Game view to match)";
+#else
+        _status = "resolution " + p.x + "x" + p.y;
+#endif
+    }
+
+    private async void LogoutToLogin()
+    {
+        _showSettings = false;
+        _showInventory = false;
+        _inWorld = false;
+        _gatePhase = 0;
+        _charNameSet = false;
+        _status = "logging out…";
+        _world?.ClearSessionEntities();
+        if (_net != null)
+        {
+            try
+            {
+                await _net.DisconnectAsync();
+                await _net.ConnectAsync(NetClient.DefaultUrl);
+                await _net.SendRawAsync(
+                    "{\"type\":\"request_hello\",\"guestToken\":\"" + _guestToken + "\"}");
+                _status = "logged out — choose login or guest";
+            }
+            catch (Exception ex)
+            {
+                _status = "logout reconnect failed: " + ex.Message;
+            }
+        }
+    }
+
+    private void ParsePartyMembersFull(string json)
+    {
+        _partyMemberIds.Clear();
+        _partyMemberNames.Clear();
+        _partyMemberHp.Clear();
+        _partyMemberMaxHp.Clear();
+        _partyMemberMp.Clear();
+        _partyMemberMaxMp.Clear();
+        _partyMemberLevel.Clear();
+        _partyMemberClass.Clear();
+        var names = new List<string>();
+        var idx = json.IndexOf("\"members\"");
+        if (idx < 0)
+        {
+            _partyMembersLine = "";
+            return;
+        }
+
+        var cursor = idx;
+        while (true)
+        {
+            var idAt = json.IndexOf("\"id\":\"", cursor);
+            if (idAt < 0 || idAt > idx + 2500)
+            {
+                break;
+            }
+
+            var slice = json.Substring(idAt, Math.Min(220, json.Length - idAt));
+            var id = JsonUtil.ExtractString(slice, "id");
+            var name = JsonUtil.ExtractString(slice, "name");
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
+            {
+                cursor = idAt + 6;
+                continue;
+            }
+
+            JsonUtil.TryInt(slice, "hp", out var hp);
+            JsonUtil.TryInt(slice, "maxHp", out var maxHp);
+            JsonUtil.TryInt(slice, "mp", out var mp);
+            JsonUtil.TryInt(slice, "maxMp", out var maxMp);
+            JsonUtil.TryInt(slice, "level", out var level);
+            var classId = JsonUtil.ExtractString(slice, "classId") ?? "?";
+            _partyMemberIds.Add(id);
+            _partyMemberNames.Add(name);
+            _partyMemberHp.Add(hp);
+            _partyMemberMaxHp.Add(maxHp > 0 ? maxHp : 1);
+            _partyMemberMp.Add(mp);
+            _partyMemberMaxMp.Add(maxMp > 0 ? maxMp : 1);
+            _partyMemberLevel.Add(level > 0 ? level : 1);
+            _partyMemberClass.Add(classId);
+            names.Add(name);
+            cursor = idAt + 6;
+        }
+
+        _partyMembersLine = string.Join(", ", names);
+    }
+
+    private void ParseFriends(string json)
+    {
+        _friendNames.Clear();
+        _friendTokens.Clear();
+        _friendOnline.Clear();
+        _friendPlayerIds.Clear();
+        var idx = json.IndexOf("\"friends\"");
+        if (idx < 0)
+        {
+            return;
+        }
+
+        var cursor = idx;
+        while (true)
+        {
+            var tokAt = json.IndexOf("\"guestToken\":\"", cursor);
+            if (tokAt < 0 || tokAt > idx + 4000)
+            {
+                break;
+            }
+
+            var slice = json.Substring(tokAt, Math.Min(200, json.Length - tokAt));
+            var token = JsonUtil.ExtractString(slice, "guestToken");
+            var name = JsonUtil.ExtractString(slice, "name");
+            var playerId = JsonUtil.ExtractString(slice, "playerId");
+            if (string.IsNullOrEmpty(token))
+            {
+                cursor = tokAt + 10;
+                continue;
+            }
+
+            _friendTokens.Add(token);
+            _friendNames.Add(string.IsNullOrEmpty(name) ? token : name);
+            _friendOnline.Add(slice.Contains("\"online\":true"));
+            _friendPlayerIds.Add(playerId == "null" ? "" : (playerId ?? ""));
+            cursor = tokAt + 10;
+        }
+    }
+
+    private static string ParsePartyMembers(string json)
+    {
+        var names = new List<string>();
+        var idx = json.IndexOf("\"members\"");
+        if (idx < 0)
+        {
+            return "";
+        }
+
+        var part = json.Substring(idx);
+        var cursor = 0;
+        while (cursor < part.Length && names.Count < 4)
+        {
+            var nIdx = part.IndexOf("\"name\":\"", cursor);
+            if (nIdx < 0)
+            {
+                break;
+            }
+
+            var start = nIdx + "\"name\":\"".Length;
+            var end = part.IndexOf('"', start);
+            if (end < 0)
+            {
+                break;
+            }
+
+            names.Add(part.Substring(start, end - start));
+            cursor = end + 1;
+        }
+
+        if (names.Count == 0)
+        {
+            return "";
+        }
+
+        var line = names[0];
+        for (var i = 1; i < names.Count; i++)
+        {
+            line += ", " + names[i];
+        }
+
+        return line;
+    }
+
     private void DrawToast()
     {
         if (string.IsNullOrEmpty(_comingSoonToast) || Time.time > _comingSoonUntil)
@@ -2122,7 +4662,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var rect = new Rect(Screen.width * 0.5f - 140f, Screen.height * 0.35f, 280f, 40f);
+        var rect = new Rect(GuiW * 0.5f - 140f, GuiH * 0.35f, 280f, 40f);
         GUI.color = new Color(0.15f, 0.12f, 0.08f, 0.92f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = Color.white;
@@ -2138,7 +4678,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         var mouse = Mouse.current;
         var pos = mouse != null ? mouse.position.ReadValue() : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
-        var gui = new Vector2(pos.x, Screen.height - pos.y);
+        var gui = ScreenToGui(pos);
         var rect = new Rect(gui.x + 12f, gui.y + 12f, 180f, 54f);
         GUI.color = new Color(0.1f, 0.1f, 0.12f, 0.95f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
@@ -2149,7 +4689,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private void DrawBuffRow()
     {
         var x = 220f;
-        var y = Screen.height - 52f;
+        var y = GuiH - 52f;
         for (var i = 0; i < _buffs.Count; i++)
         {
             var b = _buffs[i];
@@ -2172,7 +4712,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var slotW = 56f;
         var slotH = 56f;
         var startX = 20f;
-        var y = Screen.height - 120f;
+        var y = GuiH - 120f;
         for (var i = 0; i < _skillIds.Length; i++)
         {
             var id = _skillIds[i];
@@ -2264,7 +4804,7 @@ public static class NetworkBootstrapLoader
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void EnsureBootstrap()
     {
-        if (Object.FindAnyObjectByType<NetworkBootstrap>() != null)
+        if (UnityEngine.Object.FindAnyObjectByType<NetworkBootstrap>() != null)
         {
             return;
         }

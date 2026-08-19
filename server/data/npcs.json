@@ -1,0 +1,217 @@
+[
+  {
+    "id": "npc_weapon",
+    "name": "Weapon Smith Borin",
+    "mapId": "town_ashen",
+    "x": 5,
+    "y": 7,
+    "hitRadius": 0.4,
+    "line": "Blades and bows for coin.",
+    "interact": "shop_weapon"
+  },
+  {
+    "id": "npc_item",
+    "name": "Provisioner Elna",
+    "mapId": "town_ashen",
+    "x": 8,
+    "y": 7,
+    "hitRadius": 0.4,
+    "line": "Potions and supplies.",
+    "interact": "shop_item"
+  },
+  {
+    "id": "npc_cook",
+    "name": "Cook Maro",
+    "mapId": "town_ashen",
+    "x": 5,
+    "y": 11,
+    "hitRadius": 0.4,
+    "line": "Hot stew keeps you standing.",
+    "interact": "shop_cook"
+  },
+  {
+    "id": "npc_skill",
+    "name": "Scroll Seller Vex",
+    "mapId": "town_ashen",
+    "x": 8,
+    "y": 11,
+    "hitRadius": 0.4,
+    "line": "Skills for those who can pay.",
+    "interact": "shop_skill"
+  },
+  {
+    "id": "npc_trainer",
+    "name": "Trainer Kael",
+    "mapId": "town_ashen",
+    "x": 11,
+    "y": 9,
+    "hitRadius": 0.4,
+    "line": "Show me your stance, Wanderer.",
+    "interact": "trainer"
+  },
+  {
+    "id": "npc_quest_mira",
+    "name": "Sister Mira",
+    "mapId": "town_ashen",
+    "x": 14,
+    "y": 6,
+    "hitRadius": 0.4,
+    "line": "The ridge grows restless.",
+    "interact": "quest"
+  },
+  {
+    "id": "npc_quest_ryn",
+    "name": "Scout Ryn",
+    "mapId": "town_ashen",
+    "x": 14,
+    "y": 12,
+    "hitRadius": 0.4,
+    "line": "Bring me news from the field.",
+    "interact": "quest"
+  },
+  {
+    "id": "npc_homestone",
+    "name": "Homestone",
+    "mapId": "town_ashen",
+    "x": 6,
+    "y": 9,
+    "hitRadius": 0.5,
+    "line": "Recall to your bound stone.",
+    "interact": "homestone"
+  },
+  {
+    "id": "npc_guard",
+    "name": "Gate Guard",
+    "mapId": "town_ashen",
+    "x": 20,
+    "y": 9,
+    "hitRadius": 0.45,
+    "line": "East gate leads to the Ridge.",
+    "interact": "flavor"
+  },
+  {
+    "id": "npc_auction",
+    "name": "Auctioneer Lira",
+    "mapId": "town_ashen",
+    "x": 17,
+    "y": 9,
+    "hitRadius": 0.4,
+    "line": "Buy and sell on the board.",
+    "interact": "auction"
+  },
+  {
+    "id": "npc_tower_ascend",
+    "name": "Ascendant Rhea",
+    "mapId": "town_ashen",
+    "x": 12,
+    "y": 5,
+    "hitRadius": 0.4,
+    "line": "Ascend the Tower. Clear each floor.",
+    "interact": "quest"
+  },
+  {
+    "id": "npc_card_vendor",
+    "name": "Card Broker Sil",
+    "mapId": "town_ashen",
+    "x": 15,
+    "y": 7,
+    "hitRadius": 0.4,
+    "line": "Class cards reshape your path.",
+    "interact": "shop_item"
+  },
+  {
+    "id": "npc_switch_f1",
+    "name": "Rune Switch F1",
+    "mapId": "tower_f1",
+    "x": 20,
+    "y": 10,
+    "hitRadius": 0.35,
+    "line": "The rune clicks open.",
+    "interact": "switch",
+    "switchId": "sw_tower_f1"
+  },
+  {
+    "id": "npc_switch_f2",
+    "name": "Rune Switch F2",
+    "mapId": "tower_f2",
+    "x": 20,
+    "y": 10,
+    "hitRadius": 0.35,
+    "line": "Boss gate unlocked.",
+    "interact": "switch",
+    "switchId": "sw_tower_f2"
+  },
+  {
+    "id": "npc_switch_f3",
+    "name": "Rune Switch F3",
+    "mapId": "tower_f3",
+    "x": 22,
+    "y": 10,
+    "hitRadius": 0.35,
+    "line": "Path forward opens.",
+    "interact": "switch",
+    "switchId": "sw_tower_f3"
+  },
+  {
+    "id": "npc_switch_f4",
+    "name": "Rune Switch F4",
+    "mapId": "tower_f4",
+    "x": 24,
+    "y": 11,
+    "hitRadius": 0.35,
+    "line": "Rest town ahead.",
+    "interact": "switch",
+    "switchId": "sw_tower_f4"
+  },
+  {
+    "id": "npc_switch_f5",
+    "name": "Rune Switch F5",
+    "mapId": "tower_f5",
+    "x": 26,
+    "y": 11,
+    "hitRadius": 0.35,
+    "line": "Final gate unlocked.",
+    "interact": "switch",
+    "switchId": "sw_tower_f5"
+  },
+  {
+    "id": "npc_town2_rest",
+    "name": "Restkeeper Ola",
+    "mapId": "tower_town_2",
+    "x": 8,
+    "y": 8,
+    "hitRadius": 0.4,
+    "line": "Rest before the climb.",
+    "interact": "shop_item"
+  },
+  {
+    "id": "npc_town2_quest",
+    "name": "Scout Bren",
+    "mapId": "tower_town_2",
+    "x": 12,
+    "y": 10,
+    "hitRadius": 0.4,
+    "line": "Higher floors await.",
+    "interact": "quest"
+  },
+  {
+    "id": "npc_town3_rest",
+    "name": "Restkeeper Pia",
+    "mapId": "tower_town_3",
+    "x": 8,
+    "y": 8,
+    "hitRadius": 0.4,
+    "line": "The apex is near.",
+    "interact": "shop_item"
+  },
+  {
+    "id": "npc_town3_quest",
+    "name": "Veteran Kael",
+    "mapId": "tower_town_3",
+    "x": 12,
+    "y": 10,
+    "hitRadius": 0.4,
+    "line": "One last ascent.",
+    "interact": "quest"
+  }
+]

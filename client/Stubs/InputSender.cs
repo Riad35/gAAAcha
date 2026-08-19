@@ -127,6 +127,225 @@ public sealed class InputSender
         _ = _net.SendRawAsync("{\"type\":\"request_party_invite\",\"targetId\":\"" + targetId + "\"}");
     }
 
+    public void RequestPartyRespond(string inviteId, bool accept)
+    {
+        var a = accept ? "true" : "false";
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_party_respond\",\"inviteId\":\"" + inviteId + "\",\"accept\":" + a + "}");
+    }
+
+    public void RequestPartyLeave()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_party_leave\"}");
+    }
+
+    public void RequestCharCreate(string name, string classId)
+    {
+        var n = name.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_char_create\",\"name\":\"" + n + "\",\"classId\":\"" + classId + "\"}");
+    }
+
+    public void RequestServerList()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_server_list\"}");
+    }
+
+    public void RequestCharList()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_char_list\"}");
+    }
+
+    public void RequestCharSelect(int slotIndex)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_char_select\",\"slotIndex\":" + slotIndex + "}");
+    }
+
+    public void RequestCharCreateSlot(int slotIndex, string name)
+    {
+        var n = name.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_char_create_slot\",\"slotIndex\":" + slotIndex +
+            ",\"name\":\"" + n + "\"}");
+    }
+
+    public void RequestCharDelete(int slotIndex)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_char_delete\",\"slotIndex\":" + slotIndex + "}");
+    }
+
+    public void RequestWeaponSwap()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_weapon_swap\"}");
+    }
+
+    public void RequestPortal(string portalId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_portal\",\"portalId\":\"" + portalId + "\"}");
+    }
+
+    public void RequestInteract(string targetId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_interact\",\"targetId\":\"" + targetId + "\"}");
+    }
+
+    public void RequestShopBuy(string shopId, string itemId)
+    {
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_shop_buy\",\"shopId\":\"" + shopId + "\",\"itemId\":\"" + itemId + "\",\"quantity\":1}");
+    }
+
+    public void RequestShopSell(string shopId, string itemId)
+    {
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_shop_sell\",\"shopId\":\"" + shopId + "\",\"itemId\":\"" + itemId + "\",\"quantity\":1}");
+    }
+
+    public void RequestUseItem(int slotIndex)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_use_item\",\"slotIndex\":" + slotIndex + "}");
+    }
+
+    public void RequestHomestone(string action)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_homestone\",\"action\":\"" + action + "\"}");
+    }
+
+    public void RequestQuestAccept(string questId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_quest_accept\",\"questId\":\"" + questId + "\"}");
+    }
+
+    public void RequestQuestTurnIn(string questId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_quest_turnin\",\"questId\":\"" + questId + "\"}");
+    }
+
+    public void RequestRegister(string username, string password)
+    {
+        var u = username.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        var p = password.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_register\",\"username\":\"" + u + "\",\"password\":\"" + p + "\"}");
+    }
+
+    public void RequestLogin(string username, string password)
+    {
+        var u = username.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        var p = password.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_login\",\"username\":\"" + u + "\",\"password\":\"" + p + "\"}");
+    }
+
+    public void RequestEquipGear(string slot, string itemIdOrNull)
+    {
+        if (string.IsNullOrEmpty(itemIdOrNull))
+        {
+            _ = _net.SendRawAsync(
+                "{\"type\":\"request_equip_gear\",\"slot\":\"" + slot + "\",\"itemId\":null}");
+            return;
+        }
+
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_equip_gear\",\"slot\":\"" + slot + "\",\"itemId\":\"" + itemIdOrNull + "\"}");
+    }
+
+    public void RequestTradeInvite(string targetId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_trade_invite\",\"targetId\":\"" + targetId + "\"}");
+    }
+
+    public void RequestTradeRespond(string inviteId, bool accept)
+    {
+        var a = accept ? "true" : "false";
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_trade_respond\",\"inviteId\":\"" + inviteId + "\",\"accept\":" + a + "}");
+    }
+
+    public void RequestTradeOffer(int gold, int slotIndex = -1, int quantity = 0)
+    {
+        var offers = slotIndex >= 0 && quantity > 0
+            ? "[{\"slotIndex\":" + slotIndex + ",\"quantity\":" + quantity + "}]"
+            : "[]";
+        RequestTradeOfferRaw(gold, offers);
+    }
+
+    public void RequestTradeOfferRaw(int gold, string offersJson)
+    {
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_trade_offer\",\"gold\":" + gold + ",\"offers\":" + offersJson + "}");
+    }
+
+    public void RequestTradeConfirm()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_trade_confirm\"}");
+    }
+
+    public void RequestTradeCancel()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_trade_cancel\"}");
+    }
+
+    public void RequestFriendAdd(string targetId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_friend_add\",\"targetId\":\"" + targetId + "\"}");
+    }
+
+    public void RequestFriendRemove(string guestToken)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_friend_remove\",\"guestToken\":\"" + guestToken + "\"}");
+    }
+
+    public void RequestGuildCreate(string name)
+    {
+        var n = name.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        _ = _net.SendRawAsync("{\"type\":\"request_guild_create\",\"name\":\"" + n + "\"}");
+    }
+
+    public void RequestGuildInvite(string targetId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_guild_invite\",\"targetId\":\"" + targetId + "\"}");
+    }
+
+    public void RequestGuildRespond(string inviteId, bool accept)
+    {
+        var a = accept ? "true" : "false";
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_guild_respond\",\"inviteId\":\"" + inviteId + "\",\"accept\":" + a + "}");
+    }
+
+    public void RequestGuildLeave()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_guild_leave\"}");
+    }
+
+    public void RequestSkillUnlock(string skillId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_skill_unlock\",\"skillId\":\"" + skillId + "\"}");
+    }
+
+    public void RequestAuctionList()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_auction_list\"}");
+    }
+
+    public void RequestAuctionSell(string itemId, int quantity, int price)
+    {
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_auction_sell\",\"itemId\":\"" + itemId +
+            "\",\"quantity\":" + quantity + ",\"price\":" + price + "}");
+    }
+
+    public void RequestAuctionBuy(string listingId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_auction_buy\",\"listingId\":\"" + listingId + "\"}");
+    }
+
+    public void RequestAuctionCancel(string listingId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_auction_cancel\",\"listingId\":\"" + listingId + "\"}");
+    }
+
     /// <summary>Legacy alias.</summary>
     public void Equip(string weaponId) => EquipWeapon(weaponId);
 }

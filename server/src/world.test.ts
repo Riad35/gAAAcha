@@ -46,6 +46,7 @@ test("killing a monster despawns and respawns after delay", () => {
 test("monster in aggro range hits the player", () => {
   resetWorld();
   const player = spawnPlayer("tick_test");
+  player.entity.mapId = "field_ridge";
   player.entity.x = 6;
   player.entity.y = 10;
   const before = player.entity.hp;
@@ -57,6 +58,7 @@ test("monster in aggro range hits the player", () => {
 test("dead targets cannot be cast on", () => {
   resetWorld();
   const player = spawnPlayer("dead_cast");
+  player.entity.mapId = "field_ridge";
   player.entity.x = 6;
   player.entity.y = 10;
   const slime = liveMonsters.get("monster_slime_1");
@@ -88,6 +90,8 @@ test("threat rises on damage and picks top aggressor", () => {
   resetWorld();
   const a = spawnPlayer("threat_a");
   const b = spawnPlayer("threat_b");
+  a.entity.mapId = "field_ridge";
+  b.entity.mapId = "field_ridge";
   a.entity.x = 6;
   a.entity.y = 10;
   b.entity.x = 6.5;

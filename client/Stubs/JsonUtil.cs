@@ -108,4 +108,48 @@ public static class JsonUtil
 
         return blocked;
     }
+
+    public static HashSet<Vector2Int> ParseHazardTiles(string mapJson)
+    {
+        var hazards = new HashSet<Vector2Int>();
+        var idx = mapJson.IndexOf("\"hazards\"");
+        if (idx < 0)
+        {
+            return hazards;
+        }
+
+        var part = mapJson.Substring(idx);
+        var end = part.IndexOf(']');
+        if (end > 0)
+        {
+            part = part.Substring(0, end + 1);
+        }
+
+        var cursor = 0;
+        while (cursor < part.Length)
+        {
+            var xToken = part.IndexOf("\"x\":", cursor);
+            if (xToken < 0)
+            {
+                break;
+            }
+
+            var yToken = part.IndexOf("\"y\":", xToken);
+            if (yToken < 0 || yToken - xToken > 24)
+            {
+                cursor = xToken + 4;
+                continue;
+            }
+
+            if (TryNumber(part.Substring(xToken, 20), "x", out var x) &&
+                TryNumber(part.Substring(yToken, 20), "y", out var y))
+            {
+                hazards.Add(new Vector2Int(Mathf.RoundToInt(x), Mathf.RoundToInt(y)));
+            }
+
+            cursor = yToken + 4;
+        }
+
+        return hazards;
+    }
 }

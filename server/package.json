@@ -4,14 +4,16 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "test": "tsx --test src/gacha.test.ts src/combat.test.ts src/world.test.ts src/social.test.ts",
+    "test": "tsx --test src/gacha.test.ts src/combat.test.ts src/world.test.ts src/social.test.ts src/hub.test.ts src/tower.test.ts src/combat/sessionStore.test.ts",
     "test:client": "tsx src/test-client.ts"
   },
   "dependencies": {
+    "pg": "^8.23.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.1",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"

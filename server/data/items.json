@@ -16,5 +16,137 @@
     "name": "Star Dust",
     "rarity": "r",
     "kind": "material"
+  },
+  {
+    "id": "item_homestone",
+    "name": "Homestone Scroll",
+    "rarity": "sr",
+    "kind": "consumable",
+    "use": "homestone"
+  },
+  {
+    "id": "item_ration",
+    "name": "Field Ration",
+    "rarity": "r",
+    "kind": "consumable",
+    "use": "heal",
+    "healHp": 25,
+    "healMp": 10
+  },
+  {
+    "id": "item_stew",
+    "name": "Hearty Stew",
+    "rarity": "r",
+    "kind": "consumable",
+    "use": "buff_food",
+    "healHp": 40,
+    "healMp": 15
+  },
+  {
+    "id": "item_bread",
+    "name": "Travel Bread",
+    "rarity": "r",
+    "kind": "consumable",
+    "use": "heal",
+    "healHp": 15,
+    "healMp": 5
+  },
+  {
+    "id": "item_skill_tome",
+    "name": "Skill Tome",
+    "rarity": "sr",
+    "kind": "consumable",
+    "use": "skill_unlock"
+  },
+  {
+    "id": "armor_leather",
+    "name": "Leather Vest",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "armor",
+    "defBonus": 4
+  },
+  {
+    "id": "helm_cap",
+    "name": "Travel Cap",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "helm",
+    "defBonus": 2
+  },
+  {
+    "id": "boots_leather",
+    "name": "Leather Boots",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "boots",
+    "defBonus": 2,
+    "moveSpeedBonus": 0.3
+  },
+  {
+    "id": "gloves_wrap",
+    "name": "Cloth Wraps",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "gloves",
+    "atkBonus": 1
+  },
+  {
+    "id": "acc_ring",
+    "name": "Copper Ring",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "accessory",
+    "magicAtkBonus": 2
+  },
+  {
+    "id": "card_fighter",
+    "name": "Fighter Class Card",
+    "rarity": "sr",
+    "kind": "class_card",
+    "use": "class_card",
+    "classId": "fighter",
+    "resistBonus": {
+      "earth": 5
+    },
+    "weaponCategory": "melee"
+  },
+  {
+    "id": "card_mage",
+    "name": "Mage Class Card",
+    "rarity": "sr",
+    "kind": "class_card",
+    "use": "class_card",
+    "classId": "mage",
+    "resistBonus": {
+      "fire": 5
+    },
+    "weaponCategory": "staff"
+  },
+  {
+    "id": "card_marksman",
+    "name": "Marksman Class Card",
+    "rarity": "sr",
+    "kind": "class_card",
+    "use": "class_card",
+    "classId": "marksman",
+    "resistBonus": {
+      "wind": 5
+    },
+    "weaponCategory": "ranged",
+    "secondaryWeaponId": "gun_spark"
+  },
+  {
+    "id": "card_rogue",
+    "name": "Rogue Class Card",
+    "rarity": "sr",
+    "kind": "class_card",
+    "use": "class_card",
+    "classId": "rogue",
+    "resistBonus": {
+      "dark": 5
+    },
+    "weaponCategory": "dagger",
+    "secondaryWeaponId": "dagger_twin"
   }
 ]
