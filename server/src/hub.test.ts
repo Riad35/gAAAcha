@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { notePlayerDamageThreat } from "./world.js";
-import { acceptQuest, noteKill, turnInQuest } from "./quest.js";
+import { acceptQuest, noteKill, noteTalk, turnInQuest } from "./quest.js";
 import { buyFromShop } from "./shop.js";
 import { usePortal, setHomestone, teleportHome } from "./portal.js";
 import { liveMonsters, resetWorld, spawnPlayer, tickWorld } from "./world.js";
@@ -32,6 +32,9 @@ test("shop buy spends gold", () => {
 test("quest kill step advances", () => {
   resetWorld();
   const p = spawnPlayer("quest_t");
+  assert.equal(acceptQuest(p, "q_meet_trainer").error, undefined);
+  noteTalk(p, "npc_trainer");
+  assert.equal(turnInQuest(p, "q_meet_trainer").error, undefined);
   assert.equal(acceptQuest(p, "q_clear_pests").error, undefined);
   noteKill(p, "pest");
   noteKill(p, "pest");
@@ -41,6 +44,40 @@ test("quest kill step advances", () => {
   const turn = turnInQuest(p, "q_clear_pests");
   assert.equal(turn.error, undefined);
   assert.ok(p.completedQuestIds.includes("q_clear_pests"));
+});
+
+test("main chain locks pests until trainer is done; crypt then marsh; class path needs L20", () => {
+  resetWorld();
+  const p = spawnPlayer("chain_t");
+  const locked = acceptQuest(p, "q_clear_pests");
+  assert.equal(locked.error?.code, "quest_locked");
+  assert.equal(acceptQuest(p, "q_meet_trainer").error, undefined);
+  noteTalk(p, "npc_trainer");
+  assert.equal(turnInQuest(p, "q_meet_trainer").error, undefined);
+  assert.equal(acceptQuest(p, "q_clear_pests").error, undefined);
+  noteKill(p, "pest");
+  noteKill(p, "pest");
+  noteKill(p, "pest");
+  assert.equal(turnInQuest(p, "q_clear_pests").error, undefined);
+  assert.equal(acceptQuest(p, "q_delve_depths").error, undefined);
+  noteKill(p, "crypt");
+  noteKill(p, "crypt");
+  let delve = p.quests.find((x) => x.questId === "q_delve_depths");
+  assert.equal(delve?.stepIndex, 1);
+  assert.equal(delve?.completed, false);
+  noteKill(p, "marsh");
+  noteKill(p, "marsh");
+  delve = p.quests.find((x) => x.questId === "q_delve_depths");
+  assert.ok(delve?.completed);
+  assert.equal(turnInQuest(p, "q_delve_depths").error, undefined);
+  const classEarly = acceptQuest(p, "q_class_path");
+  assert.equal(classEarly.error?.code, "quest_locked");
+  p.completedQuestIds.push("q_tower_f2", "q_tower_f5");
+  p.level = 19;
+  const low = acceptQuest(p, "q_class_path");
+  assert.equal(low.error?.code, "level_too_low");
+  p.level = 20;
+  assert.equal(acceptQuest(p, "q_class_path").error, undefined);
 });
 
 test("neutral pest does not aggro until damaged", () => {
@@ -138,13 +175,30 @@ test("skill unlock spends points; auction list/buy", async () => {
   const { listAuctionItem, buyAuction, auctionSnapshot } = await import("./auction.js");
   const { addItem } = await import("./shop.js");
   const p = spawnPlayer("sk_t");
-  p.unlockedSkillIds = starterSkillsFor("fighter");
-  p.classId = "fighter";
+  p.unlockedSkillIds = starterSkillsFor("adventurer");
+  p.classId = "adventurer";
+  p.level = 5;
   p.skillPoints = 2;
   const unlockable = (await import("./skills.js")).unlockableSkills(p);
-  assert.ok(unlockable.length > 0);
-  assert.ok(unlockSkill(p, unlockable[0]).ok);
+  assert.ok(unlockable.includes("dash"));
+  assert.ok(!unlockable.includes("decoy"));
+  assert.ok(unlockSkill(p, "dash").ok);
   assert.equal(p.skillPoints, 1);
+  const early = unlockSkill(p, "decoy");
+  assert.equal(early.error?.code, "level_too_low");
+
+  const tree = (await import("./skills.js")).skillTreeSnapshot(p);
+  assert.equal(tree.type, "sync_skills");
+  if (tree.type === "sync_skills") {
+    const shot = tree.catalog?.find((c) => c.id === "shot");
+    assert.ok(shot);
+    assert.equal(shot?.name, "Shot");
+    assert.equal(shot?.manaCost, 8);
+    assert.equal(shot?.weaponSlot, 2);
+    const aa = tree.catalog?.find((c) => c.id === "auto_attack");
+    assert.equal(aa?.weaponSlot, 1);
+    assert.ok(tree.classSkillIds?.includes("hook_shot"));
+  }
 
   const seller = spawnPlayer("auc_s");
   const buyer = spawnPlayer("auc_b");
@@ -160,6 +214,35 @@ test("skill unlock spends points; auction list/buy", async () => {
   assert.equal(bought.error, undefined);
   assert.equal(buyer.gold, 75);
   assert.equal(seller.gold, 25);
+});
+
+test("hearty stew heals and applies timed ATK/DEF food buff", async () => {
+  resetWorld();
+  const { useInventoryItem } = await import("./shop.js");
+  const { addItem } = await import("./shop.js");
+  const p = spawnPlayer("stew_t");
+  p.entity.hp = 20;
+  addItem(p, "item_stew", 1);
+  const slot = p.inventory.find((s) => s.itemId === "item_stew");
+  assert.ok(slot);
+  const now = Date.now();
+  const used = useInventoryItem(p, slot.slotIndex, now, { teleportHome: () => ({}) });
+  assert.equal(used.error, undefined);
+  assert.ok(p.entity.hp > 20);
+  const atk = p.statuses.find((s) => s.id === "food_atk");
+  const def = p.statuses.find((s) => s.id === "food_def");
+  assert.equal(atk?.kind, "attr_up");
+  assert.equal(atk?.attr, "atk");
+  assert.equal(atk?.amount, 6);
+  assert.equal(def?.attr, "def");
+  assert.equal(def?.amount, 4);
+  assert.ok((atk?.until ?? 0) > now + 50_000);
+  assert.ok(!p.inventory.some((s) => s.itemId === "item_stew" && s.quantity > 0));
+  addItem(p, "item_stew", 1);
+  const slot2 = p.inventory.find((s) => s.itemId === "item_stew");
+  assert.ok(slot2);
+  useInventoryItem(p, slot2.slotIndex, now + 1000, { teleportHome: () => ({}) });
+  assert.equal(p.statuses.filter((s) => s.id === "food_atk").length, 1);
 });
 
 test("equip armor raises def and grantXp levels up", async () => {
@@ -178,4 +261,32 @@ test("equip armor raises def and grantXp levels up", async () => {
   const msgs = grantXp(p, need, applyGearStats);
   assert.equal(p.level, 2);
   assert.ok(msgs.some((m) => m.type === "sync_xp" && m.level === 2));
+});
+
+test("gear ladder iron needs L8 and ash needs L15; starter bag stays leather-free", async () => {
+  resetWorld();
+  const { equipGear } = await import("./world.js");
+  const { addItem } = await import("./shop.js");
+  const { STARTER_BAG } = await import("./gacha.js");
+  const { itemById } = await import("./data.js");
+  assert.equal(itemById("armor_iron")?.levelReq, 8);
+  assert.equal(itemById("armor_ash")?.levelReq, 15);
+  assert.ok(!STARTER_BAG.some((s) => s.id.includes("armor_") || s.id.includes("helm_") || s.id.includes("boots_") || s.id.includes("gloves_") || s.id.startsWith("acc_")));
+  const p = spawnPlayer("ladder_t");
+  addItem(p, "armor_iron", 1);
+  const denied = equipGear(p, "armor", "armor_iron");
+  assert.equal("type" in denied && denied.type === "error" && denied.code, "level_too_low");
+  assert.equal(p.equippedArmorId, null);
+  assert.ok(p.inventory.some((s) => s.itemId === "armor_iron" && s.quantity === 1));
+  p.level = 8;
+  const okIron = equipGear(p, "armor", "armor_iron");
+  assert.ok("ok" in okIron);
+  assert.equal(p.equippedArmorId, "armor_iron");
+  addItem(p, "helm_ash", 1);
+  const deniedAsh = equipGear(p, "helm", "helm_ash");
+  assert.equal("type" in deniedAsh && deniedAsh.type === "error" && deniedAsh.code, "level_too_low");
+  p.level = 15;
+  const okAsh = equipGear(p, "helm", "helm_ash");
+  assert.ok("ok" in okAsh);
+  assert.equal(p.equippedHelmId, "helm_ash");
 });

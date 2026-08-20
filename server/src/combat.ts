@@ -1,5 +1,7 @@
 import { mapById, skillById, spiritById, weaponById } from "./data.js";
 import { resolveBaseMapId } from "./instance.js";
+import { loadCombatConfig } from "./combat/config.js";
+import { resolveDamage, toCombatElement, type DamageResult } from "./combat/damage.js";
 import type {
   AttrName,
   Element,
@@ -50,6 +52,10 @@ export type CastHit = {
   damage: number;
   hpAfter: number;
   crit: boolean;
+  element?: string;
+  missed?: boolean;
+  advantage?: string;
+  resistHint?: number;
 };
 
 export type CastAim = {
@@ -237,17 +243,6 @@ function attrBonus(session: PlayerSession, attr: AttrName, now: number): number 
   return bonus;
 }
 
-function resistFactor(targetResist: number): number {
-  return Math.max(0.25, 1 - targetResist / 100);
-}
-
-function rollCrit(chance: number, mult: number): { crit: boolean; mult: number } {
-  if (Math.random() < chance) {
-    return { crit: true, mult };
-  }
-  return { crit: false, mult: 1 };
-}
-
 export function resolveAttackElement(session: PlayerSession, skill: SkillDef, weapon: WeaponDef | undefined): Element {
   if (skill.id === "auto_attack") {
     const spirit = session.equippedSpiritId ? spiritById(session.equippedSpiritId) : undefined;
@@ -420,38 +415,78 @@ function computeDamage(
   weapon: WeaponDef | undefined,
   now: number,
   absorb = true,
-): { damage: number; crit: boolean } {
+): { damage: number; crit: boolean; missed: boolean; element: string; advantage: string; resistHint: number } {
   const scaling = resolveScaling(skill, weapon);
-  const power = scaling === "magic"
-    ? session.entity.magicAtk + (weapon?.magicAtkBonus ?? 0) + attrBonus(session, "magicAtk", now)
-    : session.entity.atk + (weapon?.atkBonus ?? 0) + attrBonus(session, "atk", now);
+  const powerAtk = session.entity.atk + (weapon?.atkBonus ?? 0) + attrBonus(session, "atk", now);
+  const powerMatk = session.entity.magicAtk + (weapon?.magicAtkBonus ?? 0) + attrBonus(session, "magicAtk", now);
   const element = resolveAttackElement(session, skill, weapon);
-  const resist = (target.resist?.[element] ?? 0);
-  const mitigation = scaling === "magic"
-    ? target.magicResist + (target.kind === "player"
-      ? (getPlayersHook().find((p) => p.entity.id === target.id)
-        ? attrBonus(getPlayersHook().find((p) => p.entity.id === target.id)!, "magicResist", now)
-        : 0)
-      : 0)
-    : target.def + (target.kind === "player"
-      ? (getPlayersHook().find((p) => p.entity.id === target.id)
-        ? attrBonus(getPlayersHook().find((p) => p.entity.id === target.id)!, "def", now)
-        : 0)
-      : 0);
+  const extraMult = elemDmgMult(session, element, now);
+  const targetSession = target.kind === "player"
+    ? getPlayersHook().find((p) => p.entity.id === target.id)
+    : undefined;
+  const defBonus = targetSession ? attrBonus(targetSession, "def", now) : 0;
+  const mdefBonus = targetSession ? attrBonus(targetSession, "magicResist", now) : 0;
 
-  let raw = Math.max(1, power + skill.damage - mitigation);
+  let flat = skill.damage;
+  let damageType = scaling === "magic" ? "magic" as const : "physical" as const;
   if (skill.damageType === "maxHpPercent") {
-    raw = Math.max(1, Math.floor(target.maxHp * 0.08) + Math.floor(power * 0.25));
+    flat = Math.floor(target.maxHp * 0.08) + Math.floor((scaling === "magic" ? powerMatk : powerAtk) * 0.25);
   }
-  raw = Math.floor(raw * elemDmgMult(session, element, now));
-  raw = Math.floor(raw * resistFactor(resist));
-  const critChance = session.entity.critChance + attrBonus(session, "critChance", now);
-  const critRoll = rollCrit(critChance, session.entity.critDamage);
-  let damage = Math.max(1, Math.floor(raw * critRoll.mult));
+
+  const resolved: DamageResult = resolveDamage({
+    attacker: {
+      atk: powerAtk,
+      matk: powerMatk,
+      critRate: session.entity.critChance + attrBonus(session, "critChance", now),
+      critDamage: session.entity.critDamage,
+      hitRate: 1,
+    },
+    defender: {
+      def: target.def + defBonus,
+      mdef: target.magicResist + mdefBonus,
+      dodgeRate: 0,
+      elementalResist: {
+        [toCombatElement(element)]: (target.resist?.[element] ?? 0) / 100,
+      },
+      element: toCombatElement(target.element),
+    },
+    skill: {
+      damageType,
+      baseDamageMultiplier: 1,
+      flatDamage: flat,
+      element: toCombatElement(element),
+    },
+    extraMult,
+    config: loadCombatConfig(),
+    rng: Math.random,
+  });
+
+  if (resolved.missed) {
+    return { damage: 0, crit: false, missed: true, element, advantage: resolved.advantage, resistHint: 0 };
+  }
+
+  let damage = resolved.damage;
+  if (targetSession) {
+    damage = applyIncomingDamageMult(targetSession, damage, now);
+  }
   if (absorb) {
     damage = absorbShield(target.id, damage, scaling, now);
   }
-  return { damage: Math.max(0, damage), crit: critRoll.crit };
+  return {
+    damage: Math.max(0, damage),
+    crit: resolved.crit,
+    missed: false,
+    element,
+    advantage: resolved.advantage,
+    resistHint: resolved.resistHint,
+  };
+}
+
+function resolveWeaponForSkill(session: PlayerSession, skill: SkillDef): WeaponDef | undefined {
+  if (skill.weaponSlot === 2 && session.equippedWeapon2Id) {
+    return weaponById(session.equippedWeapon2Id) ?? weaponById(session.equippedWeaponId);
+  }
+  return weaponById(session.equippedWeaponId);
 }
 
 function statusFromDef(def: NonNullable<SkillDef["status"]>, now: number, elementOverride?: Element): StatusInstance {
@@ -469,7 +504,22 @@ function statusFromDef(def: NonNullable<SkillDef["status"]>, now: number, elemen
     shieldHp: def.shieldHp,
     element: def.kind === "elem_dmg_up" ? (elementOverride ?? def.element) : def.element,
     elemDmgMult: def.elemDmgMult,
+    dmgTakenMult: def.dmgTakenMult,
   };
+}
+
+/** Apply decoy / DR statuses; consumes decoy on first hit. */
+export function applyIncomingDamageMult(session: PlayerSession, damage: number, now: number): number {
+  pruneStatuses(session, now);
+  let out = damage;
+  const decoyIdx = session.statuses.findIndex((s) => s.kind === "dmg_taken_mult" && s.until > now);
+  if (decoyIdx >= 0) {
+    const decoy = session.statuses[decoyIdx]!;
+    const mult = decoy.dmgTakenMult ?? 0.2;
+    out = Math.max(0, Math.floor(out * mult));
+    session.statuses.splice(decoyIdx, 1);
+  }
+  return out;
 }
 
 function applyStatusToTarget(targetId: string, status: StatusInstance, selfTarget: boolean, session: PlayerSession): void {
@@ -703,7 +753,7 @@ export function validateCast(
     return { type: "error", code: "not_enough_mana", message: "Not enough mana" };
   }
 
-  const weapon = weaponById(session.equippedWeaponId);
+  const weapon = resolveWeaponForSkill(session, skill);
   const isAuto = skill.id === "auto_attack";
   const isAoe = skill.damageType === "aoe";
 
@@ -754,6 +804,9 @@ export function validateCast(
     if (!primary) {
       return { type: "error", code: "invalid_target", message: "Target not found" };
     }
+    if (primary.mapId !== session.entity.mapId) {
+      return { type: "error", code: "invalid_target", message: "Target is on another map" };
+    }
     if (primary.hp <= 0) {
       return { type: "error", code: "target_dead", message: "Target is already dead" };
     }
@@ -802,14 +855,37 @@ export function validateCast(
 
   if ((skill.movement?.kind === "shove" || skill.movement?.kind === "pull") && primary) {
     if (!hasShoveResist(primary.id, now)) {
-      // Ignore caster so adjacent melee shove isn't blocked by the player's hitbox.
       const ignore = [session.entity.id];
-      const dir = skill.movement.kind === "shove"
-        ? { dx: primary.x - session.entity.x, dy: primary.y - session.entity.y }
-        : { dx: session.entity.x - primary.x, dy: session.entity.y - primary.y };
-      if (stepEntity(primary, dir.dx, dir.dy, skill.movement.tiles, ignore)) {
-        movedEntities.push({ id: primary.id, x: primary.x, y: primary.y });
-        lockPlayerMove(primary.id, now);
+      // Hook Shot: adjacent → AoE shove; otherwise pull primary.
+      if (skill.id === "hook_shot") {
+        const gap = rangeGap(session.entity, primary);
+        const near = gap <= 1.55;
+        if (near) {
+          const radius = skill.aoeRadius ?? 1.8;
+          const around = collectAoeTargets(session.entity, radius, session.entity.id);
+          for (const t of around) {
+            if (hasShoveResist(t.id, now)) continue;
+            const dir = { dx: t.x - session.entity.x, dy: t.y - session.entity.y };
+            if (stepEntity(t, dir.dx, dir.dy, skill.movement.tiles, ignore)) {
+              movedEntities.push({ id: t.id, x: t.x, y: t.y });
+              lockPlayerMove(t.id, now);
+            }
+          }
+        } else {
+          const dir = { dx: session.entity.x - primary.x, dy: session.entity.y - primary.y };
+          if (stepEntity(primary, dir.dx, dir.dy, skill.movement.tiles, ignore)) {
+            movedEntities.push({ id: primary.id, x: primary.x, y: primary.y });
+            lockPlayerMove(primary.id, now);
+          }
+        }
+      } else {
+        const dir = skill.movement.kind === "shove"
+          ? { dx: primary.x - session.entity.x, dy: primary.y - session.entity.y }
+          : { dx: session.entity.x - primary.x, dy: session.entity.y - primary.y };
+        if (stepEntity(primary, dir.dx, dir.dy, skill.movement.tiles, ignore)) {
+          movedEntities.push({ id: primary.id, x: primary.x, y: primary.y });
+          lockPlayerMove(primary.id, now);
+        }
       }
     }
   }
@@ -863,13 +939,22 @@ export function validateCast(
     }
 
     if (skill.damage > 0 || skill.damageType === "maxHpPercent" || skill.damageType === "aoe") {
-      const { damage, crit } = computeDamage(session, target, skill, weapon, now, !useProjectile);
+      const { damage, crit, missed, element, advantage, resistHint } = computeDamage(session, target, skill, weapon, now, !useProjectile);
       if (useProjectile && !directionalProjectile) {
         pendingHits.push({ targetId: target.id, damage, crit });
       } else if (!directionalProjectile) {
         target.hp = Math.max(0, target.hp - damage);
         clampImmortalHook(target);
-        hits.push({ targetId: target.id, damage, hpAfter: target.hp, crit });
+        hits.push({
+          targetId: target.id,
+          damage,
+          hpAfter: target.hp,
+          crit,
+          element,
+          missed,
+          advantage,
+          resistHint,
+        });
       }
     }
   }
@@ -941,11 +1026,11 @@ export function hitFromCaster(
   if (!caster || !target || !skill || target.hp <= 0) {
     return null;
   }
-  const weapon = weaponById(caster.equippedWeaponId);
-  const { damage, crit } = computeDamage(caster, target, skill, weapon, now, true);
+  const weapon = resolveWeaponForSkill(caster, skill);
+  const { damage, crit, missed, element, advantage, resistHint } = computeDamage(caster, target, skill, weapon, now, true);
   target.hp = Math.max(0, target.hp - damage);
   clampImmortalHook(target);
-  return { targetId, damage, hpAfter: target.hp, crit };
+  return { targetId, damage, hpAfter: target.hp, crit, element, missed, advantage, resistHint };
 }
 
 export function findHostilesNearPoint(x: number, y: number, radius: number, excludeId: string): Entity[] {

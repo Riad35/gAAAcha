@@ -31,7 +31,6 @@ public static class SpriteCatalog
     private static readonly Dictionary<string, Sprite> Cache = new Dictionary<string, Sprite>();
     private static readonly Dictionary<string, Texture2D> TexCache = new Dictionary<string, Texture2D>();
     private static readonly Dictionary<string, Sprite[]> ClipCache = new Dictionary<string, Sprite[]>();
-    private static bool _loggedLoadOnce;
 
     public static Color TileEven(string mapId)
     {
@@ -112,7 +111,54 @@ public static class SpriteCatalog
     public static bool IsMonsterKind(string id, string kind)
     {
         return kind == "monster"
-            || (!string.IsNullOrEmpty(id) && (id.StartsWith("monster_") || id.Contains("slime") || id.Contains("tower_")));
+            || (!string.IsNullOrEmpty(id) && (id.StartsWith("monster_") || id.StartsWith("lab_")
+                || id.Contains("slime") || id.Contains("orc") || id.Contains("plant")
+                || id.Contains("tower_") || id.Contains("brute") || id.Contains("pest")));
+    }
+
+    /// <summary>StreamingAssets body prefix: slime, orc, or plant.</summary>
+    public static string MonsterBody(string id)
+    {
+        var s = id ?? "";
+        if (ContainsAny(s, "ruins", "colossus"))
+        {
+            return "plant";
+        }
+
+        if (ContainsAny(s, "crypt_boss", "m_boss_f2", "tower_boss_f2"))
+        {
+            return "orc";
+        }
+
+        if (ContainsAny(s, "m_boss_f5", "tower_boss_f5", "apex"))
+        {
+            return "slime";
+        }
+
+        if (ContainsAny(s, "orc", "brute", "guard", "knight", "elite", "crypt", "shade", "shadow", "warden"))
+        {
+            return "orc";
+        }
+
+        if (ContainsAny(s, "plant", "marsh", "pest", "beetle", "golem", "wisp"))
+        {
+            return "plant";
+        }
+
+        return "slime";
+    }
+
+    private static bool ContainsAny(string id, params string[] parts)
+    {
+        for (var i = 0; i < parts.Length; i++)
+        {
+            if (id.IndexOf(parts[i], System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static Sprite ForEntity(string id, string kind)
@@ -132,6 +178,12 @@ public static class SpriteCatalog
         if (IsPlayerKind(id, kind))
         {
             fill = new Color(0.35f, 0.7f, 0.95f);
+        }
+
+        if (IsPlayerKind(id, kind) || IsMonsterKind(id, kind))
+        {
+            GameLog.WarnOnce(GameLog.Channel.Gfx, "fallback-shape:" + kind + ":" + id,
+                "fallback=shape  entity=" + id + "  kind=" + kind + "  shape=" + shape);
         }
 
         return MakeShape(shape, fill);
@@ -157,16 +209,17 @@ public static class SpriteCatalog
         }
         else if (IsMonsterKind(id, kind))
         {
+            var body = MonsterBody(id);
             path = clip switch
             {
-                Clip.Walk => "Sprites/slime_walk",
-                Clip.Run => "Sprites/slime_run",
-                Clip.Attack => "Sprites/slime_attack",
-                Clip.WalkAttack => "Sprites/slime_attack",
-                Clip.RunAttack => "Sprites/slime_run_attack",
-                Clip.Hurt => "Sprites/slime_hurt",
-                Clip.Death => "Sprites/slime_death",
-                _ => "Sprites/slime_idle",
+                Clip.Walk => "Sprites/" + body + "_walk",
+                Clip.Run => "Sprites/" + body + "_run",
+                Clip.Attack => "Sprites/" + body + "_attack",
+                Clip.WalkAttack => "Sprites/" + body + "_walk_attack",
+                Clip.RunAttack => "Sprites/" + body + "_run_attack",
+                Clip.Hurt => "Sprites/" + body + "_hurt",
+                Clip.Death => "Sprites/" + body + "_death",
+                _ => "Sprites/" + body + "_idle",
             };
         }
 
@@ -233,9 +286,20 @@ public static class SpriteCatalog
     {
         if (HasArtSprite(id, kind))
         {
-            if (!string.IsNullOrEmpty(id) && (id.Contains("boss") || id.Contains("crypt_lord")))
+            if (!string.IsNullOrEmpty(id) && (id.Contains("king") || id.Contains("boss") || id.Contains("crypt_lord")
+                || id.Contains("colossus") || id.Contains("warden") || id.Contains("apex")))
             {
-                return 1.35f;
+                if (id.Contains("king"))
+                {
+                    return 3.45f;
+                }
+
+                if (id.Contains("ruins") || id.Contains("colossus") || id.Contains("m_boss_f5") || id.Contains("apex"))
+                {
+                    return 2.15f;
+                }
+
+                return 1.75f;
             }
 
             return 2.2f; // 64px frames need a bit of scale vs 1-world-unit tiles
@@ -272,7 +336,9 @@ public static class SpriteCatalog
         const int dirRows = 4;
         if (tex.height % dirRows != 0)
         {
-            Debug.LogWarning("[SpriteCatalog] Sheet height not divisible by 4: " + resourcePath);
+            GameLog.WarnOnce(GameLog.Channel.Gfx, "hdiv:" + resourcePath,
+                "reason=height_not_divisible_by_4  sheet=" + resourcePath +
+                "  tex=" + tex.width + "x" + tex.height);
             return SliceSheetHorizontalFallback(resourcePath, tex);
         }
 
@@ -282,7 +348,10 @@ public static class SpriteCatalog
         var frameW = frameH;
         if (frameW <= 0 || tex.width % frameW != 0)
         {
-            Debug.LogWarning("[SpriteCatalog] Width not divisible by frame " + frameW + " for " + resourcePath);
+            GameLog.WarnOnce(GameLog.Channel.Gfx, "wdiv:" + resourcePath,
+                "reason=width_not_divisible  sheet=" + resourcePath +
+                "  tex=" + tex.width + "x" + tex.height + "  frame=" + frameW + "x" + frameH +
+                "  fallback=shape");
             return null;
         }
 
@@ -313,7 +382,9 @@ public static class SpriteCatalog
                 }
                 catch (System.Exception ex)
                 {
-                    Debug.LogWarning("[SpriteCatalog] frame " + i + " failed: " + ex.Message);
+                    GameLog.WarnOnce(GameLog.Channel.Gfx, "frame:" + resourcePath + ":" + i,
+                        "reason=frame_create_failed  sheet=" + resourcePath + "  frame=" + i +
+                        "  err=" + ex.Message);
                     return null;
                 }
             }
@@ -329,6 +400,11 @@ public static class SpriteCatalog
 
         if (packed.Count == 0)
         {
+            GameLog.WarnOnce(GameLog.Channel.Gfx, "empty:" + cacheKey,
+                "reason=empty_facing  sheet=" + resourcePath +
+                "  tex=" + tex.width + "x" + tex.height +
+                "  frame=" + frameW + "x" + frameH +
+                "  facing=" + facingRow);
             // Fallback: at least first cell even if alpha check failed.
             var key0 = cacheKey + "#0";
             if (Cache.TryGetValue(key0, out var first) && first != null)
@@ -343,10 +419,6 @@ public static class SpriteCatalog
             ClipCache[cacheKey] = frames;
         }
 
-        Debug.Log(
-            "[SpriteCatalog] Sliced " + resourcePath + " as " + cols + "x" + dirRows +
-            " grid → frame " + frameW + "x" + frameH + " (facing row " + facingRow +
-            ", visible " + frames.Length + ")");
         return frames.Length > 0 ? frames : null;
     }
 
@@ -461,7 +533,8 @@ public static class SpriteCatalog
         }
         catch (System.Exception ex)
         {
-            Debug.LogWarning("[SpriteCatalog] Full sprite failed for " + resourcePath + ": " + ex.Message);
+            GameLog.WarnOnce(GameLog.Channel.Gfx, "full:" + resourcePath,
+                "reason=full_sprite_failed  sheet=" + resourcePath + "  err=" + ex.Message);
             return null;
         }
     }
@@ -497,14 +570,8 @@ public static class SpriteCatalog
 
         if (tex == null)
         {
-            if (!_loggedLoadOnce)
-            {
-                _loggedLoadOnce = true;
-                Debug.LogWarning(
-                    "[SpriteCatalog] Could not load '" + resourcePath +
-                    "'. Check StreamingAssets/Sprites. Falling back to shapes.");
-            }
-
+            GameLog.WarnOnce(GameLog.Channel.Gfx, "load:" + resourcePath,
+                "reason=sheet_load_failed  sheet=" + resourcePath + "  fallback=shape");
             return null;
         }
 
@@ -561,7 +628,8 @@ public static class SpriteCatalog
         }
         catch (System.Exception ex)
         {
-            Debug.LogWarning("[SpriteCatalog] File load failed " + path + ": " + ex.Message);
+            GameLog.WarnOnce(GameLog.Channel.Gfx, "file:" + path,
+                "reason=file_load_failed  path=" + path + "  err=" + ex.Message);
             return null;
         }
     }
@@ -627,5 +695,202 @@ public static class SpriteCatalog
         tex.filterMode = FilterMode.Point;
         tex.wrapMode = TextureWrapMode.Clamp;
         return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size);
+    }
+
+    public static string WeaponCategory(string id)
+    {
+        if (string.IsNullOrEmpty(id) || id == "none")
+        {
+            return "";
+        }
+
+        if (id.IndexOf("bow", System.StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return "bow";
+        }
+
+        if (id.IndexOf("gun", System.StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return "gun";
+        }
+
+        if (id.IndexOf("staff", System.StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return "staff";
+        }
+
+        if (id.IndexOf("dagger", System.StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return "dagger";
+        }
+
+        return "sword";
+    }
+
+    public static Sprite WeaponMark(string weaponId)
+    {
+        var cat = WeaponCategory(weaponId);
+        var key = "wpnart:" + cat;
+        if (Cache.TryGetValue(key, out var cached) && cached != null)
+        {
+            return cached;
+        }
+
+        var sprite = MakePixelWeapon(cat);
+        Cache[key] = sprite;
+        return sprite;
+    }
+
+    private static Sprite MakePixelWeapon(string cat)
+    {
+        string[] rows;
+        switch (cat)
+        {
+            case "bow":
+                rows = new[]
+                {
+                    "........WW......",
+                    ".......W..W.....",
+                    "......W....T....",
+                    ".....W.....T....",
+                    "....W......T....",
+                    "...W.......T....",
+                    "..W........T....",
+                    ".WWWWWWWWWWW....",
+                    "..W........T....",
+                    "...W.......T....",
+                    "....W......T....",
+                    ".....W.....T....",
+                    "......W....T....",
+                    ".......W..W.....",
+                    "........WW......",
+                    "................",
+                };
+                break;
+            case "staff":
+                rows = new[]
+                {
+                    ".......OOO......",
+                    "......OGGGO.....",
+                    ".......OOO......",
+                    "........W.......",
+                    "........W.......",
+                    "........W.......",
+                    "........W.......",
+                    "........W.......",
+                    "........W.......",
+                    "........W.......",
+                    "........W.......",
+                    "........W.......",
+                    "........W.......",
+                    ".......WWW......",
+                    "................",
+                    "................",
+                };
+                break;
+            case "gun":
+                rows = new[]
+                {
+                    "................",
+                    "................",
+                    "....SSSSSSSS....",
+                    "....S......S....",
+                    "HHHHSSSSSSSS....",
+                    "H..H............",
+                    "H..H............",
+                    ".HH.............",
+                    "................",
+                    "................",
+                    "................",
+                    "................",
+                    "................",
+                    "................",
+                    "................",
+                    "................",
+                };
+                break;
+            case "dagger":
+                rows = new[]
+                {
+                    "................",
+                    ".........S......",
+                    "........SS......",
+                    ".......SS.......",
+                    "......SS........",
+                    ".....SS.........",
+                    "....GGG.........",
+                    ".....H..........",
+                    ".....H..........",
+                    ".....P..........",
+                    "................",
+                    "................",
+                    "................",
+                    "................",
+                    "................",
+                    "................",
+                };
+                break;
+            default:
+                rows = new[]
+                {
+                    ".............S..",
+                    "............SS..",
+                    "...........SS...",
+                    "..........SS....",
+                    ".........SS.....",
+                    "........SS......",
+                    ".......SS.......",
+                    "......SS........",
+                    ".....GGGGGGG....",
+                    "......HH........",
+                    "......HH........",
+                    "......HH........",
+                    "......PP........",
+                    "................",
+                    "................",
+                    "................",
+                };
+                break;
+        }
+
+        return SpriteFromCharMap(rows);
+    }
+
+    private static Sprite SpriteFromCharMap(string[] rows)
+    {
+        var h = rows.Length;
+        var w = rows[0].Length;
+        var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+        var pixels = new Color[w * h];
+        for (var y = 0; y < h; y++)
+        {
+            var row = rows[h - 1 - y];
+            for (var x = 0; x < w; x++)
+            {
+                pixels[y * w + x] = CharPixel(x < row.Length ? row[x] : '.');
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        tex.filterMode = FilterMode.Point;
+        tex.wrapMode = TextureWrapMode.Clamp;
+        return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.35f, 0.2f), 16f);
+    }
+
+    private static Color CharPixel(char c)
+    {
+        switch (c)
+        {
+            case 'S': return new Color(0.82f, 0.86f, 0.92f, 1f);
+            case 'D': return new Color(0.5f, 0.54f, 0.62f, 1f);
+            case 'G': return new Color(0.82f, 0.68f, 0.22f, 1f);
+            case 'H': return new Color(0.42f, 0.26f, 0.12f, 1f);
+            case 'P': return new Color(0.7f, 0.55f, 0.2f, 1f);
+            case 'W': return new Color(0.45f, 0.28f, 0.12f, 1f);
+            case 'T': return new Color(0.92f, 0.9f, 0.82f, 1f);
+            case 'O': return new Color(0.55f, 0.35f, 0.85f, 1f);
+            default: return Color.clear;
+        }
     }
 }

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { bindCombatWorld, validateCast } from "./combat.js";
 import {
   buildInspect,
+  checkBossPhase,
   findEntity,
   grantKillLoot,
   killMonster,
@@ -11,9 +12,13 @@ import {
   notePlayerDamageThreat,
   players,
   resetWorld,
+  respawnAtHome,
+  spawnMonster,
   spawnPlayer,
+  swapWeapons,
   tickWorld,
 } from "./world.js";
+import { monsters } from "./data.js";
 
 bindCombatWorld(
   findEntity,
@@ -24,6 +29,18 @@ bindCombatWorld(
   },
   () => [...liveMonsters.values()].filter((monster) => monster.hp > 0),
 );
+
+test("tickWorld reaps monsters left at 0 hp", () => {
+  resetWorld();
+  const player = spawnPlayer("reap_test");
+  player.entity.mapId = "field_ridge";
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  slime.hp = 0;
+  const msgs = tickWorld(Date.now());
+  assert.ok(msgs.some((m) => m.type === "sync_despawn" && m.entityId === "monster_slime_1"));
+  assert.equal(liveMonsters.has("monster_slime_1"), false);
+});
 
 test("killing a monster despawns and respawns after delay", () => {
   resetWorld();
@@ -65,17 +82,28 @@ test("dead targets cannot be cast on", () => {
   assert.ok(slime);
   slime.hp = 0;
   liveMonsters.delete("monster_slime_1");
-  const result = validateCast(player, "slash", "monster_slime_1", Date.now());
+  const result = validateCast(player, "auto_attack", "monster_slime_1", Date.now());
   assert.equal("type" in result && result.code, "invalid_target");
 });
 
-test("kill loot grants star dust", () => {
+test("kill loot grants star dust from slime tables", () => {
   resetWorld();
   const player = spawnPlayer("loot_test");
-  const loot = grantKillLoot(player);
+  const loot = grantKillLoot(player, "slime", () => 0);
   assert.equal(loot.type, "sync_loot");
   assert.equal(loot.itemId, "item_dust");
   assert.ok(player.inventory.some((slot) => slot.itemId === "item_dust" && slot.quantity >= 1));
+});
+
+test("adventurer seeds sword Haupt and bow Sekundär; N swaps them", () => {
+  resetWorld();
+  const p = spawnPlayer("dual_wep", { save: null });
+  assert.equal(p.equippedWeaponId, "sword_iron");
+  assert.equal(p.equippedWeapon2Id, "bow_hunter");
+  const swap = swapWeapons(p);
+  assert.ok(swap.ok);
+  assert.equal(p.equippedWeaponId, "bow_hunter");
+  assert.equal(p.equippedWeapon2Id, "sword_iron");
 });
 
 test("world spawns multiple monster types", () => {
@@ -84,6 +112,8 @@ test("world spawns multiple monster types", () => {
   assert.ok(liveMonsters.has("monster_ember_1"));
   assert.ok(liveMonsters.has("monster_gust_1"));
   assert.ok(liveMonsters.has("monster_brute_1"));
+  assert.ok(liveMonsters.has("monster_orc_1"));
+  assert.ok(liveMonsters.has("monster_plant_1"));
 });
 
 test("threat rises on damage and picks top aggressor", () => {
@@ -128,4 +158,38 @@ test("inspect returns player equip and monster combat fields", () => {
     assert.equal(m.weaponId, undefined);
     assert.ok(m.monsterType);
   }
+});
+
+test("player death stays dead until respawnAtHome", () => {
+  resetWorld();
+  const player = spawnPlayer("dead_stay");
+  player.entity.mapId = "field_ridge";
+  player.entity.x = 8;
+  player.entity.y = 8;
+  player.entity.hp = 0;
+  assert.equal(player.entity.hp, 0);
+  assert.equal(player.entity.mapId, "field_ridge");
+  respawnAtHome(player);
+  assert.equal(player.entity.hp, player.entity.maxHp);
+  assert.equal(player.entity.mapId, player.homeMapId);
+});
+
+test("tower and crypt bosses phase and telegraph before the hit", () => {
+  resetWorld();
+  const f2 = monsters.find((m) => m.id === "tower_boss_f2");
+  assert.ok(f2);
+  const boss = spawnMonster(f2, "m_boss_f2", 10, 7);
+  boss.hp = Math.floor(boss.maxHp * 0.5);
+  const phaseMsgs = checkBossPhase("m_boss_f2");
+  assert.ok(phaseMsgs.some((m) => m.type === "sync_chat" && m.text.includes("phase 2")));
+  const p = spawnPlayer("boss_t");
+  p.entity.mapId = boss.mapId;
+  p.entity.x = 10.4;
+  p.entity.y = 7;
+  const now = Date.now();
+  const windup = tickWorld(now);
+  assert.ok(windup.some((m) => m.type === "sync_fx" && m.kind === "telegraph"));
+  assert.equal(windup.some((m) => m.type === "sync_skill" && m.casterId === "m_boss_f2"), false);
+  const hit = tickWorld(now + 800);
+  assert.ok(hit.some((m) => m.type === "sync_skill" && m.casterId === "m_boss_f2"));
 });

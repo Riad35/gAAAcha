@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -31,7 +32,10 @@ public sealed class NetClient
 
     public Task SendMoveAsync(float x, float y)
     {
-        return SendAsync($"{{\"type\":\"request_move\",\"x\":{x},\"y\":{y}}}");
+        var inv = CultureInfo.InvariantCulture;
+        return SendAsync(
+            "{\"type\":\"request_move\",\"x\":" + x.ToString("G9", inv) +
+            ",\"y\":" + y.ToString("G9", inv) + "}");
     }
 
     public Task SendCastAsync(string skillId, string targetId)

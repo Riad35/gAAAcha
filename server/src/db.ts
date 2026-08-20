@@ -7,6 +7,7 @@ import type { GuestSave } from "./persist.js";
 import type { CharSummary } from "./chars.js";
 import type { InventorySlot, PityCounter, QuestProgress } from "./types.js";
 import { INVENTORY_SIZE } from "./gacha.js";
+import { log } from "./log.js";
 
 const { Pool } = pg;
 
@@ -20,7 +21,7 @@ export function isDbReady(): boolean {
 export async function initDb(): Promise<boolean> {
   const url = process.env.DATABASE_URL?.trim();
   if (!url) {
-    console.log("DATABASE_URL unset — using file saves");
+    log.info("PERSIST", "DATABASE_URL unset — using file saves");
     return false;
   }
   try {
@@ -31,10 +32,12 @@ export async function initDb(): Promise<boolean> {
       await pool.query(readFileSync(schemaPath, "utf8"));
     }
     dbReady = true;
-    console.log("Postgres connected — schema applied");
+    log.info("PERSIST", "Postgres connected — schema applied");
     return true;
   } catch (err) {
-    console.warn("Postgres unavailable, falling back to file saves:", (err as Error).message);
+    log.warn("PERSIST", "Postgres unavailable, falling back to file saves", {
+      err: (err as Error).message,
+    });
     pool = null;
     dbReady = false;
     return false;

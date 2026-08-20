@@ -49,6 +49,7 @@ test("class card changes class and seeds secondary", () => {
   const p = spawnPlayer("card_t");
   createCharacter(p, "Hero", "adventurer");
   assert.equal(p.classId, "adventurer");
+  p.level = 20;
   addItem(p, "card_marksman", 1);
   const slot = p.inventory.find((s) => s.itemId === "card_marksman")!;
   const result = useInventoryItem(p, slot.slotIndex, Date.now(), {

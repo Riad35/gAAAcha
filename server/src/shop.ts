@@ -1,5 +1,29 @@
-import { itemById, shopById, weaponById } from "./data.js";
-import type { InventorySlot, PlayerSession, ServerMessage, ShopDef } from "./types.js";
+import { classById, itemById, shopById, spiritById, weaponById } from "./data.js";
+import type { InventorySlot, ItemDef, PlayerSession, ServerMessage, ShopDef } from "./types.js";
+
+const DEFAULT_FOOD_MS = 60_000;
+
+function applyFoodBuff(session: PlayerSession, def: ItemDef, now: number): void {
+  const until = now + (def.durationMs ?? DEFAULT_FOOD_MS);
+  session.statuses = session.statuses.filter((s) => s.id !== "food_atk" && s.id !== "food_def");
+  const atk = def.atkBonus ?? 6;
+  const defAmt = def.defBonus ?? 4;
+  session.statuses.push({
+    id: "food_atk",
+    kind: "attr_up",
+    until,
+    attr: "atk",
+    amount: atk,
+    atkBonus: atk,
+  });
+  session.statuses.push({
+    id: "food_def",
+    kind: "attr_up",
+    until,
+    attr: "def",
+    amount: defAmt,
+  });
+}
 
 function findStack(inv: InventorySlot[], itemId: string): InventorySlot | undefined {
   return inv.find((s) => s.itemId === itemId);
@@ -66,6 +90,9 @@ export function buyFromShop(
   if (weaponById(itemId) && !session.weaponIds.includes(itemId)) {
     session.weaponIds.push(itemId);
   }
+  if (spiritById(itemId) && !session.spiritIds.includes(itemId)) {
+    session.spiritIds.push(itemId);
+  }
   return { shop };
 }
 
@@ -105,9 +132,13 @@ export function useInventoryItem(
     return { error: { type: "error", code: "empty_slot", message: "Empty slot" }, messages: [] };
   }
   const def = itemById(slot.itemId);
+  const asWeapon = weaponById(slot.itemId);
   if (!def?.use) {
     // Allow equipping owned weapons from inventory as secondary
-    if (def && weaponById(slot.itemId) && session.weaponIds.includes(slot.itemId)) {
+    if (asWeapon) {
+      if (!session.weaponIds.includes(slot.itemId)) {
+        session.weaponIds.push(slot.itemId);
+      }
       if (session.equippedWeaponId === slot.itemId) {
         return { error: { type: "error", code: "already_primary", message: "Already primary" }, messages: [] };
       }
@@ -120,7 +151,7 @@ export function useInventoryItem(
             channel: "server",
             fromId: "system",
             fromName: "System",
-            text: `Secondary weapon: ${def.name}`,
+            text: `Secondary weapon: ${asWeapon.name}`,
             serverTime: now,
           },
         ],
@@ -141,11 +172,18 @@ export function useInventoryItem(
     return {
       messages: [
         { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
+        {
+          type: "sync_fx",
+          kind: "homestone",
+          entityId: session.entity.id,
+          x: session.entity.x,
+          y: session.entity.y,
+        },
       ],
     };
   }
 
-  if (def.use === "heal" || def.use === "buff_food") {
+  if (def.use === "heal") {
     session.entity.hp = Math.min(session.entity.maxHp, session.entity.hp + (def.healHp ?? 0));
     session.entity.mp = Math.min(session.entity.maxMp, session.entity.mp + (def.healMp ?? 0));
     removeItem(session, slot.itemId, 1);
@@ -161,6 +199,48 @@ export function useInventoryItem(
           gold: session.gold,
         },
         { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
+      ],
+    };
+  }
+
+  if (def.use === "buff_food") {
+    session.entity.hp = Math.min(session.entity.maxHp, session.entity.hp + (def.healHp ?? 0));
+    session.entity.mp = Math.min(session.entity.maxMp, session.entity.mp + (def.healMp ?? 0));
+    applyFoodBuff(session, def, now);
+    removeItem(session, slot.itemId, 1);
+    return {
+      messages: [
+        {
+          type: "sync_vitals",
+          entityId: session.entity.id,
+          hp: session.entity.hp,
+          maxHp: session.entity.maxHp,
+          mp: session.entity.mp,
+          maxMp: session.entity.maxMp,
+          gold: session.gold,
+        },
+        { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
+        {
+          type: "sync_status",
+          entityId: session.entity.id,
+          statuses: session.statuses,
+          serverTime: now,
+        },
+        {
+          type: "sync_fx",
+          kind: "food",
+          entityId: session.entity.id,
+          x: session.entity.x,
+          y: session.entity.y,
+        },
+        {
+          type: "sync_chat",
+          channel: "server",
+          fromId: "system",
+          fromName: "System",
+          text: `${def.name}: +${def.atkBonus ?? 0} ATK / +${def.defBonus ?? 0} DEF`,
+          serverTime: now,
+        },
       ],
     };
   }
@@ -191,15 +271,45 @@ export function useInventoryItem(
       return { error: result.error, messages: [] };
     }
     removeItem(session, cardId, 1);
+    const cls = classById(def.classId);
     return {
       messages: [
         { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
+        {
+          type: "sync_class_change",
+          classId: def.classId,
+          className: cls?.name ?? def.classId,
+          skillIds: session.unlockedSkillIds,
+          resistBonus: (def.resistBonus ?? {}) as Record<string, number>,
+        },
         {
           type: "sync_chat",
           channel: "server",
           fromId: "system",
           fromName: "System",
-          text: `Class changed to ${def.classId}.`,
+          text: `Class changed to ${cls?.name ?? def.classId}.`,
+          serverTime: now,
+        },
+      ],
+    };
+  }
+
+  if (def.use === "skin" || def.use === "portrait") {
+    session.equippedSkinId = slot.itemId;
+    return {
+      messages: [
+        {
+          type: "sync_inventory",
+          inventory: session.inventory,
+          gold: session.gold,
+          equippedSkinId: session.equippedSkinId,
+        },
+        {
+          type: "sync_chat",
+          channel: "server",
+          fromId: "system",
+          fromName: "System",
+          text: `Portrait set: ${def.name}`,
           serverTime: now,
         },
       ],

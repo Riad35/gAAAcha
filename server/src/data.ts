@@ -5,6 +5,7 @@ import type {
   BannerDef,
   ClassDef,
   ItemDef,
+  LootTable,
   MapDef,
   MonsterDef,
   PortalDef,
@@ -65,6 +66,7 @@ export const npcs = loadJson<NpcDef[]>("npcs.json");
 export const portals = loadJson<PortalDef[]>("portals.json");
 export const shops = loadJson<ShopDef[]>("shops.json");
 export const quests = loadJson<QuestDef[]>("quests.json");
+export const lootTables = loadJson<Record<string, LootTable>>("loot.json");
 
 export const defaultMap = maps.find((m) => m.id === "test_arena") ?? maps.find((m) => m.id === "town_ashen") ?? maps[0];
 export const defaultClass = classes[0];

@@ -11,15 +11,12 @@ public sealed class NetworkBootstrap : MonoBehaviour
 {
     private static readonly string[] ClassSkills =
     {
-        "auto_attack", "slash", "shot", "mend", "dash", "stun_bolt", "ember_dot", "war_cry",
-        "shove", "pull", "blind_dust", "iron_stance", "shockwave",
-        "power_chant", "haste", "barrier", "ward", "elemental_focus",
+        "auto_attack", "shot", "shockwave", "dash", "rally", "hook_shot", "mend", "decoy",
     };
 
     private static readonly HashSet<string> NoTargetSkills = new HashSet<string>
     {
-        "mend", "dash", "war_cry", "iron_stance",
-        "power_chant", "haste", "barrier", "ward", "elemental_focus",
+        "mend", "dash", "rally", "decoy",
     };
 
     private enum AimKind
@@ -50,10 +47,15 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private static readonly Dictionary<string, float> SkillRanges = new Dictionary<string, float>
     {
         { "auto_attack", 0f },
-        { "slash", 1.5f },
         { "shot", 5f },
-        { "mend", 0f },
+        { "shockwave", 3.5f },
         { "dash", 3f },
+        { "rally", 0f },
+        { "hook_shot", 4.5f },
+        { "mend", 0f },
+        { "decoy", 0f },
+        // Legacy / other classes (still castable if unlocked)
+        { "slash", 1.5f },
         { "stun_bolt", 4f },
         { "ember_dot", 3.5f },
         { "war_cry", 0f },
@@ -61,7 +63,6 @@ public sealed class NetworkBootstrap : MonoBehaviour
         { "pull", 4.5f },
         { "blind_dust", 3.5f },
         { "iron_stance", 0f },
-        { "shockwave", 3.5f },
         { "power_chant", 0f },
         { "haste", 0f },
         { "barrier", 0f },
@@ -75,6 +76,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private InputSender _input;
     private PredictionReconciler _prediction = new PredictionReconciler();
     private string _lastCastRequestId = "";
+    private string _lastCastSkillId = "";
     private GrayBoxWorld _world;
     private VirtualJoystick _joystick;
     private float _x = 3f;
@@ -104,13 +106,44 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private int _maxMp = 50;
     private int _pity;
     private int _hardPity = 80;
+    private int _softPityStart = 50;
     private float _nextSsr = 0.02f;
+    private float _baseSsr = 0.02f;
+    private float _baseSr = 0.1f;
+    private int _pullCostDust = 10;
+    private int _tenPullCostDust = 90;
+    private string _bannerName = "Starter Banner";
     private string _lastDrop = "-";
+    private string _gachaSummary = "";
+    private bool _showGacha;
+    private string _skin = "none";
+    private bool _showDeath;
+    private bool _showClassChange;
+    private string _classChangeTitle = "";
+    private string _classChangeBody = "";
+    private int _tutorialStep = -1;
+    private static readonly string[] TutorialTips =
+    {
+        "Move: WASD or click the ground.",
+        "Tab cycles lock-on. Locked enemies get a red outline.",
+        "Space is Auto Attack. 1–7 are your 8 Adventurer skills (Shot is 1).",
+        "I opens inventory. RMB uses or equips an item.",
+        "J is the quest log. Sister Mira starts the path to a class card.",
+        "Homestone is in your bag. Use it, or talk to the stone in town.",
+        "G opens the banner (pity is there). Class cards unlock at level 20.",
+    };
+    private readonly Dictionary<string, int> _unlockLevels = new Dictionary<string, int>();
     private string _status = "starting…";
     private string _guestToken = "";
     private readonly ConcurrentQueue<string> _inbox = new ConcurrentQueue<string>();
     private readonly Dictionary<string, float> _readyAtLocal = new Dictionary<string, float>();
     private readonly Dictionary<string, float> _cooldownMs = new Dictionary<string, float>();
+    private readonly Dictionary<string, SkillHudInfo> _skillHud = new Dictionary<string, SkillHudInfo>();
+    private string _castSkillId = "";
+    private string _castLabel = "";
+    private float _castUntil;
+    private float _castDur = 0.35f;
+    private string _hoverSkillId = "";
     private readonly List<BuffView> _buffs = new List<BuffView>();
     private double _serverSkewMs;
     private string[] _skillIds = ClassSkills;
@@ -245,10 +278,16 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private bool _confirmDelete;
     private string _classId = "adventurer";
     private string _weapon2 = "none";
+    private float _weaponSwapUntil;
     private int _towerFloor;
     private bool _inWorld = true;
     private bool _showQuestLog;
     private string _questLogText = "";
+    private string _questTrackerLine = "";
+    private string _loadMapId = "";
+    private string _loadMapTitle = "";
+    private float _loadUntil;
+    private Sprite _loadArt;
     private bool _showInteract;
     private string _interactKind = "";
     private string _interactLine = "";
@@ -271,6 +310,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private float _aimDy;
     private float _aimX;
     private float _aimY;
+
+    private struct SkillHudInfo
+    {
+        public string Name;
+        public int ManaCost;
+        public int WeaponSlot;
+        public float CastSec;
+    }
 
     private struct BuffView
     {
@@ -297,6 +344,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _cooldownMs[id] = 1000f;
             _readyAtLocal[id] = 0f;
         }
+
+        SeedDefaultSkillHud();
 
         for (var i = 0; i < ChatTabs.Length; i++)
         {
@@ -331,13 +380,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
             await _net.SendRawAsync(
                 "{\"type\":\"request_hello\",\"guestToken\":\"" + _guestToken + "\"}");
             _status = "CONNECTED — choose login or guest";
+            GameLog.Info(GameLog.Channel.Net, "connected  url=" + NetClient.DefaultUrl);
             _gatePhase = 0;
             _inWorld = false;
         }
         catch (System.Exception ex)
         {
             _status = "CONNECT FAILED: " + ex.Message;
-            Debug.LogError("gAAAcha: " + ex.Message);
+            GameLog.Error(GameLog.Channel.Net, "connect failed  err=" + ex.Message);
         }
     }
 
@@ -418,6 +468,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         DrawHud();
         DrawInventory();
         DrawSkillBar();
+        DrawCastBar();
         DrawBuffRow();
         DrawTargetFrame();
         DrawContextMenu();
@@ -430,13 +481,19 @@ public sealed class NetworkBootstrap : MonoBehaviour
         DrawPartyPanel();
         DrawFriendsPanel();
         DrawSettingsPanel();
+        DrawGachaPanel();
+        DrawDeathPanel();
+        DrawClassChangePanel();
+        DrawTutorialTips();
         DrawSkillTreePanel();
         DrawAuctionPanel();
         DrawInstanceHud();
+        DrawBossFrame();
         DrawLoginPanel();
         DrawCharCreate();
         DrawInteractPanel();
         DrawQuestLog();
+        DrawQuestTracker();
         DrawToast();
         DrawItemTooltip();
         _joystick?.Draw();
@@ -444,11 +501,13 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             _world.DrawOverlays();
         }
+
+        DrawLoadingScreen();
     }
 
     private void HandlePacket(string json)
     {
-        Debug.Log("gAAAcha recv: " + json);
+        GameLog.Packet(json);
         _world.HandleMessage(json);
 
         if (json.Contains("\"type\":\"error\""))
@@ -458,16 +517,45 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _status = string.IsNullOrEmpty(msg)
                 ? ("error " + code)
                 : (code + ": " + msg);
-            if (code == "out_of_range" && _world != null &&
-                !string.IsNullOrEmpty(_world.LockTargetId) &&
-                !string.IsNullOrEmpty(_lastCastRequestId))
+
+            // Snap predicted pos back to last server-acked coords on move rejects.
+            if (code == "blocked" || code == "too_fast" || code == "blocked_entity" ||
+                code == "move_locked" || code == "rate_limited")
             {
-                // Re-approach and retry last skill kind from status if pending empty.
-                var lockId = _world.LockTargetId;
-                if (!HasPendingSkillChase() && _status.Contains("→"))
+                _x = _lastGoodX;
+                _y = _lastGoodY;
+                _world?.SetLocalPos(_x, _y, instant: true);
+                if (code == "move_locked")
                 {
-                    // keep lock; user can recast — start generic chase for AA range
-                    BeginPendingSkill("auto_attack", lockId, ResolveSkillRange("auto_attack"));
+                    _moveLockUntil = Time.time + 0.25f;
+                }
+
+                GameLog.Warn(GameLog.Channel.Combat, "snap  code=" + code + "  @" +
+                    _x.ToString("0.0") + "," + _y.ToString("0.0"));
+            }
+
+            if (code == "you_are_dead")
+            {
+                _showDeath = true;
+            }
+
+            if (code == "out_of_range" && _world != null &&
+                !string.IsNullOrEmpty(_world.LockTargetId))
+            {
+                var lockId = _world.LockTargetId;
+                var retrySkill = !string.IsNullOrEmpty(_pendingSkillId)
+                    ? _pendingSkillId
+                    : _lastCastSkillId;
+                if (string.IsNullOrEmpty(retrySkill))
+                {
+                    retrySkill = "auto_attack";
+                }
+
+                GameLog.Info(GameLog.Channel.Combat, "out_of_range  retry=" + retrySkill + "  target=" + lockId);
+
+                if (!HasPendingSkillChase())
+                {
+                    BeginPendingSkill(retrySkill, lockId, ResolveSkillRange(retrySkill));
                 }
             }
 
@@ -476,10 +564,15 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (json.Contains("\"type\":\"sync_state\""))
         {
-            var you = JsonUtil.SliceAround(json, "\"you\"", 0, 400);
+            var you = JsonUtil.ExtractObject(json, "you");
+            if (string.IsNullOrEmpty(you))
+            {
+                you = JsonUtil.SliceAround(json, "\"you\"", 0, 2400);
+            }
             if (JsonUtil.TryInt(you, "hp", out var hp))
             {
                 _hp = hp;
+                _showDeath = hp <= 0;
             }
             if (JsonUtil.TryInt(you, "maxHp", out var maxHp) && maxHp > 0)
             {
@@ -516,7 +609,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 PlayerPrefs.Save();
             }
 
-            var pitySlice = JsonUtil.SliceAround(json, "\"pity\"", 0, 220);
+            var pitySlice = JsonUtil.SliceAround(json, "\"pity\"", 0, 640);
             if (pitySlice.Length > 0)
             {
                 if (JsonUtil.TryInt(pitySlice, "count", out var pity))
@@ -531,6 +624,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 {
                     _nextSsr = chance;
                 }
+                ApplyPityExtras(pitySlice);
             }
 
             ApplyCooldownsFromJson(json);
@@ -570,6 +664,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 _classId = cid;
             }
 
+            var skinId = JsonUtil.ExtractString(json, "equippedSkinId");
+            _skin = string.IsNullOrEmpty(skinId) || skinId == "null" ? "none" : skinId;
+
             if (JsonUtil.TryInt(json, "towerClearedFloor", out var tf))
             {
                 _towerFloor = tf;
@@ -584,7 +681,12 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
 
             ApplyGearIdsFromJson(json);
-            var youSlice = JsonUtil.SliceAround(json, "\"you\"", 0, 280);
+            RefreshWeaponMeta();
+            var youSlice = JsonUtil.ExtractObject(json, "you");
+            if (string.IsNullOrEmpty(youSlice))
+            {
+                youSlice = JsonUtil.SliceAround(json, "\"you\"", 0, 2400);
+            }
             var nm = JsonUtil.ExtractString(youSlice, "name");
             if (string.IsNullOrEmpty(nm))
             {
@@ -600,12 +702,25 @@ public sealed class NetworkBootstrap : MonoBehaviour
             if (_inWorld && _charNameSet)
             {
                 _gatePhase = 3;
+                MaybeStartTutorial();
             }
+
+            ApplySkillIdsFromState(json);
 
             ApplyQuestFromState(json);
             ApplyPortalsFromState(json);
 
-            _status = "sync_state";
+            if (_world != null)
+            {
+                _status = "map " + _world.MapId + " " + _world.MapWidth + "×" + _world.MapHeight +
+                          " @" + _x.ToString("0.0") + "," + _y.ToString("0.0");
+            }
+            else
+            {
+                _status = "sync_state";
+            }
+
+            MaybeBeginMapLoad(json);
             return;
         }
 
@@ -969,7 +1084,6 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 _y = y;
                 _lastGoodX = x;
                 _lastGoodY = y;
-                _moveLockUntil = Time.time + 0.25f;
                 _status = "sync_move " + x.ToString("0.0") + "," + y.ToString("0.0");
             }
 
@@ -1012,6 +1126,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 if (corr.HasValue && !string.IsNullOrEmpty(corr.Value.EntityId) && corr.Value.Hp.HasValue)
                 {
                     _world?.ApplyReconcileHp(corr.Value.EntityId, corr.Value.Hp.Value, corr.Value.Hard);
+                    GameLog.Warn(GameLog.Channel.Combat,
+                        "reconcile  entity=" + corr.Value.EntityId +
+                        "  hp=" + corr.Value.Hp.Value +
+                        "  hard=" + corr.Value.Hard);
                 }
 
                 _lastCastRequestId = "";
@@ -1077,7 +1195,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (json.Contains("\"type\":\"sync_gacha\""))
         {
-            var pitySlice = JsonUtil.SliceAround(json, "\"pity\"", 0, 220);
+            var pitySlice = JsonUtil.SliceAround(json, "\"pity\"", 0, 640);
             if (pitySlice.Length > 0)
             {
                 if (JsonUtil.TryInt(pitySlice, "count", out var pity))
@@ -1092,9 +1210,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 {
                     _nextSsr = chance;
                 }
+                ApplyPityExtras(pitySlice);
             }
 
-            var results = JsonUtil.SliceAround(json, "\"results\"", 0, 260);
+            var results = JsonUtil.SliceAround(json, "\"results\"", 0, 1200);
             _lastDrop = JsonUtil.ExtractString(results, "itemId");
             var rarity = JsonUtil.ExtractString(results, "rarity");
             if (!string.IsNullOrEmpty(rarity))
@@ -1102,7 +1221,37 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 _lastDrop = _lastDrop + " (" + rarity + ")";
             }
 
-            _status = "gacha pity " + _pity + "/" + _hardPity;
+            var ssrN = CountJsonToken(json, "\"ssr\"");
+            var srN = CountJsonToken(json, "\"sr\"");
+            var rN = CountJsonToken(json, "\"r\"");
+            _gachaSummary = ssrN + " SSR  " + srN + " SR  " + rN + " R";
+            _showGacha = true;
+            _status = "gacha " + _lastDrop;
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_death\""))
+        {
+            var deadId = JsonUtil.ExtractString(json, "entityId");
+            if (_world == null || string.IsNullOrEmpty(deadId) || deadId == _world.SelfId)
+            {
+                _showDeath = true;
+                _hp = 0;
+                _status = "you are dead";
+            }
+
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_class_change\""))
+        {
+            _classId = JsonUtil.ExtractString(json, "classId");
+            var cname = JsonUtil.ExtractString(json, "className");
+            _classChangeTitle = string.IsNullOrEmpty(cname) ? _classId : cname;
+            _classChangeBody = "New skill set unlocked. Resist bonus applied.\nHUD sprite updates with class.";
+            _showClassChange = true;
+            ApplySkillIdsFromState(json);
+            _status = "class change " + _classChangeTitle;
             return;
         }
 
@@ -1112,8 +1261,24 @@ public sealed class NetworkBootstrap : MonoBehaviour
             if (!string.IsNullOrEmpty(wid))
             {
                 _weapon = wid;
-                RefreshWeaponMeta();
             }
+
+            var w2 = JsonUtil.ExtractString(json, "weapon2Id");
+            if (string.IsNullOrEmpty(w2))
+            {
+                w2 = JsonUtil.ExtractString(json, "equippedWeapon2Id");
+            }
+
+            if (json.Contains("\"weapon2Id\":null") || json.Contains("\"equippedWeapon2Id\":null"))
+            {
+                _weapon2 = "none";
+            }
+            else if (!string.IsNullOrEmpty(w2) && w2 != "null")
+            {
+                _weapon2 = w2;
+            }
+
+            RefreshWeaponMeta();
 
             if (json.Contains("\"spiritId\":null"))
             {
@@ -1131,7 +1296,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
 
             ApplyGearIdsFromJson(json);
-            _status = "equipped " + _weapon + " / " + _spirit;
+            _status = "Haupt " + WeaponPretty(_weapon) + " / Sek " + WeaponPretty(_weapon2);
             return;
         }
 
@@ -1321,16 +1486,27 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _serverSkewMs = serverTime - (Time.realtimeSinceStartupAsDouble * 1000.0);
         }
 
+        var block = JsonUtil.ExtractArray(json, "cooldowns");
+        if (string.IsNullOrEmpty(block))
+        {
+            block = JsonUtil.SliceAround(json, "\"cooldowns\"", 0, 2400);
+        }
+
+        if (string.IsNullOrEmpty(block))
+        {
+            return;
+        }
+
         var cursor = 0;
         while (true)
         {
-            var idx = json.IndexOf("\"id\":", cursor);
+            var idx = block.IndexOf("\"id\":", cursor);
             if (idx < 0)
             {
                 break;
             }
 
-            var slice = json.Substring(idx, Mathf.Min(160, json.Length - idx));
+            var slice = block.Substring(idx, Mathf.Min(160, block.Length - idx));
             var id = JsonUtil.ExtractString(slice, "id");
             if (string.IsNullOrEmpty(id) || id.StartsWith("monster_") || id.StartsWith("player_"))
             {
@@ -1338,13 +1514,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 continue;
             }
 
-            if (JsonUtil.TryNumber(slice, "readyAt", out var readyAt))
+            if (JsonUtil.TryNumber(slice, "readyAt", out var readyAt) && readyAt > 1.0)
             {
                 var localReady = (float)((readyAt - _serverSkewMs) / 1000.0);
                 _readyAtLocal[id] = localReady;
             }
+            else
+            {
+                _readyAtLocal.Remove(id);
+            }
 
-            if (JsonUtil.TryNumber(slice, "cooldownMs", out var cd))
+            if (JsonUtil.TryNumber(slice, "cooldownMs", out var cd) && cd > 0f)
             {
                 _cooldownMs[id] = cd;
             }
@@ -1397,16 +1577,22 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void HandleContinuousMove()
     {
+        if (_hp <= 0 || _showDeath)
+        {
+            return;
+        }
+
         if (Time.time < _moveLockUntil)
         {
             return;
         }
 
         var dir = ReadMoveIntent();
-        var keyboardOrStick = dir.sqrMagnitude >= 0.01f;
-        if (keyboardOrStick)
+        var kbOnly = ReadKeyboardMove();
+        var steering = kbOnly.sqrMagnitude >= 0.01f || dir.sqrMagnitude >= 0.45f;
+        if (steering)
         {
-            // Manual move cancels click-path and pending skill chase (keeps target lock).
+            // WASD / strong stick cancels chase. Tiny joystick noise must not.
             CancelClickMove();
             ClearPendingSkill(false);
         }
@@ -1426,7 +1612,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         dir.Normalize();
         if (_world != null)
         {
-            if (keyboardOrStick)
+            if (steering)
             {
                 _world.GetCameraBasisXY(out var scrRight, out var scrUp);
                 var intentX = dir.x;
@@ -1467,8 +1653,27 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         var speed = _moveSpeed * _moveSpeedMult;
         var dt = Time.deltaTime;
-        _x += dir.x * speed * dt;
-        _y += dir.y * speed * dt;
+        var nx = _x + dir.x * speed * dt;
+        var ny = _y + dir.y * speed * dt;
+        // Soft local collision — walls + combatants (mirror server blocked / blocked_entity).
+        if (_world != null && _world.WouldBlockLocalMove(nx, ny))
+        {
+            if (!_world.WouldBlockLocalMove(nx, _y))
+            {
+                ny = _y;
+            }
+            else if (!_world.WouldBlockLocalMove(_x, ny))
+            {
+                nx = _x;
+            }
+            else
+            {
+                return;
+            }
+        }
+
+        _x = nx;
+        _y = ny;
         _world.SetLocalPos(_x, _y);
 
         if (_clickMoveActive)
@@ -1505,12 +1710,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (HasPendingSkillChase() && _world != null &&
             _world.TryGetMapXY(_pendingSkillTarget, out tx, out ty))
         {
-            // Approach until inside skill range (stop short of stacking on target).
+            // Approach until lastGood is in skill range — never stop early on predicted pos alone.
             var dx = tx - _x;
             var dy = ty - _y;
-            var dist = Mathf.Sqrt(dx * dx + dy * dy);
-            var stopAt = Mathf.Max(0.55f, _pendingSkillRange + 0.55f);
-            if (dist <= stopAt)
+            var gap = _world.RangeGapTo(_pendingSkillTarget, _lastGoodX, _lastGoodY);
+            if (gap <= _pendingSkillRange + 0.08f)
+            {
+                return Vector2.zero;
+            }
+
+            // Keep walking toward target even if predicted sprite looks "close".
+            if (dx * dx + dy * dy < 1e-6f)
             {
                 return Vector2.zero;
             }
@@ -1557,6 +1767,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _pendingSkillUntil = Time.time + 8f;
         CancelClickMove();
         _status = skillId + " → approach " + targetId;
+        GameLog.CastLocal(skillId, targetId, "approach");
     }
 
     private void TickPendingSkillChase()
@@ -1577,9 +1788,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var center = _world.DistanceSelfTo(_pendingSkillTarget);
-        var gap = Mathf.Max(0f, center - 0.85f);
-        if (gap > _pendingSkillRange + 0.08f)
+        var gapAck = _world.RangeGapTo(_pendingSkillTarget, _lastGoodX, _lastGoodY);
+        var gapPred = _world.RangeGapTo(_pendingSkillTarget, _x, _y);
+        if (gapAck > _pendingSkillRange + 0.08f && gapPred > _pendingSkillRange + 0.08f)
         {
             return;
         }
@@ -1590,42 +1801,67 @@ public sealed class NetworkBootstrap : MonoBehaviour
         ExecuteCastNow(skillId, targetId);
     }
 
-    private Vector2 ReadMoveIntent()
+    private Vector2 ReadKeyboardMove()
     {
-        var v = _joystick != null ? _joystick.Axis : Vector2.zero;
+        var v = Vector2.zero;
         if (_chatFocused)
         {
             return v;
         }
 
         var kb = Keyboard.current;
-        if (kb != null)
+        if (kb == null)
         {
-            if (kb.wKey.isPressed || kb.upArrowKey.isPressed)
-            {
-                v.y += 1f;
-            }
-            if (kb.sKey.isPressed || kb.downArrowKey.isPressed)
-            {
-                v.y -= 1f;
-            }
-            if (kb.aKey.isPressed || kb.leftArrowKey.isPressed)
-            {
-                v.x -= 1f;
-            }
-            if (kb.dKey.isPressed || kb.rightArrowKey.isPressed)
-            {
-                v.x += 1f;
-            }
+            return v;
+        }
+
+        if (kb.wKey.isPressed || kb.upArrowKey.isPressed)
+        {
+            v.y += 1f;
+        }
+        if (kb.sKey.isPressed || kb.downArrowKey.isPressed)
+        {
+            v.y -= 1f;
+        }
+        if (kb.aKey.isPressed || kb.leftArrowKey.isPressed)
+        {
+            v.x -= 1f;
+        }
+        if (kb.dKey.isPressed || kb.rightArrowKey.isPressed)
+        {
+            v.x += 1f;
         }
 
         return v;
+    }
+
+    private Vector2 ReadMoveIntent()
+    {
+        var v = _joystick != null ? _joystick.Axis : Vector2.zero;
+        return v + ReadKeyboardMove();
     }
 
     private void HandleActionKeys()
     {
         var kb = Keyboard.current;
         if (kb == null)
+        {
+            return;
+        }
+
+        if (kb.f9Key.wasPressedThisFrame)
+        {
+            var path = GameLog.DumpRing();
+            _status = "log dump  " + path;
+        }
+
+        if (kb.f10Key.wasPressedThisFrame)
+        {
+            GameLog.CycleLevel();
+            _status = "log level " + GameLog.LevelName + " (F10)";
+        }
+
+        if (_hp <= 0 || _showDeath)
         {
             return;
         }
@@ -1638,10 +1874,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 return;
             }
 
-            if (_showCtxMenu || _showInspect || _chatFocused || !string.IsNullOrEmpty(_itemTooltip))
+            if (_showCtxMenu || _showInspect || _showGacha || _chatFocused || !string.IsNullOrEmpty(_itemTooltip))
             {
                 _showCtxMenu = false;
                 _showInspect = false;
+                _showGacha = false;
                 _chatFocused = false;
                 _itemTooltip = "";
                 return;
@@ -1703,13 +1940,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 return;
             }
 
-            if (kb.spaceKey.wasPressedThisFrame || kb.digit1Key.wasPressedThisFrame ||
-                kb.digit3Key.wasPressedThisFrame ||
-                kb.rKey.wasPressedThisFrame || kb.digit4Key.wasPressedThisFrame ||
-                kb.digit5Key.wasPressedThisFrame || kb.digit7Key.wasPressedThisFrame ||
-                kb.uKey.wasPressedThisFrame || kb.iKey.wasPressedThisFrame ||
-                kb.oKey.wasPressedThisFrame || kb.pKey.wasPressedThisFrame ||
-                kb.yKey.wasPressedThisFrame)
+            if (kb.spaceKey.wasPressedThisFrame || DigitPressedThisFrame(kb) >= 0)
             {
                 return;
             }
@@ -1717,60 +1948,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (kb.spaceKey.wasPressedThisFrame)
         {
-            CastSkill("auto_attack");
+            CastHotbar(0);
         }
-        if (kb.digit1Key.wasPressedThisFrame)
+
+        var digit = DigitPressedThisFrame(kb);
+        if (digit >= 1 && digit <= 7)
         {
-            CastSkill("slash");
-        }
-        if (kb.digit2Key.wasPressedThisFrame)
-        {
-            BeginOrConfirmAim("shot");
-        }
-        if (kb.digit3Key.wasPressedThisFrame)
-        {
-            CastSkill("mend");
-        }
-        // Q/E reserved for camera yaw (see GrayBoxWorld). Dash/stun via skill bar.
-        if (kb.rKey.wasPressedThisFrame)
-        {
-            CastSkill("ember_dot");
+            CastHotbar(digit);
         }
         if (kb.fKey.wasPressedThisFrame)
         {
             ToggleInspectOnLock();
-        }
-        if (kb.digit4Key.wasPressedThisFrame)
-        {
-            CastSkill("shove");
-        }
-        if (kb.digit5Key.wasPressedThisFrame)
-        {
-            CastSkill("pull");
-        }
-        if (kb.digit6Key.wasPressedThisFrame)
-        {
-            BeginOrConfirmAim("blind_dust");
-        }
-        if (kb.digit7Key.wasPressedThisFrame)
-        {
-            CastSkill("iron_stance");
-        }
-        if (kb.digit8Key.wasPressedThisFrame)
-        {
-            BeginOrConfirmAim("shockwave");
-        }
-        if (kb.tKey.wasPressedThisFrame)
-        {
-            CastSkill("war_cry");
-        }
-        if (kb.uKey.wasPressedThisFrame)
-        {
-            CastSkill("power_chant");
-        }
-        if (kb.bKey.wasPressedThisFrame)
-        {
-            CastSkill("haste");
         }
         if (kb.iKey.wasPressedThisFrame)
         {
@@ -1782,26 +1970,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _showQuestLog = !_showQuestLog;
             _status = _showQuestLog ? "quests on" : "quests off";
         }
-        if (kb.oKey.wasPressedThisFrame)
-        {
-            CastSkill("barrier");
-        }
-        if (kb.pKey.wasPressedThisFrame)
-        {
-            CastSkill("ward");
-        }
-        if (kb.yKey.wasPressedThisFrame)
-        {
-            CastSkill("elemental_focus");
-        }
         if (kb.mKey.wasPressedThisFrame)
         {
             CycleSpirit();
         }
         if (kb.gKey.wasPressedThisFrame)
         {
-            _input.RequestGacha(1);
-            _status = "sent gacha";
+            _showGacha = !_showGacha;
+            _status = _showGacha ? "banner" : "banner closed";
         }
         if (kb.hKey.wasPressedThisFrame)
         {
@@ -1809,8 +1985,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
         if (kb.nKey.wasPressedThisFrame)
         {
-            _input.RequestWeaponSwap();
-            _status = "weapon swap";
+            TryWeaponSwap();
+        }
+        if (kb.rKey.wasPressedThisFrame && !_chatFocused)
+        {
+            TryQuickUseConsumable();
         }
         if (kb.lKey.wasPressedThisFrame)
         {
@@ -1829,6 +2008,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
         if (kb.tKey.wasPressedThisFrame)
         {
+            _showGacha = true;
             _input.RequestGacha(10);
             _status = "sent 10-pull";
         }
@@ -1911,6 +2091,97 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _status = "chat " + _chatTab;
     }
 
+    private void CastHotbar(int index)
+    {
+        if (_skillIds == null || index < 0 || index >= _skillIds.Length)
+        {
+            return;
+        }
+
+        CastSkill(_skillIds[index]);
+    }
+
+    private bool SkillUnlocked(string skillId)
+    {
+        if (string.IsNullOrEmpty(skillId) || skillId == "auto_attack")
+        {
+            return true;
+        }
+
+        if (_unlockedSkills.Count == 0)
+        {
+            return skillId == "shot";
+        }
+
+        return _unlockedSkills.Contains(skillId);
+    }
+
+    private int HotbarIndexOf(string skillId)
+    {
+        if (_skillIds == null)
+        {
+            return -1;
+        }
+
+        for (var i = 0; i < _skillIds.Length; i++)
+        {
+            if (_skillIds[i] == skillId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int DigitPressedThisFrame(Keyboard kb)
+    {
+        if (kb.digit1Key.wasPressedThisFrame) return 1;
+        if (kb.digit2Key.wasPressedThisFrame) return 2;
+        if (kb.digit3Key.wasPressedThisFrame) return 3;
+        if (kb.digit4Key.wasPressedThisFrame) return 4;
+        if (kb.digit5Key.wasPressedThisFrame) return 5;
+        if (kb.digit6Key.wasPressedThisFrame) return 6;
+        if (kb.digit7Key.wasPressedThisFrame) return 7;
+        if (kb.digit8Key.wasPressedThisFrame) return 8;
+        if (kb.digit9Key.wasPressedThisFrame) return 9;
+        return -1;
+    }
+
+    private static bool DigitIsPressed(Keyboard kb, int n)
+    {
+        return n switch
+        {
+            1 => kb.digit1Key.isPressed,
+            2 => kb.digit2Key.isPressed,
+            3 => kb.digit3Key.isPressed,
+            4 => kb.digit4Key.isPressed,
+            5 => kb.digit5Key.isPressed,
+            6 => kb.digit6Key.isPressed,
+            7 => kb.digit7Key.isPressed,
+            8 => kb.digit8Key.isPressed,
+            9 => kb.digit9Key.isPressed,
+            _ => false,
+        };
+    }
+
+    private static bool DigitWasReleased(Keyboard kb, int n)
+    {
+        return n switch
+        {
+            1 => kb.digit1Key.wasReleasedThisFrame,
+            2 => kb.digit2Key.wasReleasedThisFrame,
+            3 => kb.digit3Key.wasReleasedThisFrame,
+            4 => kb.digit4Key.wasReleasedThisFrame,
+            5 => kb.digit5Key.wasReleasedThisFrame,
+            6 => kb.digit6Key.wasReleasedThisFrame,
+            7 => kb.digit7Key.wasReleasedThisFrame,
+            8 => kb.digit8Key.wasReleasedThisFrame,
+            9 => kb.digit9Key.wasReleasedThisFrame,
+            _ => false,
+        };
+    }
+
     private void CastSkill(string skillId)
     {
         if (_input == null || _world == null)
@@ -1918,8 +2189,42 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        if (!string.IsNullOrEmpty(_aimSkillId))
+        if (!SkillUnlocked(skillId))
         {
+            var need = 0;
+            _unlockLevels.TryGetValue(skillId, out need);
+            _status = need > 0
+                ? SkillDisplayName(skillId) + " unlocks at L" + need
+                : SkillDisplayName(skillId) + " locked";
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(_aimSkillId) && _aimSkillId != skillId)
+        {
+            CancelAim();
+        }
+        else if (!string.IsNullOrEmpty(_aimSkillId))
+        {
+            return;
+        }
+
+        if (_readyAtLocal.TryGetValue(skillId, out var readyAt) &&
+            readyAt > Time.realtimeSinceStartup + 0.04f)
+        {
+            _status = SkillDisplayName(skillId) + " cooling down";
+            return;
+        }
+
+        var mana = SkillManaCost(skillId);
+        if (mana > 0 && _mp < mana)
+        {
+            _status = "Not enough MP (" + mana + ")";
+            return;
+        }
+
+        if (SkillWeaponSlot(skillId) == 2 && !HasSecondaryWeapon())
+        {
+            _status = SkillDisplayName(skillId) + " needs Sekundärwaffe (equip a bow)";
             return;
         }
 
@@ -1937,15 +2242,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             ClearPendingSkill(false);
             _input.SetTarget(_world.SelfId);
+            BeginLocalCast(skillId);
+            _world.PlayCastAttack(_world.SelfId, _world.SelfId, skillId);
             _input.Cast(skillId);
-            _status = skillId;
+            _status = SkillDisplayName(skillId);
             return;
         }
 
         var lockId = _world.LockTargetId;
-        if (skillId == "auto_attack")
+        if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId || !_world.IsLivingTarget(lockId))
         {
-            if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId)
+            if (skillId == "auto_attack")
             {
                 lockId = _world.FindClosestEnemyInRange(_weaponRange);
                 if (string.IsNullOrEmpty(lockId))
@@ -1953,26 +2260,19 @@ public sealed class NetworkBootstrap : MonoBehaviour
                     lockId = _world.LockClosestEnemy();
                 }
             }
-
-            if (string.IsNullOrEmpty(lockId))
+            else
             {
-                _status = "AA — no enemy";
-                return;
+                lockId = _world.LockClosestEnemy();
             }
-
-            _world.SetLockTarget(lockId);
-        }
-        else if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId)
-        {
-            lockId = _world.LockClosestEnemy();
         }
 
-        if (string.IsNullOrEmpty(lockId))
+        if (string.IsNullOrEmpty(lockId) || !_world.IsLivingTarget(lockId))
         {
             _status = skillId + " — need target (Tab / LMB)";
             return;
         }
 
+        _world.SetLockTarget(lockId);
         TryCastOrChase(skillId, lockId);
     }
 
@@ -1996,12 +2296,41 @@ public sealed class NetworkBootstrap : MonoBehaviour
         return 1.5f;
     }
 
+    private static float SkillProjectileSpeed(string skillId)
+    {
+        if (skillId == "shot")
+        {
+            return 16f;
+        }
+
+        if (skillId == "stun_bolt")
+        {
+            return 14f;
+        }
+
+        return 14f;
+    }
+
+    private void SpawnShotVisual(string skillId, float dx, float dy)
+    {
+        if (_world == null)
+        {
+            return;
+        }
+
+        var from = _world.GetEntityWorldPos(_world.SelfId);
+        if (!from.HasValue)
+        {
+            return;
+        }
+
+        _world.SpawnLocalSkillshot(skillId, from.Value, dx, dy, SkillProjectileSpeed(skillId));
+    }
+
     private void TryCastOrChase(string skillId, string targetId)
     {
         var range = ResolveSkillRange(skillId);
-        // Match server rangeGap ≈ centerDist - hitRadii (~0.8).
-        var center = _world.DistanceSelfTo(targetId);
-        var gap = Mathf.Max(0f, center - 0.85f);
+        var gap = _world.RangeGapTo(targetId, _lastGoodX, _lastGoodY);
         if (gap > range + 0.08f)
         {
             BeginPendingSkill(skillId, targetId, range);
@@ -2021,15 +2350,34 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _world.SetLockTarget(targetId);
         _input.SetTarget(targetId);
 
-        // Snap local pos into world so range checks / prediction match what we send.
-        _world.SetLocalPos(_x, _y, instant: true);
+        var range = ResolveSkillRange(skillId);
+        var gapAck = _world.RangeGapTo(targetId, _lastGoodX, _lastGoodY);
+        var gapPred = _world.RangeGapTo(targetId, _x, _y);
+        // Only snap back when last-good is in range and the predicted sprite drifted out.
+        if (gapPred > range + 0.08f && gapAck <= range + 0.08f)
+        {
+            _x = _lastGoodX;
+            _y = _lastGoodY;
+            _world.SetLocalPos(_x, _y, instant: true);
+            _input.RequestMove(_x, _y);
+        }
+        else
+        {
+            _world.SetLocalPos(_x, _y, instant: true);
+        }
+
+        _world.PlayCastAttack(_world.SelfId, targetId, skillId);
+        BeginLocalCast(skillId);
 
         var reqId = _prediction.NextRequestId("cast");
         _lastCastRequestId = reqId;
+        _lastCastSkillId = skillId;
         var predictedHp = 0;
-        if (_world.TryGetTargetInfo(out var info) && info.Id == targetId)
+        var predictHp = skillId != "shot" && skillId != "stun_bolt";
+        if (predictHp && _world.TryGetTargetInfo(out var info) && info.Id == targetId)
         {
-            predictedHp = Mathf.Max(0, info.Hp - 8);
+            predictedHp = Mathf.Max(1, info.Hp - 8);
+            _world.ApplyReconcileHp(targetId, predictedHp, false);
         }
 
         _prediction.Predict(new PredictionReconciler.PredictedAction
@@ -2046,40 +2394,56 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             var selfPos = _world.GetEntityWorldPos(_world.SelfId);
             var tgtPos = _world.GetEntityWorldPos(targetId);
-            if (!selfPos.HasValue || !tgtPos.HasValue)
+            if (!selfPos.HasValue)
             {
+                _input.Cast(skillId, targetId);
                 return;
             }
 
-            var dx = tgtPos.Value.x - selfPos.Value.x;
-            var dy = tgtPos.Value.y - selfPos.Value.y;
-            var len = Mathf.Sqrt(dx * dx + dy * dy);
-            if (len < 1e-4f)
+            var adx = 1f;
+            var ady = 0f;
+            if (tgtPos.HasValue)
             {
-                dx = 1f;
-                dy = 0f;
-            }
-            else
-            {
-                dx /= len;
-                dy /= len;
+                adx = tgtPos.Value.x - selfPos.Value.x;
+                ady = tgtPos.Value.y - selfPos.Value.y;
+                var len = Mathf.Sqrt(adx * adx + ady * ady);
+                if (len < 1e-4f)
+                {
+                    adx = 1f;
+                    ady = 0f;
+                }
+                else
+                {
+                    adx /= len;
+                    ady /= len;
+                }
             }
 
             CancelAim();
             if (def.Kind == AimKind.Ground)
             {
-                _input.Cast(skillId, targetId, null, null, tgtPos.Value.x, tgtPos.Value.y);
+                if (tgtPos.HasValue)
+                {
+                    _input.Cast(skillId, targetId, null, null, tgtPos.Value.x, tgtPos.Value.y);
+                }
+                else
+                {
+                    _input.Cast(skillId, targetId);
+                }
             }
             else
             {
-                _input.Cast(skillId, targetId, dx, dy);
+                _input.Cast(skillId, targetId, adx, ady);
+                SpawnShotVisual(skillId, adx, ady);
             }
 
+            GameLog.CastLocal(skillId, targetId, "indicator");
             _status = skillId + " → " + targetId;
             return;
         }
 
-        _input.Cast(skillId);
+        _input.Cast(skillId, targetId);
+        GameLog.CastLocal(skillId, targetId);
         _status = skillId + " → " + targetId;
     }
 
@@ -2131,6 +2495,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         _world.SetLockTarget(lockId);
         _input.SetTarget(lockId);
+        _world.PlayCastAttack(_world.SelfId, lockId, skillId);
+        BeginLocalCast(skillId);
         CancelAim();
         if (def.Kind == AimKind.Ground)
         {
@@ -2139,6 +2505,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         else
         {
             _input.Cast(skillId, lockId, dx, dy);
+            SpawnShotVisual(skillId, dx, dy);
         }
 
         _status = skillId + " → " + lockId;
@@ -2147,7 +2514,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void TryWorldTargetClicks()
     {
-        if (_world == null || _showSettings || _showCtxMenu || _showInspect || _chatFocused ||
+        if (_world == null || _showSettings || _showGacha || _showCtxMenu || _showInspect || _chatFocused ||
             !string.IsNullOrEmpty(_aimSkillId))
         {
             return;
@@ -2202,7 +2569,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void TryWorldMoveClicks()
     {
-        if (_world == null || _input == null || _showSettings || _showCtxMenu || _showInspect || _chatFocused ||
+        if (_world == null || _input == null || _showSettings || _showGacha || _showCtxMenu || _showInspect || _chatFocused ||
             !string.IsNullOrEmpty(_aimSkillId))
         {
             return;
@@ -2371,6 +2738,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         _input.SetTarget(lockId);
+        _world.PlayCastAttack(_world.SelfId, lockId, skillId);
+        BeginLocalCast(skillId);
         if (def.Kind == AimKind.Ground)
         {
             _input.Cast(skillId, lockId, null, null, _aimX, _aimY);
@@ -2378,6 +2747,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         else
         {
             _input.Cast(skillId, lockId, _aimDx, _aimDy);
+            SpawnShotVisual(skillId, _aimDx, _aimDy);
         }
 
         _aimSkillId = "";
@@ -2499,79 +2869,37 @@ public sealed class NetworkBootstrap : MonoBehaviour
         return false;
     }
 
-    private static bool IsAimHotkeyPressed(Keyboard kb, string skillId)
+    private bool IsAimHotkeyPressed(Keyboard kb, string skillId)
     {
-        if (skillId == "shot")
+        var idx = HotbarIndexOf(skillId);
+        if (idx == 0)
         {
-            return kb.digit2Key.wasPressedThisFrame;
+            return kb.spaceKey.wasPressedThisFrame;
         }
 
-        if (skillId == "stun_bolt")
-        {
-            return kb.digit9Key.wasPressedThisFrame;
-        }
-
-        if (skillId == "blind_dust")
-        {
-            return kb.digit6Key.wasPressedThisFrame;
-        }
-
-        if (skillId == "shockwave")
-        {
-            return kb.digit8Key.wasPressedThisFrame;
-        }
-
-        return false;
+        return idx > 0 && DigitPressedThisFrame(kb) == idx;
     }
 
-    private static bool IsAimHotkeyDown(Keyboard kb, string skillId)
+    private bool IsAimHotkeyDown(Keyboard kb, string skillId)
     {
-        if (skillId == "shot")
+        var idx = HotbarIndexOf(skillId);
+        if (idx == 0)
         {
-            return kb.digit2Key.isPressed;
+            return kb.spaceKey.isPressed;
         }
 
-        if (skillId == "stun_bolt")
-        {
-            return kb.digit9Key.isPressed;
-        }
-
-        if (skillId == "blind_dust")
-        {
-            return kb.digit6Key.isPressed;
-        }
-
-        if (skillId == "shockwave")
-        {
-            return kb.digit8Key.isPressed;
-        }
-
-        return false;
+        return idx > 0 && DigitIsPressed(kb, idx);
     }
 
-    private static bool IsAimHotkeyReleased(Keyboard kb, string skillId)
+    private bool IsAimHotkeyReleased(Keyboard kb, string skillId)
     {
-        if (skillId == "shot")
+        var idx = HotbarIndexOf(skillId);
+        if (idx == 0)
         {
-            return kb.digit2Key.wasReleasedThisFrame;
+            return kb.spaceKey.wasReleasedThisFrame;
         }
 
-        if (skillId == "stun_bolt")
-        {
-            return kb.digit9Key.wasReleasedThisFrame;
-        }
-
-        if (skillId == "blind_dust")
-        {
-            return kb.digit6Key.wasReleasedThisFrame;
-        }
-
-        if (skillId == "shockwave")
-        {
-            return kb.digit8Key.wasReleasedThisFrame;
-        }
-
-        return false;
+        return idx > 0 && DigitWasReleased(kb, idx);
     }
 
     private void TrySkillBarClicks()
@@ -2607,15 +2935,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         var p = mouse.position.ReadValue();
         var gui = ScreenToGui(p); var guiY = gui.y;
-        var slotW = 56f;
-        var slotH = 56f;
-        var startX = 20f;
-        var y = GuiH - 120f;
-        for (var i = 0; i < _skillIds.Length; i++)
+        var count = _skillIds != null ? Mathf.Min(_skillIds.Length, 8) : 0;
+        for (var i = 0; i < count; i++)
         {
-            var row = i / 9;
-            var col = i % 9;
-            var rect = new Rect(startX + col * (slotW + 6), y - row * (slotH + 8), slotW, slotH);
+            var rect = SkillSlotRect(i);
             if (!rect.Contains(new Vector2(gui.x, guiY)))
             {
                 continue;
@@ -2806,8 +3129,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             _world.SetLockTarget(_ctxTargetId);
             _input?.SetTarget(_ctxTargetId);
-            _input?.Cast("auto_attack");
-            _status = "AA → " + _ctxTargetId;
+            TryCastOrChase("auto_attack", _ctxTargetId);
             return;
         }
 
@@ -2903,6 +3225,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 : _weapon.Contains("dagger") ? "wind"
                 : "earth";
         }
+
+        _world?.SetHeldWeapon(_weapon);
     }
 
     private void TryEquipKey(Keyboard kb)
@@ -2962,6 +3286,12 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _invQty[index] = qty;
             cursor = idToken + 9;
             slot += 1;
+        }
+
+        var skinId = JsonUtil.ExtractString(json, "equippedSkinId");
+        if (!string.IsNullOrEmpty(skinId) && skinId != "null")
+        {
+            _skin = skinId;
         }
     }
 
@@ -3045,8 +3375,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
             "\nGold " + _gold + "  Tower F" + _towerFloor);
         GUI.Label(new Rect(charRect.x + 8, charRect.y + 120, charW - 16, 140),
             "Equipment\n" +
-            "Wpn " + ShortInv(_weapon) + "\n" +
-            "2nd " + ShortInv(_weapon2) + "\n" +
+            "Haupt (AA / N) " + ShortInv(_weapon) + "\n" +
+            "Sekundär (N) " + ShortInv(_weapon2) + "\n" +
             "Spirit " + ShortInv(_spirit) + "\n" +
             "Armor " + ShortInv(_armor) + "\n" +
             "Helm " + ShortInv(_helm) + "\n" +
@@ -3062,7 +3392,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             var row = i / InvCols;
             var rect = new Rect(startX + col * (slot + gap), startY + row * (slot + gap), slot, slot);
             var id = _invSlots[i];
-            GUI.color = InventoryColor(id);
+            GUI.color = InventorySlotColor(id);
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
             GUI.color = Color.white;
             if (!string.IsNullOrEmpty(id))
@@ -3168,13 +3498,18 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private void HandleInventorySlotClick(int i, string id, bool lmb, bool rmb)
     {
         var kind = id.StartsWith("spirit_") ? "spirit"
-            : id.StartsWith("char_") ? "character"
+            : id.StartsWith("char_") ? "portrait skin (RMB equip)"
             : id.StartsWith("card_") ? "class card (RMB use)"
             : id.StartsWith("item_") ? "item"
             : id.Contains("sword") || id.Contains("dagger") || id.Contains("bow") || id.Contains("gun") || id.Contains("staff")
                 ? "weapon (RMB=secondary, N=swap)"
             : "equipment";
         _itemTooltip = id + "\nkind: " + kind + "\nqty: " + _invQty[i];
+        var req = ItemLevelReq(id);
+        if (req > 1)
+        {
+            _itemTooltip += "\nreq Lv " + req + (_level < req ? "  (too low)" : "");
+        }
 
         if (rmb)
         {
@@ -3268,6 +3603,53 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
     }
 
+    private static string ShopItemLabel(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+        {
+            return id;
+        }
+
+        if (id.StartsWith("item_"))
+        {
+            return id.Substring(5);
+        }
+
+        return id.Replace('_', ' ');
+    }
+
+    private static int ItemLevelReq(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+        {
+            return 1;
+        }
+
+        if (id.Contains("_ash"))
+        {
+            return 15;
+        }
+
+        if (id.StartsWith("armor_iron") || id.StartsWith("helm_iron") || id.StartsWith("boots_iron")
+            || id.StartsWith("gloves_iron") || id.StartsWith("acc_iron"))
+        {
+            return 8;
+        }
+
+        return 1;
+    }
+
+    private Color InventorySlotColor(string id)
+    {
+        var tint = InventoryColor(id);
+        if (!string.IsNullOrEmpty(id) && ItemLevelReq(id) > _level)
+        {
+            return new Color(tint.r * 0.35f, tint.g * 0.35f, tint.b * 0.35f, 0.9f);
+        }
+
+        return tint;
+    }
+
     private static Color InventoryColor(string id)
     {
         if (string.IsNullOrEmpty(id))
@@ -3329,16 +3711,176 @@ public sealed class NetworkBootstrap : MonoBehaviour
             "  Gold " + _gold +
             "  spd " + (_moveSpeed * _moveSpeedMult).ToString("0.0") +
             "  class " + _classId + " towerF" + _towerFloor + "\n" +
-            "  " + _weapon + " r" + _weaponRange + "  2nd " + _weapon2 + "  spirit " + _spirit + "\n" +
-            "Pity " + _pity + "/" + _hardPity + "  Lock: " + _world.LockTargetId +
+            "  " + _weapon + " r" + _weaponRange + "  2nd " + _weapon2 + "  spirit " + _spirit +
+            "  skin " + _skin + "\n" +
+            "Lock: " + _world.LockTargetId +
             "  Guild: " + _guildName +
-            (string.IsNullOrEmpty(_partyId) ? "" : "  Party: " + _partyMembersLine) + "\n" +
-            "Tab·Space AA·I inv·J quests·K friends·U settings·H gate·L login·F inspect",
+            (string.IsNullOrEmpty(_partyId) ? "" : "  Party: " + _partyMembersLine) +
+            ClassCardHint() + "\n" +
+            "Tab lock · Space AA · 1–7 skills · N swap · R food · I inv · G banner · J quests",
             box);
 
+        var log = GameLog.RecentText(7);
+        if (!string.IsNullOrEmpty(log))
+        {
+            var logBox = new GUIStyle(GUI.skin.box)
+            {
+                fontSize = 12,
+                alignment = TextAnchor.UpperLeft,
+                wordWrap = true,
+                padding = new RectOffset(8, 8, 8, 8),
+            };
+            GUI.Box(new Rect(10, 132, Mathf.Min(520f, GuiW - 20f), 128f), log, logBox);
+        }
 
         DrawResourceBar(new Rect(20, GuiH - 54, 180, 12), (float)_hp / _maxHp, Color.red, "HP");
         DrawResourceBar(new Rect(20, GuiH - 36, 180, 12), (float)_mp / _maxMp, new Color(0.3f, 0.55f, 1f), "MP");
+        DrawWeaponPair();
+    }
+
+    private bool HasSecondaryWeapon()
+    {
+        return !string.IsNullOrEmpty(_weapon2) && _weapon2 != "none";
+    }
+
+    private static string WeaponPretty(string id)
+    {
+        if (string.IsNullOrEmpty(id) || id == "none")
+        {
+            return "—";
+        }
+
+        if (id.Contains("bow"))
+        {
+            return "Bow";
+        }
+
+        if (id.Contains("gun"))
+        {
+            return "Gun";
+        }
+
+        if (id.Contains("staff"))
+        {
+            return "Staff";
+        }
+
+        if (id.Contains("dagger"))
+        {
+            return "Dagger";
+        }
+
+        if (id.Contains("sword"))
+        {
+            return "Sword";
+        }
+
+        return ShortInv(id);
+    }
+
+    private void TryWeaponSwap()
+    {
+        if (_input == null)
+        {
+            return;
+        }
+
+        if (!HasSecondaryWeapon())
+        {
+            _comingSoonToast = "No secondary — equip a bow (I)";
+            _comingSoonUntil = Time.time + 2.2f;
+            _status = "no Sekundärwaffe";
+            return;
+        }
+
+        var a = _weapon;
+        _weapon = _weapon2;
+        _weapon2 = a;
+        RefreshWeaponMeta();
+        _weaponSwapUntil = Time.time + 1.15f;
+        _comingSoonToast = "Haupt: " + WeaponPretty(_weapon) + "   N  " + WeaponPretty(_weapon2);
+        _comingSoonUntil = Time.time + 1.6f;
+        _status = "swap → " + _weapon;
+        _input.RequestWeaponSwap();
+    }
+
+    private void TryQuickUseConsumable()
+    {
+        if (_input == null)
+        {
+            return;
+        }
+
+        var slot = FindQuickUseSlot();
+        if (slot < 0)
+        {
+            _status = "no food / ration";
+            return;
+        }
+
+        _input.RequestUseItem(slot);
+        _status = "use " + _invSlots[slot];
+    }
+
+    private int FindQuickUseSlot()
+    {
+        string[] prefer = { "item_stew", "item_ration", "item_bread" };
+        for (var p = 0; p < prefer.Length; p++)
+        {
+            for (var i = 0; i < _invSlots.Length; i++)
+            {
+                if (_invSlots[i] == prefer[p] && _invQty[i] > 0)
+                {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private void DrawWeaponPair()
+    {
+        var y = GuiH - 118f;
+        var flash = Time.time < _weaponSwapUntil;
+        DrawWeaponChip(new Rect(20f, y, 88f, 42f), "AA  W1", _weapon, true, flash);
+        DrawWeaponChip(new Rect(112f, y, 88f, 42f), "N   W2", _weapon2, false, flash);
+        GUI.color = new Color(0.85f, 0.85f, 0.88f, 0.9f);
+        GUI.Label(new Rect(20f, y - 16f, 180f, 16f), "Haupt ↔ Sekundär  (N)");
+        GUI.color = Color.white;
+    }
+
+    private void DrawWeaponChip(Rect rect, string tag, string weaponId, bool haupt, bool flash)
+    {
+        var empty = string.IsNullOrEmpty(weaponId) || weaponId == "none";
+        var fill = empty
+            ? new Color(0.14f, 0.14f, 0.16f, 0.9f)
+            : haupt
+                ? new Color(0.32f, 0.26f, 0.1f, 0.94f)
+                : new Color(0.12f, 0.22f, 0.3f, 0.94f);
+        if (flash)
+        {
+            fill = Color.Lerp(fill, Color.white, 0.28f);
+        }
+
+        GUI.color = fill;
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        DrawSlotEdge(rect, haupt
+            ? new Color(0.95f, 0.82f, 0.28f, 1f)
+            : new Color(0.55f, 0.82f, 0.95f, 1f));
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 6f, rect.y + 2f, rect.width - 8f, 38f),
+            tag + "\n" + WeaponPretty(weaponId));
+    }
+
+    private static void DrawSlotEdge(Rect rect, Color color)
+    {
+        GUI.color = color;
+        GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, 2f), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(rect.x, rect.yMax - 2f, rect.width, 2f), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(rect.x, rect.y, 2f, rect.height), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(rect.xMax - 2f, rect.y, 2f, rect.height), Texture2D.whiteTexture);
+        GUI.color = Color.white;
     }
 
     private void DrawTargetFrame()
@@ -3588,6 +4130,44 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _status = "portal " + _portalIds[best];
     }
 
+    private void MaybeBeginMapLoad(string json)
+    {
+        if (_world == null || _gatePhase < 3 || !_inWorld)
+        {
+            return;
+        }
+
+        var mapId = _world.MapId;
+        if (string.IsNullOrEmpty(mapId) || mapId == _loadMapId)
+        {
+            return;
+        }
+
+        _loadMapId = mapId;
+        var mapSlice = JsonUtil.ExtractObject(json, "map");
+        if (string.IsNullOrEmpty(mapSlice))
+        {
+            mapSlice = JsonUtil.SliceAround(json, "\"map\":{", 0, 4000);
+        }
+
+        var name = JsonUtil.ExtractString(mapSlice, "name");
+        _loadMapTitle = string.IsNullOrEmpty(name) ? PrettyMapId(mapId) : name;
+        _loadArt = SpriteCatalog.ForFloor(mapId, true);
+        _loadUntil = Time.unscaledTime + 1.2f;
+    }
+
+    private static string PrettyMapId(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+        {
+            return "Unknown";
+        }
+
+        var hash = id.IndexOf('#');
+        var baseId = hash > 0 ? id.Substring(0, hash) : id;
+        return baseId.Replace('_', ' ');
+    }
+
     private void ApplyPortalsFromState(string json)
     {
         _portalIds.Clear();
@@ -3633,13 +4213,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private void ApplyQuestFromState(string json)
     {
         _questLogText = "";
+        _questTrackerLine = "";
         var idx = json.IndexOf("\"quests\"");
         if (idx < 0)
         {
             return;
         }
 
-        var part = json.Substring(idx, Mathf.Min(1200, json.Length - idx));
+        var part = json.Substring(idx, Mathf.Min(4000, json.Length - idx));
         var cursor = 0;
         while (cursor < part.Length)
         {
@@ -3649,12 +4230,36 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 break;
             }
 
-            var slice = part.Substring(qIdx, Mathf.Min(160, part.Length - qIdx));
+            var slice = part.Substring(qIdx, Mathf.Min(320, part.Length - qIdx));
             var qid = JsonUtil.ExtractString(slice, "questId");
+            var name = JsonUtil.ExtractString(slice, "name");
+            var hint = JsonUtil.ExtractString(slice, "hint");
             JsonUtil.TryInt(slice, "progress", out var prog);
             JsonUtil.TryInt(slice, "stepIndex", out var step);
+            JsonUtil.TryInt(slice, "stepNeed", out var need);
             var done = slice.Contains("\"completed\":true");
-            _questLogText += qid + " step " + step + " (" + prog + ")" + (done ? " READY" : "") + "\n";
+            if (string.IsNullOrEmpty(name))
+            {
+                name = qid;
+            }
+
+            var line = name + "  " + (string.IsNullOrEmpty(hint) ? ("step " + step) : hint);
+            if (need > 0)
+            {
+                line += "  " + prog + "/" + need;
+            }
+
+            if (done)
+            {
+                line += "  READY";
+            }
+
+            _questLogText += line + "\n";
+            if (string.IsNullOrEmpty(_questTrackerLine))
+            {
+                _questTrackerLine = line;
+            }
+
             cursor = qIdx + 10;
         }
     }
@@ -3674,10 +4279,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var shopIdx = json.IndexOf("\"shop\"");
         if (shopIdx >= 0)
         {
-            var shopSlice = json.Substring(shopIdx, Mathf.Min(800, json.Length - shopIdx));
+            var shopSlice = json.Substring(shopIdx, Mathf.Min(8000, json.Length - shopIdx));
             _shopId = JsonUtil.ExtractString(shopSlice, "id");
             var cursor = 0;
-            while (cursor < shopSlice.Length && _shopItemIds.Count < 8)
+            while (cursor < shopSlice.Length && _shopItemIds.Count < 24)
             {
                 var iIdx = shopSlice.IndexOf("\"itemId\":\"", cursor);
                 if (iIdx < 0)
@@ -3685,7 +4290,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
                     break;
                 }
 
-                var slice = shopSlice.Substring(iIdx, Mathf.Min(80, shopSlice.Length - iIdx));
+                var slice = shopSlice.Substring(iIdx, Mathf.Min(120, shopSlice.Length - iIdx));
                 var itemId = JsonUtil.ExtractString(slice, "itemId");
                 JsonUtil.TryInt(slice, "buyPrice", out var price);
                 if (!string.IsNullOrEmpty(itemId))
@@ -3923,25 +4528,33 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var rect = new Rect(40f, 140f, 360f, 260f);
+        var shopRows = _shopItemIds.Count <= 0 ? 0 : (_shopItemIds.Count + 1) / 2;
+        var panelH = Mathf.Clamp(220f + shopRows * 24f + _questIds.Count * 24f, 260f, 560f);
+        var rect = new Rect(40f, 80f, 460f, panelH);
         GUI.color = new Color(0.1f, 0.11f, 0.14f, 0.95f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = Color.white;
-        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 340, 40), _interactKind + "\n" + _interactLine);
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 440, 40), _interactKind + "\n" + _interactLine);
 
         var y = rect.y + 55f;
         if (!string.IsNullOrEmpty(_shopId))
         {
             for (var i = 0; i < _shopItemIds.Count; i++)
             {
-                if (GUI.Button(new Rect(rect.x + 10, y, 340, 22),
-                        "Buy " + _shopItemIds[i] + " (" + _shopBuyPrices[i] + "g)"))
+                var col = i % 2;
+                var row = i / 2;
+                var req = ItemLevelReq(_shopItemIds[i]);
+                var lockTag = _level < req ? " LOCK" : "";
+                var reqTag = req > 1 ? " L" + req : "";
+                var btn = new Rect(rect.x + 10 + col * 220f, y + row * 24f, 214f, 22f);
+                if (GUI.Button(btn,
+                        "Buy " + ShopItemLabel(_shopItemIds[i]) + reqTag + " (" + _shopBuyPrices[i] + "g)" + lockTag))
                 {
                     _input?.RequestShopBuy(_shopId, _shopItemIds[i]);
                 }
-
-                y += 24f;
             }
+
+            y += shopRows * 24f;
         }
 
         for (var i = 0; i < _questIds.Count; i++)
@@ -3991,13 +4604,28 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var rect = new Rect(20f, 180f, 280f, 140f);
+        var rect = new Rect(20f, 160f, 340f, 200f);
         GUI.color = new Color(0.08f, 0.1f, 0.12f, 0.92f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = Color.white;
-        GUI.Label(new Rect(rect.x + 8, rect.y + 6, 260, 20), "Quests (J)");
-        GUI.Label(new Rect(rect.x + 8, rect.y + 28, 260, 100),
-            string.IsNullOrEmpty(_questLogText) ? "(none active)" : _questLogText);
+        GUI.Label(new Rect(rect.x + 8, rect.y + 6, 324, 20), "Quests (J) — Mira → Ridge → Crypt/Marsh → Tower → Lv20 card");
+        GUI.Label(new Rect(rect.x + 8, rect.y + 32, 324, 160),
+            string.IsNullOrEmpty(_questLogText) ? "(none active — talk to Sister Mira)" : _questLogText);
+    }
+
+    private void DrawQuestTracker()
+    {
+        if (string.IsNullOrEmpty(_questTrackerLine))
+        {
+            return;
+        }
+
+        var y = GuiH - 210f;
+        GUI.color = new Color(0.08f, 0.1f, 0.14f, 0.82f);
+        GUI.DrawTexture(new Rect(20f, y, 420f, 22f), Texture2D.whiteTexture);
+        GUI.color = new Color(0.95f, 0.88f, 0.55f, 1f);
+        GUI.Label(new Rect(24f, y + 2f, 412f, 18f), _questTrackerLine);
+        GUI.color = Color.white;
     }
 
     private void DrawPartyInvite()
@@ -4188,7 +4816,12 @@ public sealed class NetworkBootstrap : MonoBehaviour
         for (var i = 0; i < _unlockableSkills.Count && i < 6; i++)
         {
             var sid = _unlockableSkills[i];
-            if (GUI.Button(new Rect(rect.x + 8, y, 300, 22), "Unlock " + sid + " (1pt)"))
+            var need = 0;
+            _unlockLevels.TryGetValue(sid, out need);
+            var label = need > 0
+                ? "Unlock " + SkillDisplayName(sid) + "  L" + need + "  (1pt)"
+                : "Unlock " + SkillDisplayName(sid) + " (1pt)";
+            if (GUI.Button(new Rect(rect.x + 8, y, 300, 22), label))
             {
                 _input?.RequestSkillUnlock(sid);
             }
@@ -4262,32 +4895,42 @@ public sealed class NetworkBootstrap : MonoBehaviour
             "Instance " + mins + "m " + secs + "s" + phase);
     }
 
+    private void DrawBossFrame()
+    {
+        if (_world == null || !_world.TryGetBossFrame(out var name, out var hp, out var maxHp) || maxHp <= 0)
+        {
+            return;
+        }
+
+        var ratio = Mathf.Clamp01((float)hp / maxHp);
+        var phase = ratio > 0.66f ? 1 : (ratio > 0.33f ? 2 : 3);
+        var width = Mathf.Min(520f, GuiW - 80f);
+        var rect = new Rect(GuiW * 0.5f - width * 0.5f, 8f, width, 44f);
+        GUI.color = new Color(0.08f, 0.07f, 0.1f, 0.92f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 8, rect.y + 2, width - 16, 18), name + "  ·  Phase " + phase);
+        var bar = new Rect(rect.x + 8, rect.y + 22, width - 16, 14);
+        GUI.color = new Color(0.2f, 0.12f, 0.12f, 1f);
+        GUI.DrawTexture(bar, Texture2D.whiteTexture);
+        GUI.color = phase >= 3 ? new Color(0.95f, 0.25f, 0.15f) : new Color(0.85f, 0.2f, 0.22f);
+        GUI.DrawTexture(new Rect(bar.x, bar.y, bar.width * ratio, bar.height), Texture2D.whiteTexture);
+        GUI.color = new Color(1f, 0.85f, 0.4f, 0.9f);
+        GUI.DrawTexture(new Rect(bar.x + bar.width * 0.33f, bar.y, 2f, bar.height), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(bar.x + bar.width * 0.66f, bar.y, 2f, bar.height), Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(bar.x, bar.y - 1, bar.width, bar.height + 2), hp + " / " + maxHp);
+    }
+
     private void ParseSkillLists(string json)
     {
         _unlockableSkills.Clear();
         _unlockedSkills.Clear();
-        var uIdx = json.IndexOf("\"unlockable\"");
-        if (uIdx >= 0)
-        {
-            var cursor = uIdx;
-            while (true)
-            {
-                var q = json.IndexOf('"', cursor);
-                if (q < 0 || q > uIdx + 800)
-                {
-                    break;
-                }
-
-                // crude: find quoted skill ids after unlockable
-                break;
-            }
-        }
-
-        // Parse unlockable array strings
-        var unlockSlice = JsonUtil.SliceAround(json, "\"unlockable\"", 0, 800);
-        var skillSlice = JsonUtil.SliceAround(json, "\"skillIds\"", 0, 800);
-        ExtractQuotedIds(unlockSlice, _unlockableSkills);
-        ExtractQuotedIds(skillSlice, _unlockedSkills);
+        _unlockableSkills.AddRange(JsonUtil.ExtractStringArray(json, "unlockable"));
+        _unlockedSkills.AddRange(JsonUtil.ExtractStringArray(json, "skillIds"));
+        ParseUnlockLevels(json);
+        ApplyClassSkillIds(json);
+        ParseSkillCatalog(json);
     }
 
     private static void ExtractQuotedIds(string slice, List<string> into)
@@ -4313,7 +4956,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
 
             var s = slice.Substring(a + 1, b - a - 1);
-            if (s.Length > 2 && !s.Contains(":") && s != "unlockable" && s != "skillIds")
+            if (s.Length > 2 && !s.Contains(":") && s != "unlockable" && s != "skillIds" &&
+                s != "classSkillIds")
             {
                 into.Add(s);
             }
@@ -4456,6 +5100,334 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (GUI.Button(new Rect(rect.x + 160, rect.y + rect.height - 40, 140, 28), "Close"))
         {
             _showSettings = false;
+        }
+    }
+
+    private void ApplyPityExtras(string pitySlice)
+    {
+        if (JsonUtil.TryInt(pitySlice, "softPityStart", out var soft))
+        {
+            _softPityStart = soft;
+        }
+        if (JsonUtil.TryNumber(pitySlice, "baseSsrRate", out var baseSsr))
+        {
+            _baseSsr = baseSsr;
+        }
+        if (JsonUtil.TryNumber(pitySlice, "baseSrRate", out var baseSr))
+        {
+            _baseSr = baseSr;
+        }
+        if (JsonUtil.TryInt(pitySlice, "pullCostDust", out var dustCost))
+        {
+            _pullCostDust = dustCost;
+        }
+        if (JsonUtil.TryInt(pitySlice, "tenPullCostDust", out var tenCost))
+        {
+            _tenPullCostDust = tenCost;
+        }
+        var bname = JsonUtil.ExtractString(pitySlice, "bannerName");
+        if (!string.IsNullOrEmpty(bname))
+        {
+            _bannerName = bname;
+        }
+    }
+
+    private static int CountJsonToken(string json, string token)
+    {
+        var n = 0;
+        var i = 0;
+        while (i < json.Length)
+        {
+            var found = json.IndexOf(token, i, System.StringComparison.Ordinal);
+            if (found < 0)
+            {
+                break;
+            }
+
+            n += 1;
+            i = found + token.Length;
+        }
+
+        return n;
+    }
+
+    private void DrawGachaPanel()
+    {
+        if (!_showGacha)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 190f, GuiH * 0.5f - 190f, 380f, 380f);
+        GUI.color = new Color(0.08f, 0.09f, 0.13f, 0.97f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 360, 22), _bannerName + "  (G to close)");
+        GUI.Label(new Rect(rect.x + 10, rect.y + 34, 360, 20),
+            "Pity " + _pity + " / " + _hardPity + "  (hard)");
+        GUI.Label(new Rect(rect.x + 10, rect.y + 56, 360, 20),
+            "Soft pity from pull " + _softPityStart);
+        GUI.Label(new Rect(rect.x + 10, rect.y + 78, 360, 20),
+            "Next SSR  " + (_nextSsr * 100f).ToString("0.0") + "%");
+        GUI.Label(new Rect(rect.x + 10, rect.y + 100, 360, 36),
+            "Rates  SSR " + (_baseSsr * 100f).ToString("0") + "%   SR " + (_baseSr * 100f).ToString("0") +
+            "%   10-pull: at least 1 SR");
+        GUI.Label(new Rect(rect.x + 10, rect.y + 140, 360, 20), "Last  " + _lastDrop);
+        if (!string.IsNullOrEmpty(_gachaSummary))
+        {
+            GUI.Label(new Rect(rect.x + 10, rect.y + 162, 360, 20), "This pull  " + _gachaSummary);
+        }
+
+        GUI.Label(new Rect(rect.x + 10, rect.y + 188, 360, 36),
+            "Pool: class cards + spirits + gear + Aurel/Nyla portraits.\nPortrait: " + _skin);
+        GUI.Label(new Rect(rect.x + 10, rect.y + 226, 360, 20),
+            "1-pull: " + _pullCostDust + " dust or 1 ticket   10-pull: " + _tenPullCostDust +
+            " dust or 10 tickets");
+
+        if (GUI.Button(new Rect(rect.x + 10, rect.y + 256, 170, 36), "Pull x1"))
+        {
+            _input?.RequestGacha(1);
+            _status = "sent gacha";
+        }
+
+        if (GUI.Button(new Rect(rect.x + 200, rect.y + 256, 170, 36), "Pull x10"))
+        {
+            _input?.RequestGacha(10);
+            _status = "sent 10-pull";
+        }
+
+        if (GUI.Button(new Rect(rect.x + 10, rect.y + rect.height - 40, 360, 28), "Close"))
+        {
+            _showGacha = false;
+        }
+    }
+
+    private string ClassCardHint()
+    {
+        if (_classId != "adventurer")
+        {
+            return "";
+        }
+
+        return _level < 20
+            ? "  · Class card from level 20"
+            : "  · Use a class card (banner or Card Broker)";
+    }
+
+    private void MaybeStartTutorial()
+    {
+        if (_tutorialStep >= 0)
+        {
+            return;
+        }
+
+        if (PlayerPrefs.GetInt("gaaacha_tutorial_done", 0) == 1)
+        {
+            return;
+        }
+
+        _tutorialStep = 0;
+    }
+
+    private void ApplySkillIdsFromState(string json)
+    {
+        ApplyClassSkillIds(json);
+        var found = JsonUtil.ExtractStringArray(json, "skillIds");
+        if (found.Count > 0)
+        {
+            _unlockedSkills.Clear();
+            _unlockedSkills.AddRange(found);
+        }
+    }
+
+    private void ApplyClassSkillIds(string json)
+    {
+        var found = JsonUtil.ExtractStringArray(json, "classSkillIds");
+        if (found.Count > 0)
+        {
+            _skillIds = found.Count > 8 ? found.GetRange(0, 8).ToArray() : found.ToArray();
+        }
+        else if (_skillIds == null || _skillIds.Length == 0)
+        {
+            _skillIds = ClassSkills;
+        }
+    }
+
+    private void ParseUnlockLevels(string json)
+    {
+        var slice = JsonUtil.SliceAround(json, "\"unlockLevels\"", 0, 900);
+        if (string.IsNullOrEmpty(slice))
+        {
+            return;
+        }
+
+        _unlockLevels.Clear();
+        var cursor = 0;
+        while (cursor < slice.Length)
+        {
+            var q1 = slice.IndexOf('"', cursor);
+            if (q1 < 0)
+            {
+                break;
+            }
+
+            var q2 = slice.IndexOf('"', q1 + 1);
+            if (q2 < 0)
+            {
+                break;
+            }
+
+            var key = slice.Substring(q1 + 1, q2 - q1 - 1);
+            cursor = q2 + 1;
+            if (key == "unlockLevels" || key.Contains(":"))
+            {
+                continue;
+            }
+
+            var colon = slice.IndexOf(':', cursor);
+            if (colon < 0 || colon > cursor + 8)
+            {
+                continue;
+            }
+
+            int n = 0;
+            var num = "";
+            for (var i = colon + 1; i < slice.Length; i++)
+            {
+                var c = slice[i];
+                if (c == '-' || (c >= '0' && c <= '9'))
+                {
+                    num += c;
+                }
+                else if (num.Length > 0)
+                {
+                    break;
+                }
+            }
+
+            if (int.TryParse(num, out n) && n > 0)
+            {
+                _unlockLevels[key] = n;
+            }
+        }
+    }
+
+    private void DrawLoadingScreen()
+    {
+        var left = _loadUntil - Time.unscaledTime;
+        if (left <= 0f || string.IsNullOrEmpty(_loadMapTitle))
+        {
+            return;
+        }
+
+        var t = 1f - Mathf.Clamp01(left / 1.2f);
+        var alpha = t < 0.62f ? 1f : Mathf.Clamp01(1f - (t - 0.62f) / 0.38f);
+        GUI.color = new Color(0.04f, 0.04f, 0.06f, 0.92f * alpha);
+        GUI.DrawTexture(new Rect(0f, 0f, GuiW, GuiH), Texture2D.whiteTexture);
+
+        var panel = new Rect(GuiW * 0.5f - 170f, GuiH * 0.5f - 150f, 340f, 200f);
+        GUI.color = new Color(0.12f, 0.12f, 0.16f, 0.97f * alpha);
+        GUI.DrawTexture(panel, Texture2D.whiteTexture);
+        GUI.color = new Color(1f, 1f, 1f, alpha);
+        DrawLoadArt(new Rect(panel.x + 12f, panel.y + 12f, 316f, 132f));
+        var title = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontSize = 22,
+            fontStyle = FontStyle.Bold,
+        };
+        title.normal.textColor = new Color(1f, 0.95f, 0.82f, alpha);
+        GUI.Label(new Rect(panel.x, panel.y + 148f, panel.width, 44f), _loadMapTitle, title);
+        GUI.color = Color.white;
+    }
+
+    private void DrawLoadArt(Rect rect)
+    {
+        if (_loadArt != null && _loadArt.texture != null)
+        {
+            var tex = _loadArt.texture;
+            var tr = _loadArt.textureRect;
+            var uv = new Rect(
+                tr.x / tex.width,
+                tr.y / tex.height,
+                tr.width / tex.width,
+                tr.height / tex.height);
+            GUI.DrawTextureWithTexCoords(rect, tex, uv);
+            return;
+        }
+
+        GUI.color = new Color(0.28f, 0.32f, 0.4f, GUI.color.a);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+    }
+
+    private void DrawDeathPanel()
+    {
+        if (!_showDeath && _hp > 0)
+        {
+            return;
+        }
+
+        if (_hp > 0)
+        {
+            _showDeath = false;
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 180f, GuiH * 0.5f - 70f, 360f, 140f);
+        GUI.color = new Color(0.12f, 0.05f, 0.05f, 0.96f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 12, rect.y + 12, 336, 40), "You died.");
+        GUI.Label(new Rect(rect.x + 12, rect.y + 40, 336, 24), "Respawn at your Homestone.");
+        if (GUI.Button(new Rect(rect.x + 12, rect.y + 80, 336, 40), "Respawn at Homestone"))
+        {
+            _input?.RequestRespawn();
+            _showDeath = false;
+            _status = "respawning";
+        }
+    }
+
+    private void DrawClassChangePanel()
+    {
+        if (!_showClassChange)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 190f, GuiH * 0.5f - 90f, 380f, 180f);
+        GUI.color = new Color(0.12f, 0.1f, 0.05f, 0.97f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 12, rect.y + 10, 356, 28), "Class change — " + _classChangeTitle);
+        GUI.Label(new Rect(rect.x + 12, rect.y + 42, 356, 70), _classChangeBody);
+        if (GUI.Button(new Rect(rect.x + 12, rect.y + 130, 356, 32), "Continue"))
+        {
+            _showClassChange = false;
+        }
+    }
+
+    private void DrawTutorialTips()
+    {
+        if (_tutorialStep < 0 || _tutorialStep >= TutorialTips.Length)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 220f, GuiH - 168f, 440f, 70f);
+        GUI.color = new Color(0.08f, 0.12f, 0.18f, 0.94f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 6, 300, 40),
+            "Tip " + (_tutorialStep + 1) + "/" + TutorialTips.Length + "  " + TutorialTips[_tutorialStep]);
+        if (GUI.Button(new Rect(rect.x + 320, rect.y + 18, 100, 36),
+                _tutorialStep + 1 >= TutorialTips.Length ? "Done" : "Next"))
+        {
+            _tutorialStep += 1;
+            if (_tutorialStep >= TutorialTips.Length)
+            {
+                PlayerPrefs.SetInt("gaaacha_tutorial_done", 1);
+                PlayerPrefs.Save();
+            }
         }
     }
 
@@ -4688,8 +5660,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void DrawBuffRow()
     {
-        var x = 220f;
-        var y = GuiH - 52f;
+        var x = 20f;
+        var y = GuiH - 186f;
         for (var i = 0; i < _buffs.Count; i++)
         {
             var b = _buffs[i];
@@ -4699,44 +5671,335 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 continue;
             }
 
-            var rect = new Rect(x + i * 86f, y, 80f, 28f);
-            GUI.color = new Color(0.2f, 0.25f, 0.35f, 0.85f);
+            var rect = new Rect(x + i * 44f, y, 40f, 40f);
+            GUI.color = BuffIconColor(b.Kind, b.Id);
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            GUI.color = Color.black;
+            GUI.Label(new Rect(rect.x + 2, rect.y + 2, rect.width - 4, 22), BuffIconLabel(b.Kind, b.Id));
             GUI.color = Color.white;
-            GUI.Label(rect, b.Kind + "\n" + rem.ToString("0.0") + "s");
+            GUI.Label(new Rect(rect.x + 2, rect.y + 22, rect.width - 4, 16), rem.ToString("0.0"));
         }
+    }
+
+    private static string BuffIconLabel(string kind, string id)
+    {
+        if (kind == "stun") return "STN";
+        if (kind == "dot") return "DoT";
+        if (id != null && id.StartsWith("food_")) return id.Contains("def") ? "DEF" : "ATK";
+        if (kind == "attr_up" || (id != null && id.Contains("rally"))) return "RAL";
+        if (kind == "dmg_taken_mult" || (id != null && id.Contains("decoy"))) return "DEC";
+        if (kind == "blind") return "BLD";
+        if (kind != null && kind.Contains("shield")) return "SHD";
+        if (kind == "speed_mult") return "HST";
+        if (kind == "elem_dmg_up") return "ELM";
+        if (string.IsNullOrEmpty(kind)) return "?";
+        return kind.Length <= 3 ? kind.ToUpperInvariant() : kind.Substring(0, 3).ToUpperInvariant();
+    }
+
+    private static Color BuffIconColor(string kind, string id)
+    {
+        if (kind == "stun") return new Color(0.95f, 0.82f, 0.2f, 0.92f);
+        if (kind == "dot") return new Color(0.95f, 0.4f, 0.15f, 0.92f);
+        if (id != null && id.StartsWith("food_")) return new Color(0.85f, 0.45f, 0.15f, 0.92f);
+        if (kind == "attr_up" || (id != null && id.Contains("rally"))) return new Color(1f, 0.5f, 0.12f, 0.92f);
+        if (kind == "dmg_taken_mult" || (id != null && id.Contains("decoy"))) return new Color(0.35f, 0.75f, 1f, 0.92f);
+        if (kind == "blind") return new Color(0.45f, 0.45f, 0.5f, 0.92f);
+        if (kind != null && kind.Contains("shield")) return new Color(0.35f, 0.9f, 0.85f, 0.92f);
+        if (kind == "speed_mult") return new Color(0.55f, 0.95f, 0.3f, 0.92f);
+        return new Color(0.55f, 0.35f, 0.7f, 0.92f);
+    }
+
+    private const float SkillSlotW = 58f;
+    private const float SkillSlotH = 62f;
+    private const float SkillSlotGap = 6f;
+    private const float SkillBarX = 20f;
+    private float SkillBarY => GuiH - 128f;
+
+    private Rect SkillSlotRect(int index)
+    {
+        return new Rect(SkillBarX + index * (SkillSlotW + SkillSlotGap), SkillBarY, SkillSlotW, SkillSlotH);
+    }
+
+    private void SeedDefaultSkillHud()
+    {
+        SetSkillHud("auto_attack", "Auto Attack", 0, 1, 0.7f);
+        SetSkillHud("shot", "Shot", 8, 2, 0.4f);
+        SetSkillHud("shockwave", "Shockwave", 16, 1, 0.45f);
+        SetSkillHud("dash", "Dash", 10, 0, 0.25f);
+        SetSkillHud("rally", "Rally", 12, 0, 0.4f);
+        SetSkillHud("hook_shot", "Hook Shot", 12, 1, 0.45f);
+        SetSkillHud("mend", "Mend", 12, 0, 0.5f);
+        SetSkillHud("decoy", "Decoy", 14, 0, 0.35f);
+    }
+
+    private void SetSkillHud(string id, string name, int mana, int slot, float castSec)
+    {
+        _skillHud[id] = new SkillHudInfo
+        {
+            Name = name,
+            ManaCost = mana,
+            WeaponSlot = slot,
+            CastSec = castSec,
+        };
+        if (!_cooldownMs.ContainsKey(id))
+        {
+            _cooldownMs[id] = 1000f;
+        }
+    }
+
+    private void ParseSkillCatalog(string json)
+    {
+        var slice = JsonUtil.SliceAround(json, "\"catalog\"", 0, 2800);
+        if (string.IsNullOrEmpty(slice))
+        {
+            return;
+        }
+
+        var cursor = 0;
+        while (true)
+        {
+            var idx = slice.IndexOf("\"id\":\"", cursor);
+            if (idx < 0)
+            {
+                break;
+            }
+
+            var obj = slice.Substring(idx, Mathf.Min(180, slice.Length - idx));
+            var id = JsonUtil.ExtractString(obj, "id");
+            cursor = idx + 6;
+            if (string.IsNullOrEmpty(id))
+            {
+                continue;
+            }
+
+            var name = JsonUtil.ExtractString(obj, "name");
+            JsonUtil.TryInt(obj, "manaCost", out var mana);
+            JsonUtil.TryInt(obj, "weaponSlot", out var slot);
+            JsonUtil.TryNumber(obj, "cooldownMs", out var cd);
+            var prev = _skillHud.TryGetValue(id, out var existing) ? existing : default;
+            _skillHud[id] = new SkillHudInfo
+            {
+                Name = string.IsNullOrEmpty(name) ? (string.IsNullOrEmpty(prev.Name) ? ShortName(id) : prev.Name) : name,
+                ManaCost = mana,
+                WeaponSlot = slot,
+                CastSec = prev.CastSec > 0.05f ? prev.CastSec : SkillCastSec(id),
+            };
+            if (cd > 0f)
+            {
+                _cooldownMs[id] = cd;
+            }
+        }
+    }
+
+    private void BeginLocalCast(string skillId)
+    {
+        _castSkillId = skillId;
+        _castLabel = SkillDisplayName(skillId);
+        _castDur = SkillCastSec(skillId);
+        _castUntil = Time.time + _castDur;
+        // Cooldown sweep comes from sync_cooldowns. Predicting CD here blocked
+        // Space/AA after a rejected (out_of_range) cast and broke the chase pipeline.
+    }
+
+    private string SkillDisplayName(string id)
+    {
+        if (_skillHud.TryGetValue(id, out var info) && !string.IsNullOrEmpty(info.Name))
+        {
+            return info.Name;
+        }
+
+        return ShortName(id);
+    }
+
+    private int SkillManaCost(string id)
+    {
+        return _skillHud.TryGetValue(id, out var info) ? info.ManaCost : 0;
+    }
+
+    private int SkillWeaponSlot(string id)
+    {
+        return _skillHud.TryGetValue(id, out var info) ? info.WeaponSlot : 0;
+    }
+
+    private float SkillCastSec(string id)
+    {
+        if (_skillHud.TryGetValue(id, out var info) && info.CastSec > 0.05f)
+        {
+            return info.CastSec;
+        }
+
+        if (id == "auto_attack")
+        {
+            return 0.7f;
+        }
+
+        if (id == "dash")
+        {
+            return 0.25f;
+        }
+
+        return GrayBoxWorld.IsStrikeSkill(id) ? 0.45f : 0.35f;
+    }
+
+    private void DrawCastBar()
+    {
+        var rem = _castUntil - Time.time;
+        if (rem <= 0f || string.IsNullOrEmpty(_castSkillId))
+        {
+            return;
+        }
+
+        var ratio = _castDur <= 0.01f ? 1f : 1f - Mathf.Clamp01(rem / _castDur);
+        var w = 280f;
+        var rect = new Rect(GuiW * 0.5f - w * 0.5f, SkillBarY - 22f, w, 12f);
+        DrawResourceBar(rect, ratio, new Color(0.95f, 0.78f, 0.25f), "");
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x, rect.y - 16f, w, 16f), _castLabel);
     }
 
     private void DrawSkillBar()
     {
-        var slotW = 56f;
-        var slotH = 56f;
-        var startX = 20f;
-        var y = GuiH - 120f;
-        for (var i = 0; i < _skillIds.Length; i++)
+        var count = _skillIds != null ? Mathf.Min(_skillIds.Length, 8) : 0;
+        _hoverSkillId = "";
+        var mouse = Event.current != null ? Event.current.mousePosition : Vector2.zero;
+        for (var i = 0; i < count; i++)
         {
             var id = _skillIds[i];
-            var row = i / 9;
-            var col = i % 9;
-            var rect = new Rect(startX + col * (slotW + 6), y - row * (slotH + 8), slotW, slotH);
+            var rect = SkillSlotRect(i);
             var readyAt = _readyAtLocal.TryGetValue(id, out var ra) ? ra : 0f;
             var cdMs = _cooldownMs.TryGetValue(id, out var c) ? c : 1000f;
             var rem = Mathf.Max(0f, readyAt - Time.realtimeSinceStartup);
             var fill = cdMs <= 0 ? 0f : Mathf.Clamp01(rem / (cdMs / 1000f));
+            var unlocked = SkillUnlocked(id);
+            var mana = SkillManaCost(id);
+            var oom = unlocked && mana > 0 && _mp < mana;
+            var slot = SkillWeaponSlot(id);
+            var missingHand = unlocked && slot == 2 && !HasSecondaryWeapon();
 
-            GUI.color = SkillColor(id);
+            GUI.color = !unlocked
+                ? new Color(0.18f, 0.18f, 0.2f, 0.9f)
+                : missingHand
+                    ? new Color(0.22f, 0.2f, 0.18f, 0.92f)
+                    : oom
+                    ? new Color(0.2f, 0.28f, 0.45f, 0.92f)
+                    : SkillColor(id);
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
-            if (fill > 0f)
+            DrawCdSweep(rect, unlocked ? fill : 0f);
+            if (unlocked && slot == 1)
             {
-                GUI.color = new Color(0f, 0f, 0f, 0.55f);
-                GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, rect.height * fill), Texture2D.whiteTexture);
+                DrawSlotEdge(rect, new Color(0.95f, 0.82f, 0.28f, 0.95f));
+            }
+            else if (unlocked && slot == 2)
+            {
+                DrawSlotEdge(rect, HasSecondaryWeapon()
+                    ? new Color(0.55f, 0.82f, 0.95f, 0.95f)
+                    : new Color(0.7f, 0.25f, 0.2f, 0.95f));
             }
 
-            GUI.color = Color.white;
-            var label = ShortName(id);
-            GUI.Label(new Rect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4),
-                label + (rem > 0 ? "\n" + rem.ToString("0.0") : ""));
+            GUI.color = unlocked ? Color.white : new Color(0.7f, 0.7f, 0.72f);
+            var key = i == 0 ? "Spc" : i.ToString();
+            var name = ShortName(id);
+            var body = key + "\n" + name;
+            if (!unlocked)
+            {
+                var need = 0;
+                _unlockLevels.TryGetValue(id, out need);
+                body = key + "\n" + (need > 0 ? "L" + need : "—");
+            }
+            else if (rem > 0.04f)
+            {
+                body = key + "\n" + rem.ToString("0.0");
+            }
+
+            GUI.Label(new Rect(rect.x + 3, rect.y + 2, rect.width - 6, 36), body);
+            var meta = "";
+            if (mana > 0)
+            {
+                meta = mana + " MP";
+            }
+
+            if (slot == 1)
+            {
+                meta = string.IsNullOrEmpty(meta) ? "W1" : meta + "  W1";
+            }
+            else if (slot == 2)
+            {
+                var w2 = string.IsNullOrEmpty(_weapon2) || _weapon2 == "none" ? "W2!" : "W2";
+                meta = string.IsNullOrEmpty(meta) ? w2 : meta + "  " + w2;
+            }
+
+            if (!string.IsNullOrEmpty(meta))
+            {
+                GUI.color = oom ? new Color(0.55f, 0.75f, 1f) : new Color(0.9f, 0.9f, 0.95f);
+                GUI.Label(new Rect(rect.x + 2, rect.y + rect.height - 18, rect.width - 4, 16), meta);
+            }
+
+            if (rect.Contains(mouse))
+            {
+                _hoverSkillId = id;
+            }
         }
+
+        DrawSkillTooltip();
+        GUI.color = Color.white;
+    }
+
+    private void DrawSkillTooltip()
+    {
+        if (string.IsNullOrEmpty(_hoverSkillId))
+        {
+            return;
+        }
+
+        var id = _hoverSkillId;
+        var idx = HotbarIndexOf(id);
+        var slot = SkillWeaponSlot(id);
+        var mana = SkillManaCost(id);
+        var key = idx <= 0 ? "Space" : idx.ToString();
+        var cd = _cooldownMs.TryGetValue(id, out var c) ? c / 1000f : 0f;
+        var weapon = slot == 1
+            ? "Hauptwaffe (AA) — " + WeaponPretty(_weapon)
+            : slot == 2
+                ? (HasSecondaryWeapon()
+                    ? "Sekundärwaffe — " + WeaponPretty(_weapon2) + "  (N swaps)"
+                    : "Sekundärwaffe missing — equip a bow")
+                : "No weapon slot";
+        var unlocked = SkillUnlocked(id);
+        var lockLine = "";
+        if (!unlocked)
+        {
+            _unlockLevels.TryGetValue(id, out var need);
+            lockLine = need > 0 ? "\nLocked until L" + need : "\nLocked";
+        }
+
+        var text = SkillDisplayName(id) + "  [" + key + "]" +
+                   "\n" + weapon +
+                   (mana > 0 ? "\nMP " + mana : "\nNo MP cost") +
+                   (cd > 0f ? "\nCD " + cd.ToString("0.0") + "s" : "") +
+                   lockLine;
+        var tip = new Rect(SkillBarX, SkillBarY - 78f, 260f, 72f);
+        GUI.color = new Color(0.08f, 0.09f, 0.12f, 0.95f);
+        GUI.DrawTexture(tip, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(tip.x + 8, tip.y + 4, tip.width - 12, tip.height - 6), text);
+    }
+
+    private static void DrawCdSweep(Rect rect, float remaining01)
+    {
+        if (remaining01 <= 0.001f)
+        {
+            return;
+        }
+
+        GUI.color = new Color(0.02f, 0.02f, 0.05f, 0.62f);
+        GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, rect.height * remaining01), Texture2D.whiteTexture);
+        var cx = rect.x + rect.width * 0.5f;
+        var cy = rect.y + rect.height * 0.5f;
+        var prev = GUI.matrix;
+        GUIUtility.RotateAroundPivot(-remaining01 * 360f, new Vector2(cx, cy));
+        GUI.color = new Color(1f, 1f, 1f, 0.9f);
+        GUI.DrawTexture(new Rect(cx - 1.5f, cy - rect.height * 0.48f, 3f, rect.height * 0.48f), Texture2D.whiteTexture);
+        GUI.matrix = prev;
     }
 
     private static Color SkillColor(string id)
@@ -4763,16 +6026,20 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private static string ShortName(string id)
     {
-        if (id == "auto_attack")
+        switch (id)
         {
-            return "AA";
+            case "auto_attack": return "AA";
+            case "shot": return "Shot";
+            case "shockwave": return "Wave";
+            case "dash": return "Dash";
+            case "rally": return "Rally";
+            case "hook_shot": return "Hook";
+            case "mend": return "Mend";
+            case "decoy": return "Decoy";
+            default:
+                if (string.IsNullOrEmpty(id)) return "?";
+                return id.Length <= 6 ? id : id.Substring(0, 6);
         }
-        if (id.Length <= 6)
-        {
-            return id;
-        }
-
-        return id.Substring(0, 6);
     }
 
     private static void DrawResourceBar(Rect rect, float ratio, Color fill, string label)

@@ -1,0 +1,259 @@
+{
+  "default": {
+    "goldMin": 2,
+    "goldMax": 4,
+    "xp": 16,
+    "drops": [{ "itemId": "item_dust", "chance": 0.7 }]
+  },
+  "slime": {
+    "goldMin": 2,
+    "goldMax": 5,
+    "xp": 16,
+    "drops": [
+      { "itemId": "item_dust", "chance": 1 },
+      { "itemId": "item_ration", "chance": 0.08 }
+    ]
+  },
+  "king_slime": {
+    "goldMin": 10,
+    "goldMax": 18,
+    "xp": 48,
+    "drops": [
+      { "itemId": "item_dust", "chance": 1 },
+      { "itemId": "item_ration", "chance": 0.25 },
+      { "itemId": "armor_leather", "chance": 0.08 }
+    ]
+  },
+  "pest": {
+    "goldMin": 3,
+    "goldMax": 6,
+    "xp": 18,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.7 },
+      { "itemId": "item_ration", "chance": 0.12 }
+    ]
+  },
+  "beetle": {
+    "goldMin": 3,
+    "goldMax": 6,
+    "xp": 20,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.65 },
+      { "itemId": "item_bread", "chance": 0.1 }
+    ]
+  },
+  "ember": {
+    "goldMin": 4,
+    "goldMax": 8,
+    "xp": 24,
+    "drops": [{ "itemId": "item_dust", "chance": 0.75 }]
+  },
+  "gust": {
+    "goldMin": 4,
+    "goldMax": 8,
+    "xp": 24,
+    "drops": [{ "itemId": "item_dust", "chance": 0.75 }]
+  },
+  "tide": {
+    "goldMin": 4,
+    "goldMax": 8,
+    "xp": 26,
+    "drops": [{ "itemId": "item_dust", "chance": 0.7 }]
+  },
+  "shadow": {
+    "goldMin": 5,
+    "goldMax": 9,
+    "xp": 28,
+    "drops": [{ "itemId": "item_dust", "chance": 0.72 }]
+  },
+  "brute": {
+    "goldMin": 6,
+    "goldMax": 11,
+    "xp": 32,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.8 },
+      { "itemId": "armor_leather", "chance": 0.08 },
+      { "itemId": "armor_iron", "chance": 0.03 }
+    ]
+  },
+  "orc": {
+    "goldMin": 6,
+    "goldMax": 12,
+    "xp": 30,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.82 },
+      { "itemId": "armor_leather", "chance": 0.06 }
+    ]
+  },
+  "plant": {
+    "goldMin": 5,
+    "goldMax": 9,
+    "xp": 26,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.7 },
+      { "itemId": "item_ration", "chance": 0.14 }
+    ]
+  },
+  "crypt": {
+    "goldMin": 7,
+    "goldMax": 12,
+    "xp": 38,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.7 },
+      { "itemId": "helm_cap", "chance": 0.1 },
+      { "itemId": "helm_iron", "chance": 0.05 }
+    ]
+  },
+  "marsh": {
+    "goldMin": 7,
+    "goldMax": 12,
+    "xp": 38,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.65 },
+      { "itemId": "boots_leather", "chance": 0.08 },
+      { "itemId": "boots_iron", "chance": 0.04 }
+    ]
+  },
+  "ruins": {
+    "goldMin": 8,
+    "goldMax": 14,
+    "xp": 42,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.7 },
+      { "itemId": "gloves_wrap", "chance": 0.08 },
+      { "itemId": "gloves_iron", "chance": 0.04 }
+    ]
+  },
+  "boss": {
+    "goldMin": 40,
+    "goldMax": 70,
+    "xp": 90,
+    "drops": [
+      { "itemId": "item_dust", "chance": 1, "minQty": 2, "maxQty": 4 },
+      { "itemId": "acc_ring", "chance": 0.15 },
+      { "itemId": "acc_iron", "chance": 0.08 },
+      { "itemId": "item_ticket", "chance": 0.12 }
+    ]
+  },
+  "tower_rat": {
+    "goldMin": 8,
+    "goldMax": 14,
+    "xp": 38,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.85 },
+      { "itemId": "item_ration", "chance": 0.1 }
+    ]
+  },
+  "tower_bat": {
+    "goldMin": 8,
+    "goldMax": 14,
+    "xp": 38,
+    "drops": [{ "itemId": "item_dust", "chance": 0.85 }]
+  },
+  "tower_guard": {
+    "goldMin": 10,
+    "goldMax": 16,
+    "xp": 50,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.88 },
+      { "itemId": "armor_leather", "chance": 0.06 },
+      { "itemId": "armor_iron", "chance": 0.04 }
+    ]
+  },
+  "tower_shade": {
+    "goldMin": 10,
+    "goldMax": 16,
+    "xp": 50,
+    "drops": [{ "itemId": "item_dust", "chance": 0.88 }]
+  },
+  "tower_brute": {
+    "goldMin": 12,
+    "goldMax": 18,
+    "xp": 58,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.9 },
+      { "itemId": "item_ticket", "chance": 0.04 }
+    ]
+  },
+  "tower_wisp": {
+    "goldMin": 12,
+    "goldMax": 18,
+    "xp": 58,
+    "drops": [{ "itemId": "item_dust", "chance": 0.9 }]
+  },
+  "tower_knight": {
+    "goldMin": 14,
+    "goldMax": 20,
+    "xp": 66,
+    "drops": [
+      { "itemId": "item_dust", "chance": 0.92 },
+      { "itemId": "helm_cap", "chance": 0.08 },
+      { "itemId": "helm_iron", "chance": 0.05 }
+    ]
+  },
+  "tower_mage": {
+    "goldMin": 14,
+    "goldMax": 20,
+    "xp": 66,
+    "drops": [{ "itemId": "item_dust", "chance": 0.92 }]
+  },
+  "tower_elite": {
+    "goldMin": 16,
+    "goldMax": 24,
+    "xp": 78,
+    "drops": [
+      { "itemId": "item_dust", "chance": 1, "minQty": 1, "maxQty": 2 },
+      { "itemId": "item_ticket", "chance": 0.08 },
+      { "itemId": "armor_ash", "chance": 0.04 }
+    ]
+  },
+  "tower_drake": {
+    "goldMin": 18,
+    "goldMax": 26,
+    "xp": 90,
+    "drops": [
+      { "itemId": "item_dust", "chance": 1, "minQty": 1, "maxQty": 2 },
+      { "itemId": "item_ticket", "chance": 0.1 }
+    ]
+  },
+  "tower_boss_f2": {
+    "goldMin": 50,
+    "goldMax": 80,
+    "xp": 160,
+    "drops": [
+      { "itemId": "item_dust", "chance": 1, "minQty": 4, "maxQty": 8 },
+      { "itemId": "item_ticket", "chance": 0.25 },
+      { "itemId": "acc_ring", "chance": 0.2 },
+      { "itemId": "armor_ash", "chance": 0.08 }
+    ]
+  },
+  "tower_boss_f5": {
+    "goldMin": 80,
+    "goldMax": 120,
+    "xp": 280,
+    "drops": [
+      { "itemId": "item_dust", "chance": 1, "minQty": 8, "maxQty": 12 },
+      { "itemId": "item_ticket", "chance": 0.45 },
+      { "itemId": "staff_arcane", "chance": 0.12 },
+      { "itemId": "acc_ash", "chance": 0.1 }
+    ]
+  },
+  "immortal": {
+    "goldMin": 0,
+    "goldMax": 1,
+    "xp": 8,
+    "drops": [{ "itemId": "item_dust", "chance": 0.2 }]
+  },
+  "ragdoll": {
+    "goldMin": 0,
+    "goldMax": 0,
+    "xp": 4,
+    "drops": []
+  },
+  "cannon": {
+    "goldMin": 0,
+    "goldMax": 1,
+    "xp": 8,
+    "drops": []
+  }
+}

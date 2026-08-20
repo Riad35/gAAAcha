@@ -1,7 +1,16 @@
 import type { PlayerSession, ServerMessage } from "./types.js";
 
+/** XP from `level` to `level + 1`. Sum L1→20 is 3192 — a tower session chain can finish it. */
 export function xpToNextLevel(level: number): number {
-  return 40 + level * 35;
+  return 28 + level * 14;
+}
+
+export function totalXpToReach(targetLevel: number): number {
+  let sum = 0;
+  for (let from = 1; from < targetLevel; from += 1) {
+    sum += xpToNextLevel(from);
+  }
+  return sum;
 }
 
 /** Level-up HP/MP bumps; caller should re-apply gear after level changes if needed. */

@@ -1,4 +1,5 @@
-import { bannerById } from "./data.js";
+import { bannerById, spiritById, weaponById } from "./data.js";
+import { removeItem } from "./shop.js";
 import type {
   BannerDef,
   GachaDrop,
@@ -11,6 +12,10 @@ import type {
 } from "./types.js";
 
 export const INVENTORY_SIZE = 144;
+export const PULL_DUST_ID = "item_dust";
+export const PULL_TICKET_ID = "item_ticket";
+export const DEFAULT_PULL_COST_DUST = 10;
+export const DEFAULT_TEN_PULL_COST_DUST = 90;
 export type Rng = () => number;
 
 export function emptyInventory(size = INVENTORY_SIZE): InventorySlot[] {
@@ -43,21 +48,16 @@ export function padInventory(slots?: InventorySlot[] | null): InventorySlot[] {
   return out;
 }
 
-/** Gray-box starter: all current weapons, spirits, characters, dust. */
+/** New Adventurer bag — pulls and shops must matter. Homestone is granted separately. */
+export const STARTER_BAG: { id: string; qty: number }[] = [
+  { id: "sword_iron", qty: 1 },
+  { id: "bow_hunter", qty: 1 },
+  { id: "item_ration", qty: 1 },
+  { id: "item_dust", qty: 5 },
+];
+
 export function seedStarterInventory(slots: InventorySlot[]): void {
-  const starter: { id: string; qty: number }[] = [
-    { id: "sword_iron", qty: 1 },
-    { id: "dagger_twin", qty: 1 },
-    { id: "staff_arcane", qty: 1 },
-    { id: "bow_hunter", qty: 1 },
-    { id: "gun_spark", qty: 1 },
-    { id: "spirit_ember", qty: 1 },
-    { id: "spirit_tide", qty: 1 },
-    { id: "spirit_gale", qty: 1 },
-    { id: "char_aurel", qty: 1 },
-    { id: "char_nyla", qty: 1 },
-    { id: "item_dust", qty: 5 },
-  ];
+  const starter = STARTER_BAG;
   for (const slot of slots) {
     slot.itemId = null;
     slot.quantity = 0;
@@ -93,10 +93,15 @@ export function ssrChance(banner: BannerDef, pity: number): number {
 export function pityView(banner: BannerDef, counter: PityCounter): PityView {
   return {
     bannerId: banner.id,
+    bannerName: banner.name,
     count: counter.pity,
     hardPity: banner.hardPity,
     softPityStart: banner.softPityStart,
     nextSsrChance: ssrChance(banner, counter.pity),
+    baseSsrRate: banner.baseSsrRate,
+    baseSrRate: banner.baseSrRate,
+    pullCostDust: banner.pullCostDust ?? DEFAULT_PULL_COST_DUST,
+    tenPullCostDust: banner.tenPullCostDust ?? DEFAULT_TEN_PULL_COST_DUST,
   };
 }
 
@@ -183,6 +188,40 @@ function pullMany(banner: BannerDef, counter: PityCounter, count: number, rng: R
   return drops;
 }
 
+function countOwned(slots: InventorySlot[], itemId: string): number {
+  return slots.reduce((sum, slot) => (slot.itemId === itemId ? sum + slot.quantity : sum), 0);
+}
+
+export function pullDustCost(banner: BannerDef, count: number): number {
+  if (count === 10) {
+    return banner.tenPullCostDust ?? DEFAULT_TEN_PULL_COST_DUST;
+  }
+  return banner.pullCostDust ?? DEFAULT_PULL_COST_DUST;
+}
+
+function cannotAffordPull(session: PlayerSession, banner: BannerDef, count: number): ServerMessage | null {
+  const dustCost = pullDustCost(banner, count);
+  if (countOwned(session.inventory, PULL_TICKET_ID) >= count) {
+    return null;
+  }
+  if (countOwned(session.inventory, PULL_DUST_ID) >= dustCost) {
+    return null;
+  }
+  return {
+    type: "error",
+    code: "not_enough_dust",
+    message: `Need ${dustCost} Star Dust or ${count} Banner Ticket${count === 1 ? "" : "s"}`,
+  };
+}
+
+function spendPullCurrency(session: PlayerSession, banner: BannerDef, count: number): void {
+  if (countOwned(session.inventory, PULL_TICKET_ID) >= count) {
+    removeItem(session, PULL_TICKET_ID, count);
+    return;
+  }
+  removeItem(session, PULL_DUST_ID, pullDustCost(banner, count));
+}
+
 function resolveBanner(bannerId: string, count: number): ServerMessage | BannerDef {
   if (count !== 1 && count !== 10) {
     return { type: "error", code: "invalid_pull", message: "Pull count must be 1 or 10" };
@@ -194,6 +233,12 @@ function commitPull(session: PlayerSession, banner: BannerDef, counter: PityCoun
   session.pity[banner.id] = counter;
   for (const drop of results) {
     grantDrop(session.inventory, drop.itemId);
+    if (weaponById(drop.itemId) && !session.weaponIds.includes(drop.itemId)) {
+      session.weaponIds.push(drop.itemId);
+    }
+    if (spiritById(drop.itemId) && !session.spiritIds.includes(drop.itemId)) {
+      session.spiritIds.push(drop.itemId);
+    }
   }
   return { ok: true as const, results, pity: pityView(banner, counter), inventory: session.inventory };
 }
@@ -208,10 +253,15 @@ export function pullGacha(
   if ("type" in banner) {
     return banner;
   }
+  const unpaid = cannotAffordPull(session, banner, count);
+  if (unpaid) {
+    return unpaid;
+  }
   const counter = { ...pityFor(session, bannerId) };
   const results = pullMany(banner, counter, count, rng);
   if (!canFitDrops(session.inventory, results)) {
     return { type: "error", code: "inventory_full", message: "Not enough inventory slots" };
   }
+  spendPullCurrency(session, banner, count);
   return commitPull(session, banner, counter, results);
 }

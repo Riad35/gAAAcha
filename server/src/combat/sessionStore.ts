@@ -1,4 +1,5 @@
 import { loadCombatConfig } from "./config.js";
+import { log } from "../log.js";
 import type { CombatSession } from "./types.js";
 
 /**
@@ -93,11 +94,9 @@ export class RedisCombatSessionStore implements CombatSessionStore {
   constructor(redisUrl = process.env.REDIS_URL) {
     this.redisUrl = redisUrl;
     if (this.redisUrl) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        "[combat] REDIS_URL set but Redis client not wired yet — using memory fallback. Key schema:",
-        combatSessionKey("{id}"),
-      );
+      log.warn("PERSIST", "REDIS_URL set but Redis client not wired yet — using memory fallback", {
+        key: combatSessionKey("{id}"),
+      });
     }
   }
 

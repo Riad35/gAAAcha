@@ -116,7 +116,7 @@
     "x": 15,
     "y": 7,
     "hitRadius": 0.4,
-    "line": "Class cards reshape your path.",
+    "line": "Class cards from the banner, or 500g here if you would rather buy one.",
     "interact": "shop_item"
   },
   {

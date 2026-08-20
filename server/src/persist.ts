@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { isDbReady, loadGuestFromDb, saveGuestToDb } from "./db.js";
 import { loadCharSlot, saveCharSlot } from "./chars.js";
 import type { InventorySlot, PityCounter, QuestProgress } from "./types.js";
+import { log } from "./log.js";
 
 export type GuestSave = {
   guestToken: string;
@@ -41,6 +42,7 @@ export type GuestSave = {
   skillPoints?: number;
   unlockedSkillIds?: string[];
   classCardId?: string | null;
+  equippedSkinId?: string | null;
   towerClearedFloor?: number;
   switchFlags?: Record<string, boolean>;
   updatedAt: number;
@@ -88,7 +90,7 @@ export async function loadGuestPreferDb(token: string, characterId?: string): Pr
         return fromDb;
       }
     } catch (err) {
-      console.warn("DB load failed:", (err as Error).message);
+      log.warn("PERSIST", "DB load failed (file kept)", { err: (err as Error).message });
     }
   }
   return loadGuest(token);
@@ -105,7 +107,7 @@ export function saveGuest(data: GuestSave): void {
   }
   if (isDbReady()) {
     void saveGuestToDb(data).catch((err) => {
-      console.warn("DB save failed (file kept):", (err as Error).message);
+      log.warn("PERSIST", "DB save failed (file kept)", { err: (err as Error).message });
     });
   }
 }

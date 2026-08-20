@@ -58,7 +58,8 @@ export type StatusKind =
   | "speed_mult"
   | "shield_phys"
   | "shield_mag"
-  | "elem_dmg_up";
+  | "elem_dmg_up"
+  | "dmg_taken_mult";
 
 export type StatusDef = {
   id: string;
@@ -74,6 +75,8 @@ export type StatusDef = {
   shieldHp?: number;
   element?: Element;
   elemDmgMult?: number;
+  /** Incoming damage multiplier (e.g. decoy 0.2 = take 20%). */
+  dmgTakenMult?: number;
 };
 
 export type TargetingType =
@@ -107,6 +110,10 @@ export type SkillDef = {
   width?: number;
   /** Cone half-angle in degrees (full cone = 2 * this from center line… use full aperture) */
   coneAngleDeg?: number;
+  /** NosTale-style: 1 = Hauptwaffe (primary), 2 = Sekundärwaffe (secondary). */
+  weaponSlot?: 1 | 2;
+  /** Adventurer L1–20 gate. Missing = available once the class is unlocked. */
+  unlockLevel?: number;
 };
 
 export type WeaponDef = {
@@ -158,11 +165,13 @@ export type ItemDef = {
   id: string;
   name: string;
   rarity: Rarity;
-  kind: "character" | "material" | "weapon" | "spirit" | "consumable" | "armor" | "class_card";
-  use?: "homestone" | "heal" | "buff_food" | "skill_unlock" | "class_card";
+  kind: "character" | "skin" | "portrait" | "material" | "weapon" | "spirit" | "consumable" | "armor" | "class_card";
+  use?: "homestone" | "heal" | "buff_food" | "skill_unlock" | "class_card" | "skin" | "portrait";
   healHp?: number;
   healMp?: number;
+  durationMs?: number;
   slot?: "armor" | "helm" | "boots" | "gloves" | "accessory";
+  levelReq?: number;
   defBonus?: number;
   atkBonus?: number;
   magicAtkBonus?: number;
@@ -208,6 +217,9 @@ export type QuestDef = {
   name: string;
   giverNpcId: string;
   turnInNpcId: string;
+  requiresQuestId?: string;
+  minLevel?: number;
+  chain?: "main" | "side";
   steps: QuestStep[];
   rewards: { gold: number; items: { itemId: string; quantity: number }[] };
   dialogue: string;
@@ -218,6 +230,9 @@ export type QuestProgress = {
   stepIndex: number;
   progress: number;
   completed: boolean;
+  name?: string;
+  hint?: string;
+  stepNeed?: number;
 };
 
 export type BannerDef = {
@@ -228,7 +243,23 @@ export type BannerDef = {
   baseSsrRate: number;
   softStep: number;
   baseSrRate: number;
+  pullCostDust?: number;
+  tenPullCostDust?: number;
   pool: Record<Rarity, string[]>;
+};
+
+export type LootDropDef = {
+  itemId: string;
+  chance: number;
+  minQty?: number;
+  maxQty?: number;
+};
+
+export type LootTable = {
+  goldMin: number;
+  goldMax: number;
+  xp: number;
+  drops: LootDropDef[];
 };
 
 export type InventorySlot = {
@@ -245,10 +276,15 @@ export type PityCounter = {
 
 export type PityView = {
   bannerId: string;
+  bannerName: string;
   count: number;
   hardPity: number;
   softPityStart: number;
   nextSsrChance: number;
+  baseSsrRate: number;
+  baseSrRate: number;
+  pullCostDust: number;
+  tenPullCostDust: number;
 };
 
 export type GachaDrop = {
@@ -270,6 +306,7 @@ export type StatusInstance = {
   shieldHp?: number;
   element?: Element;
   elemDmgMult?: number;
+  dmgTakenMult?: number;
 };
 
 export type Entity = {
@@ -348,6 +385,7 @@ export type PlayerSession = {
   equippedAccessoryId: string | null;
   friends: FriendEntry[];
   classCardId: string | null;
+  equippedSkinId: string | null;
   towerClearedFloor: number;
   switchFlags: Record<string, boolean>;
   /** Lobby sessions have not entered world yet (login gate). */
@@ -366,6 +404,7 @@ export type ClientMessage =
   | { type: "request_char_delete"; slotIndex: number }
   | { type: "request_weapon_swap" }
   | { type: "request_use_class_card"; slotIndex: number }
+  | { type: "request_respawn" }
   | { type: "request_move"; x: number; y: number }
   | { type: "cast_skill"; skillId: string; targetId: string; aimDx?: number; aimDy?: number; aimX?: number; aimY?: number }
   | { type: "request_gacha"; bannerId: string; count: 1 | 10 }
@@ -452,6 +491,7 @@ export type ServerMessage =
       equippedSpiritId: string | null;
       spiritIds: string[];
       skillIds: string[];
+      classSkillIds?: string[];
       cooldowns: CooldownEntry[];
       inventory: InventorySlot[];
       gold: number;
@@ -463,6 +503,7 @@ export type ServerMessage =
       charNameSet: boolean;
       classId: string;
       classCardId: string | null;
+      equippedSkinId: string | null;
       towerClearedFloor: number;
       switchFlags: Record<string, boolean>;
       slotIndex: number;
@@ -495,17 +536,18 @@ export type ServerMessage =
       }[];
     }
   | { type: "sync_move"; entityId: string; x: number; y: number }
-  | { type: "sync_skill"; casterId: string; targetId: string; skillId: string; damage: number; hpAfter: number; mpAfter: number; crit?: boolean }
-  | { type: "sync_aoe"; casterId: string; skillId: string; centerId: string; aoeRadius: number; aimX?: number; aimY?: number; hits: { targetId: string; damage: number; hpAfter: number; crit: boolean }[]; mpAfter: number }
+  | { type: "sync_skill"; casterId: string; targetId: string; skillId: string; damage: number; hpAfter: number; mpAfter: number; crit?: boolean; element?: string; missed?: boolean; advantage?: string; resistHint?: number }
+  | { type: "sync_aoe"; casterId: string; skillId: string; centerId: string; aoeRadius: number; aimX?: number; aimY?: number; hits: { targetId: string; damage: number; hpAfter: number; crit: boolean; element?: string; missed?: boolean; advantage?: string }[]; mpAfter: number }
   | { type: "sync_vitals"; entityId: string; hp: number; maxHp: number; mp: number; maxMp: number; gold?: number }
   | { type: "sync_gacha"; results: GachaDrop[]; pity: PityView; inventory: InventorySlot[] }
   | { type: "sync_despawn"; entityId: string; reason: "death" }
   | { type: "sync_spawn"; entity: Entity }
   | { type: "sync_loot"; itemId: string; quantity: number; inventory: InventorySlot[]; gold?: number }
-  | { type: "sync_equip"; weaponId: string; spiritId: string | null; you: Entity }
+  | { type: "sync_equip"; weaponId: string; weapon2Id?: string | null; spiritId: string | null; you: Entity }
   | { type: "sync_status"; entityId: string; statuses: StatusInstance[]; serverTime: number }
+  | { type: "sync_fx"; kind: "homestone" | "food" | "telegraph"; entityId?: string; x?: number; y?: number; radius?: number; durationMs?: number }
   | { type: "sync_cooldowns"; cooldowns: CooldownEntry[]; serverTime: number }
-  | { type: "sync_inventory"; inventory: InventorySlot[]; gold?: number }
+  | { type: "sync_inventory"; inventory: InventorySlot[]; gold?: number; equippedSkinId?: string | null }
   | { type: "sync_projectile_spawn"; projectile: { id: string; casterId: string; targetId: string; skillId: string; x: number; y: number; speed: number; vx?: number; vy?: number } }
   | { type: "sync_projectile_move"; id: string; x: number; y: number }
   | { type: "sync_projectile_despawn"; id: string }
@@ -601,6 +643,23 @@ export type ServerMessage =
       skillIds: string[];
       skillPoints: number;
       unlockable: string[];
+      unlockLevels?: Record<string, number>;
+      classSkillIds?: string[];
+      catalog?: {
+        id: string;
+        name: string;
+        manaCost: number;
+        weaponSlot: number;
+        cooldownMs: number;
+      }[];
+    }
+  | { type: "sync_death"; entityId: string; homeMapId: string; homeX: number; homeY: number }
+  | {
+      type: "sync_class_change";
+      classId: string;
+      className: string;
+      skillIds: string[];
+      resistBonus: Record<string, number>;
     }
   | {
       type: "sync_auction";

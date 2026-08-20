@@ -16,6 +16,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
     private readonly Dictionary<string, EntityView> _entities = new Dictionary<string, EntityView>();
     private Transform _root;
+    private Transform _heldMark;
+    private SpriteRenderer _heldMarkSr;
+    private string _heldWeaponId = "";
     private Transform _lockRing;
     private SpriteRenderer _lockRingSr;
     private Camera _cam;
@@ -25,8 +28,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
     private string _selfId = "local_you";
     private string _lockTargetId = "monster_slime_1";
     private readonly List<FloatText> _floats = new List<FloatText>();
-    private readonly Dictionary<string, Transform> _projectiles = new Dictionary<string, Transform>();
-    private readonly Dictionary<string, string> _projectileSkills = new Dictionary<string, string>();
+    private readonly Dictionary<string, BoltView> _projectiles = new Dictionary<string, BoltView>();
     private readonly Dictionary<string, List<Transform>> _statusMarkers = new Dictionary<string, List<Transform>>();
     private readonly List<TempFx> _tempFx = new List<TempFx>();
     private readonly List<Transform> _aimParts = new List<Transform>();
@@ -41,6 +43,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
     private int _mapW = 20;
     private int _mapH = 12;
     private string _mapId = "town_ashen";
+    private readonly HashSet<Vector2Int> _blockedTiles = new HashSet<Vector2Int>();
 
     private struct EntityView
     {
@@ -90,6 +93,18 @@ public sealed class GrayBoxWorld : MonoBehaviour
         public float Until;
     }
 
+    private struct BoltView
+    {
+        public Transform Transform;
+        public SpriteRenderer Renderer;
+        public Vector2 Vel;
+        public float Speed;
+        public string SkillId;
+        public string TargetId;
+        public string CasterId;
+        public Color Color;
+    }
+
     public struct TargetInfo
     {
         public string Id;
@@ -124,14 +139,38 @@ public sealed class GrayBoxWorld : MonoBehaviour
         SetEntityMeta("monster_slime_1", "monster", 0, 0);
         if (!SpriteCatalog.HasArtSprite("player_local", "player"))
         {
-            Debug.LogWarning("[GrayBoxWorld] Player sheets failed to load — check StreamingAssets/Sprites + Resources/Sprites.");
+            GameLog.Warn(GameLog.Channel.Gfx,
+                "reason=player_sheets_missing  fallback=shape");
         }
         else
         {
-            Debug.Log("[GrayBoxWorld] Sprite sheets OK (StreamingAssets/Resources).");
+            GameLog.Info(GameLog.Channel.Gfx, "player sheets OK");
         }
         SetLockTarget("monster_slime_1");
         CenterCamera(3f, 6f);
+    }
+
+    public string MapId => _mapId;
+    public int MapWidth => _mapW;
+    public int MapHeight => _mapH;
+
+    /// <summary>True if integer tile under (x,y) is a wall (mirrors server isBlocked).</summary>
+    public bool IsTileBlocked(float x, float y)
+    {
+        var tx = Mathf.RoundToInt(x);
+        var ty = Mathf.RoundToInt(y);
+        if (tx < 0 || ty < 0 || tx >= _mapW || ty >= _mapH)
+        {
+            return true;
+        }
+
+        return _blockedTiles.Contains(new Vector2Int(tx, ty));
+    }
+
+    /// <summary>True if moving to (x,y) is blocked by wall or living combatant.</summary>
+    public bool WouldBlockLocalMove(float x, float y)
+    {
+        return IsTileBlocked(x, y) || WouldOverlapCombatant(x, y);
     }
 
     public void RebuildMap(int mapW, int mapH, HashSet<Vector2Int> blocked, string mapId = null,
@@ -139,9 +178,23 @@ public sealed class GrayBoxWorld : MonoBehaviour
     {
         _mapW = mapW;
         _mapH = mapH;
-        if (!string.IsNullOrEmpty(mapId))
+        if (!string.IsNullOrEmpty(mapId) && mapId != _mapId)
         {
             _mapId = mapId;
+            ClearLockTarget();
+        }
+        else if (!string.IsNullOrEmpty(mapId))
+        {
+            _mapId = mapId;
+        }
+
+        _blockedTiles.Clear();
+        if (blocked != null)
+        {
+            foreach (var cell in blocked)
+            {
+                _blockedTiles.Add(cell);
+            }
         }
 
         // Destroy old tiles under root named tile/wall/hazard
@@ -158,6 +211,11 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         SpawnTileHints(blocked, hazards);
+        var wallN = blocked?.Count ?? 0;
+        var hazN = hazards?.Count ?? 0;
+        GameLog.Info(GameLog.Channel.World,
+            "rebuild  map=" + _mapId + "  size=" + _mapW + "x" + _mapH +
+            "  walls=" + wallN + "  hazards=" + hazN);
     }
 
     public void HandleMessage(string json)
@@ -231,6 +289,12 @@ public sealed class GrayBoxWorld : MonoBehaviour
         if (json.Contains("\"type\":\"sync_status\""))
         {
             ApplyStatus(json);
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_fx\""))
+        {
+            PlaySyncFx(json);
         }
     }
 
@@ -253,9 +317,17 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
+        if (!hard)
+        {
+            // Predicted hits must never fake-kill: 0 HP greys the target and blocks Shot.
+            view.Hp = Mathf.Max(1, hp);
+            _entities[entityId] = view;
+            return;
+        }
+
         view.Hp = hp;
         _entities[entityId] = view;
-        if (hard && hp <= 0)
+        if (hp <= 0)
         {
             BeginDeath(entityId);
         }
@@ -363,8 +435,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         // Kind sometimes missing after parse — fall back to id prefix.
         if (!string.IsNullOrEmpty(id) &&
-            (id.StartsWith("monster") || id.Contains("slime") || id.Contains("dummy") ||
-             id.Contains("ragdoll") || id.Contains("cannon") || id.StartsWith("player_")))
+            (id.StartsWith("monster") || id.StartsWith("lab_") || id.Contains("slime") ||
+             id.Contains("dummy") || id.Contains("ragdoll") || id.Contains("cannon") ||
+             id.StartsWith("player_")))
         {
             return true;
         }
@@ -542,6 +615,82 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var a = self.Transform.position;
         var b = other.Transform.position;
         return Vector2.Distance(new Vector2(a.x, a.y), new Vector2(b.x, b.y));
+    }
+
+    /// <summary>Edge-to-edge gap (mirrors server rangeGap).</summary>
+    public float RangeGapTo(string id, float fromX, float fromY)
+    {
+        if (string.IsNullOrEmpty(id) || !_entities.TryGetValue(id, out var other) || other.Transform == null)
+        {
+            return float.MaxValue;
+        }
+
+        var selfR = 0.4f;
+        if (_entities.TryGetValue(_selfId, out var self) && self.HitRadius > 0f)
+        {
+            selfR = self.HitRadius;
+        }
+
+        var otherR = other.HitRadius > 0f ? other.HitRadius : 0.4f;
+        var center = Vector2.Distance(
+            new Vector2(fromX, fromY),
+            new Vector2(other.Transform.position.x, other.Transform.position.y));
+        return Mathf.Max(0f, center - selfR - otherR);
+    }
+
+    public float RangeGapTo(string id)
+    {
+        if (!_entities.TryGetValue(_selfId, out var self) || self.Transform == null)
+        {
+            return float.MaxValue;
+        }
+
+        return RangeGapTo(id, self.Transform.position.x, self.Transform.position.y);
+    }
+
+    public float SelfHitRadius()
+    {
+        if (_entities.TryGetValue(_selfId, out var self) && self.HitRadius > 0f)
+        {
+            return self.HitRadius;
+        }
+
+        return 0.4f;
+    }
+
+    /// <summary>True if (x,y) would overlap another living combatant (mirrors server entityBlockedAt).</summary>
+    public bool WouldOverlapCombatant(float x, float y)
+    {
+        var selfR = SelfHitRadius();
+        foreach (var pair in _entities)
+        {
+            if (pair.Key == _selfId || pair.Value.Transform == null || pair.Value.Hp <= 0)
+            {
+                continue;
+            }
+
+            if (!IsCombatTargetKind(pair.Value.Kind, pair.Key) && pair.Value.Kind != "npc")
+            {
+                continue;
+            }
+
+            // Monster–monster ignored on server; player vs monster/player/npc blocked.
+            var otherR = pair.Value.HitRadius > 0f ? pair.Value.HitRadius : 0.4f;
+            var d = Vector2.Distance(
+                new Vector2(x, y),
+                new Vector2(pair.Value.Transform.position.x, pair.Value.Transform.position.y));
+            if (d < selfR + otherR - 0.02f)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public bool IsLivingTarget(string id)
+    {
+        return IsLiving(id);
     }
 
     public bool TryGetMapXY(string id, out float x, out float y)
@@ -782,8 +931,35 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
             var gui = new Vector2(screen.x, Screen.height - screen.y);
             var ratio = view.MaxHp <= 0 ? 0f : (float)view.Hp / view.MaxHp;
-            DrawBar(gui, ratio, pair.Key == _selfId ? Color.cyan : Color.green);
-            GUI.Label(new Rect(gui.x - 40, gui.y - 28, 80, 20), view.Hp + "/" + view.MaxHp);
+            if (!IsBossEntity(pair.Key, view.Kind, view.Label))
+            {
+                DrawBar(gui, ratio, pair.Key == _selfId ? Color.cyan : Color.green);
+                GUI.Label(new Rect(gui.x - 40, gui.y - 28, 80, 20), view.Hp + "/" + view.MaxHp);
+            }
+            else
+            {
+                GUI.Label(new Rect(gui.x - 50, gui.y - 28, 100, 20), view.Label);
+            }
+        }
+
+        foreach (var pair in _projectiles)
+        {
+            var bolt = pair.Value;
+            if (bolt.Transform == null || _cam == null)
+            {
+                continue;
+            }
+
+            var screen = _cam.WorldToScreenPoint(FxAtWorld(bolt.Transform.position, 0.2f));
+            if (screen.z < 0f)
+            {
+                continue;
+            }
+
+            var gui = new Vector2(screen.x, Screen.height - screen.y);
+            GUI.color = bolt.Color;
+            GUI.DrawTexture(new Rect(gui.x - 10f, gui.y - 6f, 20f, 12f), Texture2D.whiteTexture);
+            GUI.color = Color.white;
         }
 
         for (var i = _floats.Count - 1; i >= 0; i--)
@@ -824,6 +1000,11 @@ public sealed class GrayBoxWorld : MonoBehaviour
             var view = _entities[key];
             if (view.Dying && Time.time >= view.DeathRemoveAt)
             {
+                if (key == _selfId)
+                {
+                    continue;
+                }
+
                 FinishDespawn(key);
                 continue;
             }
@@ -851,7 +1032,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 view.JustMovedUntil = Time.time + JustMovedSec;
             }
 
-            TickEntityAnim(ref view);
+            TickEntityAnim(key, ref view);
             BillboardEntity(ref view);
             _entities[key] = view;
         }
@@ -860,6 +1041,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
         {
             UpdateOrbitCamera(self.Transform.position);
         }
+
+        TickBolts();
 
         for (var i = _tempFx.Count - 1; i >= 0; i--)
         {
@@ -937,7 +1120,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
     }
 
-    private static void TickEntityAnim(ref EntityView view)
+    private static void TickEntityAnim(string entityId, ref EntityView view)
     {
         if (!view.UsesArt || view.Renderer == null)
         {
@@ -984,17 +1167,29 @@ public sealed class GrayBoxWorld : MonoBehaviour
             view.AnimTime = 0f;
         }
 
-        var idHint = view.Kind == "player" ? "player_local" : "monster_slime_1";
+        var idHint = view.Kind == "player" ? "player_local" : entityId;
         var frames = ResolveAnimFrames(idHint, view.Kind, view.AnimClip, facingRow);
+        // Idle sheets often pad with empty cells — never leave the renderer blank while alive.
+        if ((frames == null || frames.Length == 0) && view.AnimClip == SpriteCatalog.Clip.Idle)
+        {
+            frames = ResolveAnimFrames(idHint, view.Kind, SpriteCatalog.Clip.Walk, facingRow);
+            if (frames != null && frames.Length > 0)
+            {
+                view.AnimClip = SpriteCatalog.Clip.Walk;
+                GameLog.WarnOnce(GameLog.Channel.Gfx, "idle-empty:" + idHint + ":" + facingRow,
+                    "reason=empty_idle_facing  entity=" + idHint + "  facing=" + facingRow +
+                    "  fallback=walk");
+            }
+        }
+
         if (frames == null || frames.Length == 0)
         {
-            // Last resort: keep a visible silhouette so characters never go blank.
             if (view.Renderer.sprite == null)
             {
                 view.Renderer.sprite = SpriteCatalog.ForEntity(idHint, view.Kind);
-                view.Renderer.color = Color.white;
             }
 
+            view.Renderer.color = Color.white;
             return;
         }
 
@@ -1089,7 +1284,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
     public void PlayAttackAnim(string entityId)
     {
-        if (!_entities.TryGetValue(entityId, out var view))
+        if (string.IsNullOrEmpty(entityId) || !_entities.TryGetValue(entityId, out var view))
         {
             return;
         }
@@ -1097,7 +1292,98 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var clip = view.Moving
             ? (view.MoveT < 0.85f ? SpriteCatalog.Clip.RunAttack : SpriteCatalog.Clip.WalkAttack)
             : SpriteCatalog.Clip.Attack;
-        PlayOneShot(entityId, clip, clip == SpriteCatalog.Clip.RunAttack ? 0.45f : 0.55f);
+        var lockSec = clip == SpriteCatalog.Clip.RunAttack ? 0.5f
+            : clip == SpriteCatalog.Clip.WalkAttack ? 0.6f
+            : 0.7f;
+        PlayOneShot(entityId, clip, lockSec);
+    }
+
+    /// <summary>Face the target and play the weapon swing (local predict + server confirm).</summary>
+    public void PlayCastAttack(string casterId, string targetId, string skillId)
+    {
+        if (!IsStrikeSkill(skillId))
+        {
+            return;
+        }
+
+        var id = MapCasterId(casterId);
+        FaceEntityToward(id, targetId);
+        PlayAttackAnim(id);
+    }
+
+    public static bool IsStrikeSkill(string skillId)
+    {
+        if (string.IsNullOrEmpty(skillId))
+        {
+            return false;
+        }
+
+        if (skillId == "auto_attack" || skillId == "slash" || skillId == "shot" || skillId == "hook_shot"
+            || skillId == "shockwave" || skillId == "shove" || skillId == "pull" || skillId == "stun_bolt"
+            || skillId == "cannon_flame")
+        {
+            return true;
+        }
+
+        return skillId.EndsWith("_hit");
+    }
+
+    public void SetHeldWeapon(string weaponId)
+    {
+        _heldWeaponId = weaponId ?? "";
+        EnsureHeldMark();
+        if (_heldMarkSr == null)
+        {
+            return;
+        }
+
+        _heldMarkSr.sprite = SpriteCatalog.WeaponMark(_heldWeaponId);
+        _heldMark.gameObject.SetActive(!string.IsNullOrEmpty(_heldWeaponId) && _heldWeaponId != "none");
+        PlaceHeldMark();
+    }
+
+    private void EnsureHeldMark()
+    {
+        if (_heldMark != null)
+        {
+            return;
+        }
+
+        var go = new GameObject("held_weapon");
+        _heldMarkSr = go.AddComponent<SpriteRenderer>();
+        _heldMarkSr.sortingOrder = 28;
+        ApplyUnlit(_heldMarkSr);
+        _heldMark = go.transform;
+        _heldMark.localScale = Vector3.one * 0.28f;
+    }
+
+    private void PlaceHeldMark()
+    {
+        if (_heldMark == null || string.IsNullOrEmpty(_heldWeaponId) || _heldWeaponId == "none")
+        {
+            return;
+        }
+
+        if (!_entities.TryGetValue(_selfId, out var self) || self.Transform == null)
+        {
+            return;
+        }
+
+        if (_heldMark.parent != self.Transform)
+        {
+            _heldMark.SetParent(self.Transform, false);
+        }
+
+        var facing = self.Facing;
+        var handX = facing == 1 ? -0.18f : 0.18f;
+        _heldMark.localPosition = new Vector3(handX, -0.08f, -0.06f);
+        _heldMark.localRotation = Quaternion.identity;
+        var parentS = Mathf.Max(0.01f, self.Transform.localScale.x);
+        _heldMark.localScale = Vector3.one * (0.62f / parentS);
+        if (_heldMarkSr != null)
+        {
+            _heldMarkSr.flipX = facing == 1;
+        }
     }
 
     public void PlayHurtAnim(string entityId)
@@ -1145,6 +1431,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
     private void LateUpdate()
     {
         UpdateLockRing();
+        PlaceHeldMark();
         RefreshAimFromSelf();
         foreach (var key in new List<string>(_entities.Keys))
         {
@@ -1286,19 +1573,27 @@ public sealed class GrayBoxWorld : MonoBehaviour
             JsonUtil.TryNumber(you, "hitRadius", out var hr);
             var name = JsonUtil.ExtractString(you, "name");
             var kind = JsonUtil.ExtractString(you, "kind");
+            var showHp = maxHp > 0 ? maxHp : 100;
             Upsert(_selfId, youX, youY, new Color(0.15f, 0.85f, 1f),
                 string.IsNullOrEmpty(name) ? "You" : name,
-                hp > 0 ? hp : 100, maxHp > 0 ? maxHp : 100, hr > 0 ? hr : 0.4f, true);
+                hp, showHp, hr > 0 ? hr : 0.4f, true);
+            if (hp > 0)
+            {
+                Revive(_selfId);
+            }
             SetEntityMeta(_selfId, string.IsNullOrEmpty(kind) ? "player" : kind, mp, maxMp > 0 ? maxMp : mp);
+            PlaceHeldMark();
             CenterCamera(youX, youY);
         }
 
         ApplyMapFromState(json);
         ClearForeignEntities();
         ApplyEntitiesByIdPrefix(json, "monster_");
+        ApplyEntitiesByIdPrefix(json, "lab_");
         ApplyEntitiesByIdPrefix(json, "npc_");
         // Fallback: some payloads space after colon ("id": "monster_…")
         ApplyEntitiesByIdPrefix(json, "monster_", allowSpacedColon: true);
+        ApplyEntitiesByIdPrefix(json, "lab_", allowSpacedColon: true);
         ApplyEntitiesByIdPrefix(json, "npc_", allowSpacedColon: true);
 
         if (!string.IsNullOrEmpty(_lockTargetId) && !_entities.ContainsKey(_lockTargetId))
@@ -1350,7 +1645,17 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
     private void ApplyMapFromState(string json)
     {
-        var mapSlice = JsonUtil.SliceAround(json, "\"map\"", 0, 2500);
+        var mapSlice = JsonUtil.ExtractObject(json, "map");
+        if (mapSlice.Length == 0)
+        {
+            // Legacy fallback (may match mapId — keep for old payloads only).
+            mapSlice = JsonUtil.SliceAround(json, "\"map\":{", 0, 12000);
+            if (mapSlice.Length == 0)
+            {
+                mapSlice = JsonUtil.SliceAround(json, "\"map\": {", 0, 12000);
+            }
+        }
+
         if (mapSlice.Length == 0)
         {
             return;
@@ -1421,10 +1726,12 @@ public sealed class GrayBoxWorld : MonoBehaviour
             var kind = JsonUtil.ExtractString(slice, "kind");
             var inferredKind = !string.IsNullOrEmpty(kind)
                 ? kind
-                : (prefix.StartsWith("npc") ? "npc" : "monster");
+                : (prefix.StartsWith("npc")
+                    ? "npc"
+                    : "monster");
             var label = !string.IsNullOrEmpty(name)
                 ? name
-                : id.Replace("monster_", "").Replace("npc_", "");
+                : id.Replace("monster_", "").Replace("npc_", "").Replace("lab_", "");
             var color = ColorForEntity(id, inferredKind);
             var fallbackHp = inferredKind == "npc" ? 1 : 40;
             Upsert(id, mx, my, color, label,
@@ -1445,6 +1752,31 @@ public sealed class GrayBoxWorld : MonoBehaviour
         if (string.IsNullOrEmpty(id))
         {
             return new Color(0.2f, 1f, 0.25f);
+        }
+
+        if (id.Contains("ruins_boss") || id.Contains("colossus"))
+        {
+            return new Color(0.72f, 0.55f, 0.32f);
+        }
+
+        if (id.Contains("crypt_boss") || (id.Contains("warden") && id.Contains("boss")))
+        {
+            return new Color(0.55f, 0.32f, 0.75f);
+        }
+
+        if (id.Contains("m_boss_f5") || id.Contains("apex") || id.Contains("tower_boss_f5"))
+        {
+            return new Color(0.85f, 0.18f, 0.22f);
+        }
+
+        if (id.Contains("m_boss_f2") || id.Contains("tower_boss_f2"))
+        {
+            return new Color(0.85f, 0.62f, 0.22f);
+        }
+
+        if (id.Contains("boss"))
+        {
+            return new Color(0.9f, 0.35f, 0.2f);
         }
 
         if (id.Contains("ember") || id.Contains("shadow"))
@@ -1482,8 +1814,10 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         var isSelf = id == _selfId;
         var label = GetLabel(id, isSelf ? "You" : id);
-        MoveTo(id, x, y,
-            isSelf ? new Color(0.15f, 0.85f, 1f) : new Color(0.2f, 1f, 0.25f),
+        var tint = isSelf
+            ? new Color(0.15f, 0.85f, 1f)
+            : ColorForEntity(id, _entities.TryGetValue(id, out var existing) ? existing.Kind : "monster");
+        MoveTo(id, x, y, tint,
             label,
             GetHp(id, isSelf ? 100 : 40),
             GetMaxHp(id, isSelf ? 100 : 40),
@@ -1501,6 +1835,21 @@ public sealed class GrayBoxWorld : MonoBehaviour
         if (JsonUtil.TryInt(json, "hp", out var hp))
         {
             view.Hp = hp;
+            if (hp > 0 && view.Dying)
+            {
+                _entities[id] = view;
+                Revive(id);
+                view = _entities[id];
+            }
+            else if (hp <= 0)
+            {
+                _entities[id] = view;
+                MaybeDieFromHp(id);
+                if (!_entities.TryGetValue(id, out view))
+                {
+                    return;
+                }
+            }
         }
 
         if (JsonUtil.TryInt(json, "maxHp", out var maxHp) && maxHp > 0)
@@ -1627,18 +1976,13 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var targetId = JsonUtil.ExtractString(json, "targetId");
         var casterId = JsonUtil.ExtractString(json, "casterId");
         JsonUtil.TryInt(json, "damage", out var damage);
-        JsonUtil.TryInt(json, "hpAfter", out var hpAfter);
+        var hasHp = JsonUtil.TryInt(json, "hpAfter", out var hpAfter);
         var skillId = JsonUtil.ExtractString(json, "skillId");
-        FaceEntityToward(casterId, targetId);
-        if (skillId == "auto_attack" || skillId == "slash" || skillId == "shot"
-            || skillId == "stun_bolt" || skillId == "shove" || skillId == "pull"
-            || skillId == "cannon_flame" || (skillId != null && skillId.EndsWith("_hit")))
-        {
-            PlayAttackAnim(MapCasterId(casterId));
-        }
-
-        ApplyHitFx(targetId, damage, hpAfter, skillId);
-        // Placeholder primitive skill VFX removed — keep sprite attack anims + float text only.
+        PlayCastAttack(casterId, targetId, skillId);
+        ApplyHitFx(targetId, damage, hpAfter, skillId, json, hasHp);
+        GameLog.DebugLine(GameLog.Channel.Gfx,
+            "hitfx  target=" + targetId + "  skill=" + skillId +
+            "  dmg=" + damage + "  hp=" + hpAfter + "  parent=entity_tile");
     }
 
     private string MapCasterId(string casterId)
@@ -1679,6 +2023,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var skillId = JsonUtil.ExtractString(json, "skillId");
         var casterId = JsonUtil.ExtractString(json, "casterId");
         var centerId = JsonUtil.ExtractString(json, "centerId");
+        PlayCastAttack(casterId, centerId, skillId);
         var radius = 2.5f;
         if (JsonUtil.TryNumber(json, "aoeRadius", out var r) && r > 0)
         {
@@ -1697,8 +2042,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
             var slice = json.Substring(idx, Mathf.Min(180, json.Length - idx));
             var targetId = JsonUtil.ExtractString(slice, "targetId");
             JsonUtil.TryInt(slice, "damage", out var damage);
-            JsonUtil.TryInt(slice, "hpAfter", out var hpAfter);
-            ApplyHitFx(targetId, damage, hpAfter, skillId);
+            var hasHp = JsonUtil.TryInt(slice, "hpAfter", out var hpAfter);
+            ApplyHitFx(targetId, damage, hpAfter, skillId, slice, hasHp);
 
             cursor = idx + 10;
         }
@@ -1716,14 +2061,17 @@ public sealed class GrayBoxWorld : MonoBehaviour
         SpawnGroundDisc(pos.Value, d, new Color(1f, 0.75f, 0.2f, 0.45f), life);
     }
 
-    private void ApplyHitFx(string targetId, int damage, int hpAfter, string skillId)
+    private void ApplyHitFx(string targetId, int damage, int hpAfter, string skillId, string json = null, bool hpKnown = true)
     {
         if (string.IsNullOrEmpty(targetId) || !_entities.TryGetValue(targetId, out var view))
         {
             return;
         }
 
-        view.Hp = hpAfter;
+        if (hpKnown)
+        {
+            view.Hp = hpAfter;
+        }
         if (view.Renderer != null)
         {
             view.Renderer.color = Color.white;
@@ -1731,18 +2079,20 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         _entities[targetId] = view;
         var healish = skillId == "mend" || (skillId != null && skillId.Contains("heal"));
-        if (!healish && damage > 0 && hpAfter > 0)
-        {
-            PlayHurtAnim(targetId);
-        }
-        else if (!healish && hpAfter <= 0)
+        var missed = json != null && json.Contains("\"missed\":true");
+        var dead = view.Hp <= 0 || (hpKnown && hpAfter <= 0);
+        if (!healish && dead)
         {
             BeginDeath(targetId);
         }
+        else if (!healish && damage > 0)
+        {
+            PlayHurtAnim(targetId);
+        }
 
-        var text = healish ? "+" + Mathf.Max(1, damage > 0 ? damage : 20) : "-" + damage;
-        var color = healish ? new Color(0.4f, 1f, 0.5f) : new Color(1f, 0.35f, 0.25f);
-        if ((damage > 0 || healish) && view.Transform != null)
+        var text = missed ? "MISS" : (healish ? "+" + Mathf.Max(1, damage > 0 ? damage : 20) : "-" + damage);
+        var color = healish ? new Color(0.4f, 1f, 0.5f) : ElementFloatColor(json, missed);
+        if ((damage > 0 || healish || missed) && view.Transform != null)
         {
             _floats.Add(new FloatText
             {
@@ -1752,6 +2102,105 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 Color = color,
             });
         }
+    }
+
+    private static Color ElementFloatColor(string json, bool missed)
+    {
+        if (missed)
+        {
+            return new Color(0.75f, 0.75f, 0.8f);
+        }
+
+        var element = json != null ? JsonUtil.ExtractString(json, "element") : "";
+        var adv = json != null ? JsonUtil.ExtractString(json, "advantage") : "";
+        Color c;
+        switch (element)
+        {
+            case "water":
+                c = new Color(0.35f, 0.65f, 1f);
+                break;
+            case "fire":
+                c = new Color(1f, 0.4f, 0.2f);
+                break;
+            case "wind":
+                c = new Color(0.45f, 1f, 0.55f);
+                break;
+            case "earth":
+                c = new Color(0.9f, 0.75f, 0.3f);
+                break;
+            case "holy":
+            case "light":
+                c = new Color(1f, 0.95f, 0.7f);
+                break;
+            case "dark":
+            case "shadow":
+                c = new Color(0.65f, 0.4f, 1f);
+                break;
+            default:
+                c = new Color(1f, 0.35f, 0.25f);
+                break;
+        }
+
+        if (adv == "advantage")
+        {
+            c = Color.Lerp(c, Color.white, 0.25f);
+        }
+        else if (adv == "disadvantage")
+        {
+            c = Color.Lerp(c, Color.gray, 0.35f);
+        }
+
+        if (json != null && json.Contains("\"crit\":true"))
+        {
+            c = Color.Lerp(c, new Color(1f, 0.85f, 0.2f), 0.4f);
+        }
+
+        return c;
+    }
+
+    private bool CanDie(string id, EntityView view)
+    {
+        if (view.Kind == "npc" || view.Kind == "portal")
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(id) && (id.StartsWith("npc_") || id.StartsWith("portal_")))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private void MaybeDieFromHp(string id)
+    {
+        if (!_entities.TryGetValue(id, out var view) || view.Dying || view.Hp > 0)
+        {
+            return;
+        }
+
+        if (!CanDie(id, view))
+        {
+            return;
+        }
+
+        BeginDeath(id);
+    }
+
+    public void Revive(string id)
+    {
+        if (!_entities.TryGetValue(id, out var view))
+        {
+            return;
+        }
+
+        view.Dying = false;
+        view.DeathRemoveAt = 0f;
+        view.AnimOneShot = false;
+        view.AnimClip = SpriteCatalog.Clip.Idle;
+        view.AnimLockUntil = 0f;
+        _entities[id] = view;
     }
 
     private void SpawnGroundDisc(Vector3 centerXy, float diameter, Color color, float life)
@@ -1820,9 +2269,153 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
     }
 
+    public void SpawnLocalSkillshot(string skillId, Vector3 from, float dx, float dy, float speed)
+    {
+        var len = Mathf.Sqrt(dx * dx + dy * dy);
+        if (len < 1e-4f)
+        {
+            dx = 1f;
+            dy = 0f;
+        }
+        else
+        {
+            dx /= len;
+            dy /= len;
+        }
+
+        var id = "local_" + skillId;
+        UpsertBolt(id, from.x, from.y, dx, dy, speed > 0.1f ? speed : 16f, skillId, "", _selfId);
+    }
+
+    private void TickBolts()
+    {
+        if (_projectiles.Count == 0)
+        {
+            return;
+        }
+
+        var keys = new List<string>(_projectiles.Keys);
+        for (var i = 0; i < keys.Count; i++)
+        {
+            var id = keys[i];
+            if (!_projectiles.TryGetValue(id, out var bolt) || bolt.Transform == null)
+            {
+                continue;
+            }
+
+            var vel = bolt.Vel;
+            if (!string.IsNullOrEmpty(bolt.TargetId) &&
+                _entities.TryGetValue(bolt.TargetId, out var tgt) &&
+                tgt.Transform != null && tgt.Hp > 0)
+            {
+                var to = tgt.Transform.position - bolt.Transform.position;
+                var d = new Vector2(to.x, to.y);
+                if (d.sqrMagnitude > 0.0001f)
+                {
+                    vel = d.normalized;
+                    bolt.Vel = vel;
+                }
+            }
+
+            if (vel.sqrMagnitude < 0.0001f)
+            {
+                continue;
+            }
+
+            var step = vel.normalized * (bolt.Speed * Time.deltaTime);
+            var p = bolt.Transform.position;
+            p.x += step.x;
+            p.y += step.y;
+            p.z = 0f;
+            bolt.Transform.position = p;
+            FaceBolt(bolt.Transform, vel);
+            _projectiles[id] = bolt;
+            if (TryStopBoltOnSprite(id, ref bolt))
+            {
+                continue;
+            }
+        }
+    }
+
+    private bool TryStopBoltOnSprite(string id, ref BoltView bolt)
+    {
+        if (bolt.Transform == null)
+        {
+            return false;
+        }
+
+        var p = bolt.Transform.position;
+        var caster = MapCasterId(bolt.CasterId);
+        var hitId = "";
+        var best = float.MaxValue;
+        Vector3 snap = p;
+        foreach (var pair in _entities)
+        {
+            if (pair.Key == bolt.CasterId || pair.Key == caster)
+            {
+                continue;
+            }
+
+            var view = pair.Value;
+            if (view.Transform == null || view.Hp <= 0 || view.Dying || !IsCombatTargetKind(view.Kind, pair.Key))
+            {
+                continue;
+            }
+
+            Vector3 center;
+            float reach;
+            if (view.Renderer != null)
+            {
+                var b = view.Renderer.bounds;
+                center = b.center;
+                reach = Mathf.Max(b.extents.x, b.extents.y) * 0.92f;
+            }
+            else
+            {
+                center = view.Transform.position;
+                var scale = Mathf.Max(0.5f, view.Transform.localScale.x);
+                reach = Mathf.Max(view.HitRadius, 0.45f) + 0.35f * scale;
+            }
+
+            var d = Vector2.Distance(new Vector2(p.x, p.y), new Vector2(center.x, center.y));
+            if (d > reach || d >= best)
+            {
+                continue;
+            }
+
+            best = d;
+            hitId = pair.Key;
+            if (view.Renderer != null)
+            {
+                var closest = view.Renderer.bounds.ClosestPoint(p);
+                snap = new Vector3(closest.x, closest.y, 0f);
+            }
+            else
+            {
+                var dir = center - p;
+                if (dir.sqrMagnitude > 1e-6f)
+                {
+                    dir.Normalize();
+                    snap = center - dir * Mathf.Max(0.05f, view.HitRadius);
+                    snap.z = 0f;
+                }
+            }
+        }
+
+        if (string.IsNullOrEmpty(hitId))
+        {
+            return false;
+        }
+
+        bolt.Transform.position = snap;
+        _projectiles[id] = bolt;
+        DespawnProjectile(id);
+        return true;
+    }
+
     private void ApplyProjectileSpawn(string json)
     {
-        var slice = JsonUtil.SliceAround(json, "\"projectile\"", 0, 320);
+        var slice = JsonUtil.SliceAround(json, "\"projectile\"", 0, 900);
         var src = slice.Length > 0 ? slice : json;
         var id = JsonUtil.ExtractString(src, "id");
         if (string.IsNullOrEmpty(id) || !JsonUtil.TryNumber(src, "x", out var x) || !JsonUtil.TryNumber(src, "y", out var y))
@@ -1831,19 +2424,43 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         var skillId = JsonUtil.ExtractString(src, "skillId") ?? "";
-        DespawnProjectile(id, false);
-        // Invisible tracker only — no placeholder cube/sphere projectiles.
-        var go = new GameObject("proj_" + id);
-        go.transform.SetParent(_root, false);
-        go.transform.position = new Vector3(x, y, -0.5f);
-        _projectiles[id] = go.transform;
-        _projectileSkills[id] = skillId;
+        var casterId = JsonUtil.ExtractString(src, "casterId");
+        var targetId = JsonUtil.ExtractString(src, "targetId");
+        PlayCastAttack(casterId, targetId, skillId);
+
+        JsonUtil.TryNumber(src, "vx", out var vx);
+        JsonUtil.TryNumber(src, "vy", out var vy);
+        JsonUtil.TryNumber(src, "speed", out var speed);
+        if (speed < 0.1f)
+        {
+            speed = 16f;
+        }
+
+        var localId = "local_" + skillId;
+        if (!string.IsNullOrEmpty(casterId) && (casterId == _selfId || MapCasterId(casterId) == _selfId) &&
+            _projectiles.TryGetValue(localId, out var local) && local.Transform != null)
+        {
+            _projectiles.Remove(localId);
+            if (vx * vx + vy * vy > 0.0001f)
+            {
+                local.Vel = new Vector2(vx, vy).normalized;
+            }
+
+            local.Speed = speed;
+            local.SkillId = skillId;
+            local.TargetId = targetId;
+            local.CasterId = casterId;
+            _projectiles[id] = local;
+            return;
+        }
+
+        UpsertBolt(id, x, y, vx, vy, speed, skillId, targetId, casterId);
     }
 
     private void ApplyProjectileMove(string json)
     {
         var id = JsonUtil.ExtractString(json, "id");
-        if (string.IsNullOrEmpty(id) || !_projectiles.TryGetValue(id, out var t) || t == null)
+        if (string.IsNullOrEmpty(id) || !_projectiles.TryGetValue(id, out var bolt) || bolt.Transform == null)
         {
             return;
         }
@@ -1853,29 +2470,199 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
-        t.position = new Vector3(x, y, -0.5f);
+        var cur = bolt.Transform.position;
+        var nx = Mathf.Lerp(cur.x, x, 0.45f);
+        var ny = Mathf.Lerp(cur.y, y, 0.45f);
+        var dx = x - cur.x;
+        var dy = y - cur.y;
+        if (dx * dx + dy * dy > 0.0004f)
+        {
+            bolt.Vel = new Vector2(dx, dy).normalized;
+            FaceBolt(bolt.Transform, bolt.Vel);
+        }
+
+        bolt.Transform.position = new Vector3(nx, ny, 0f);
+        _projectiles[id] = bolt;
+        TryStopBoltOnSprite(id, ref bolt);
     }
 
     private void DespawnProjectile(string id, bool withImpact = true)
     {
-        if (string.IsNullOrEmpty(id) || !_projectiles.TryGetValue(id, out var t))
+        if (string.IsNullOrEmpty(id) || !_projectiles.TryGetValue(id, out var bolt))
         {
-            _projectileSkills.Remove(id);
             return;
         }
 
-        if (withImpact && t != null)
+        if (withImpact && bolt.Transform != null)
         {
-            // Placeholder impact FX removed.
+            SpawnImpactSpark(bolt.Transform.position, bolt.Color);
         }
 
-        if (t != null)
+        if (bolt.Transform != null)
         {
-            Destroy(t.gameObject);
+            Destroy(bolt.Transform.gameObject);
         }
 
         _projectiles.Remove(id);
-        _projectileSkills.Remove(id);
+    }
+
+    private void UpsertBolt(
+        string id,
+        float x,
+        float y,
+        float vx,
+        float vy,
+        float speed,
+        string skillId,
+        string targetId,
+        string casterId)
+    {
+        DespawnProjectile(id, false);
+        var vel = new Vector2(vx, vy);
+        if (vel.sqrMagnitude < 0.0001f && !string.IsNullOrEmpty(targetId) &&
+            _entities.TryGetValue(targetId, out var tgt) && tgt.Transform != null)
+        {
+            vel = new Vector2(tgt.Transform.position.x - x, tgt.Transform.position.y - y);
+        }
+
+        if (vel.sqrMagnitude < 0.0001f)
+        {
+            vel = Vector2.right;
+        }
+
+        vel.Normalize();
+        var color = BoltColor(skillId);
+        var go = CreateBoltObject(id, color);
+        go.transform.SetParent(_root, false);
+        go.transform.position = new Vector3(x, y, 0f);
+        FaceBolt(go.transform, vel);
+        _projectiles[id] = new BoltView
+        {
+            Transform = go.transform,
+            Renderer = go.GetComponent<SpriteRenderer>(),
+            Vel = vel,
+            Speed = speed > 0.1f ? speed : 16f,
+            SkillId = skillId,
+            TargetId = targetId ?? "",
+            CasterId = casterId ?? "",
+            Color = color,
+        };
+        GameLog.Info(GameLog.Channel.Gfx, "bolt spawn " + skillId + " @" + x.ToString("0.0") + "," + y.ToString("0.0"));
+    }
+
+    private void FaceBolt(Transform t, Vector2 vel)
+    {
+        if (t == null)
+        {
+            return;
+        }
+
+        if (_cam != null)
+        {
+            var look = _cam.transform.rotation;
+            if (vel.sqrMagnitude > 0.0001f)
+            {
+                var worldVel = new Vector3(vel.x, vel.y, 0f);
+                var local = Quaternion.Inverse(look) * worldVel;
+                var ang = Mathf.Atan2(local.y, local.x) * Mathf.Rad2Deg;
+                t.rotation = look * Quaternion.Euler(0f, 0f, ang);
+            }
+            else
+            {
+                t.rotation = look;
+            }
+
+            return;
+        }
+
+        if (vel.sqrMagnitude < 0.0001f)
+        {
+            return;
+        }
+
+        var fallback = Mathf.Atan2(vel.y, vel.x) * Mathf.Rad2Deg;
+        t.rotation = Quaternion.Euler(0f, 0f, fallback);
+    }
+
+    private static Color BoltColor(string skillId)
+    {
+        if (skillId == "shot")
+        {
+            return new Color(0.55f, 1f, 0.4f, 1f);
+        }
+
+        if (skillId == "stun_bolt")
+        {
+            return new Color(1f, 0.88f, 0.35f, 1f);
+        }
+
+        if (skillId != null && skillId.Contains("ember"))
+        {
+            return new Color(1f, 0.45f, 0.18f, 1f);
+        }
+
+        return new Color(1f, 0.92f, 0.45f, 1f);
+    }
+
+    private static GameObject CreateBoltObject(string id, Color color)
+    {
+        var go = new GameObject("bolt_" + id);
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = MakeBoltSprite();
+        sr.color = color;
+        sr.sortingOrder = 40;
+        ApplyUnlit(sr);
+        go.transform.localScale = new Vector3(1.65f, 0.7f, 1f);
+        return go;
+    }
+
+    private static Sprite _boltSprite;
+
+    private static Sprite MakeBoltSprite()
+    {
+        if (_boltSprite != null)
+        {
+            return _boltSprite;
+        }
+
+        const int w = 48;
+        const int h = 16;
+        var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        var pixels = new Color[w * h];
+        var cx = (w - 1) * 0.5f;
+        var cy = (h - 1) * 0.5f;
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var nx = (x - cx) / cx;
+                var ny = (y - cy) / cy;
+                var taper = 1f - Mathf.Max(0f, nx) * 0.85f;
+                var inBody = Mathf.Abs(ny) < 0.42f * Mathf.Max(0.15f, taper) && nx > -0.92f && nx < 0.98f;
+                var inHead = nx > 0.35f && Mathf.Abs(ny) < (0.95f - nx);
+                pixels[y * w + x] = (inBody || inHead) ? Color.white : Color.clear;
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        _boltSprite = Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.35f, 0.5f), 28f);
+        return _boltSprite;
+    }
+
+    private void SpawnImpactSpark(Vector3 pos, Color color)
+    {
+        var go = new GameObject("impact");
+        go.transform.SetParent(_root, false);
+        go.transform.position = new Vector3(pos.x, pos.y, -0.5f);
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = MakeBoltSprite();
+        sr.color = color;
+        sr.sortingOrder = 45;
+        ApplyUnlit(sr);
+        go.transform.localScale = new Vector3(0.55f, 0.55f, 1f);
+        _tempFx.Add(new TempFx { Go = go, Until = Time.time + 0.18f });
     }
 
     private void ApplySpawn(string json)
@@ -1903,7 +2690,12 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var label = !string.IsNullOrEmpty(name) ? name : (id.Contains("slime") ? "Slime" : id);
         var inferredKind = !string.IsNullOrEmpty(kind)
             ? kind
-            : (id.Contains("monster") ? "monster" : (id.StartsWith("npc_") ? "npc" : "player"));
+            : (id.StartsWith("npc_")
+                ? "npc"
+                : (id.StartsWith("monster") || id.StartsWith("lab_") || id.Contains("slime") ||
+                   id.Contains("dummy") || id.Contains("ragdoll") || id.Contains("cannon")
+                    ? "monster"
+                    : "player"));
         var color = inferredKind == "player" && id != _selfId
             ? new Color(0.35f, 0.75f, 1f)
             : ColorForEntity(id, inferredKind);
@@ -1985,6 +2777,21 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         EnsureStatusLists(ref view);
+        if (view.Dying && hp <= 0)
+        {
+            return;
+        }
+
+        if (view.Dying && hp > 0)
+        {
+            _entities[id] = view;
+            Revive(id);
+            if (!_entities.TryGetValue(id, out view))
+            {
+                return;
+            }
+        }
+
         view.BaseColor = color;
         view.Hp = hp;
         view.MaxHp = maxHp;
@@ -2033,6 +2840,10 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         _entities[id] = view;
         UpdateStatusMarkerPositions(id);
+        if (hp <= 0)
+        {
+            MaybeDieFromHp(id);
+        }
     }
 
     public void SetLocalFacing(int facing)
@@ -2262,6 +3073,112 @@ public sealed class GrayBoxWorld : MonoBehaviour
         _statusMarkers.Remove(entityId);
     }
 
+    private void PlaySyncFx(string json)
+    {
+        var kind = JsonUtil.ExtractString(json, "kind");
+        float x = 0f;
+        float y = 0f;
+        var hasPos = JsonUtil.TryNumber(json, "x", out x) && JsonUtil.TryNumber(json, "y", out y);
+        if (!hasPos && _entities.TryGetValue(_selfId, out var self) && self.Transform != null)
+        {
+            var p = self.Transform.position;
+            x = p.x;
+            y = p.y;
+        }
+
+        var pos = new Vector3(x, y, -0.2f);
+        if (kind == "homestone")
+        {
+            SpawnTempPrimitive(PrimitiveType.Cylinder, pos + Vector3.forward * -0.05f,
+                new Vector3(1.1f, 0.08f, 1.1f), new Color(0.45f, 0.85f, 1f, 0.55f), 0.45f);
+            SpawnTempPrimitive(PrimitiveType.Sphere, pos + Vector3.up * 0.35f,
+                Vector3.one * 0.35f, new Color(0.7f, 0.95f, 1f, 0.7f), 0.35f);
+            SpawnImpactSpark(pos, new Color(0.55f, 0.9f, 1f));
+            return;
+        }
+
+        if (kind == "food")
+        {
+            SpawnTempPrimitive(PrimitiveType.Sphere, pos + Vector3.up * 0.25f,
+                Vector3.one * 0.28f, new Color(1f, 0.55f, 0.15f, 0.7f), 0.28f);
+            return;
+        }
+
+        if (kind == "telegraph")
+        {
+            JsonUtil.TryNumber(json, "radius", out var radius);
+            JsonUtil.TryNumber(json, "durationMs", out var durationMs);
+            SpawnTelegraphDisc(pos, radius > 0.1f ? radius : 1.7f, durationMs > 1f ? durationMs / 1000f : 0.75f);
+        }
+    }
+
+    public static bool IsBossEntity(string id, string kind, string label)
+    {
+        if (kind == "player" || kind == "npc")
+        {
+            return false;
+        }
+
+        var s = (id ?? "") + " " + (label ?? "");
+        return s.IndexOf("boss", System.StringComparison.OrdinalIgnoreCase) >= 0
+            || s.IndexOf("warden", System.StringComparison.OrdinalIgnoreCase) >= 0
+            || s.IndexOf("colossus", System.StringComparison.OrdinalIgnoreCase) >= 0
+            || s.IndexOf("apex", System.StringComparison.OrdinalIgnoreCase) >= 0
+            || s.IndexOf("crypt_lord", System.StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    public bool TryGetBossFrame(out string name, out int hp, out int maxHp)
+    {
+        name = "";
+        hp = 0;
+        maxHp = 0;
+        if (!string.IsNullOrEmpty(_lockTargetId) && _entities.TryGetValue(_lockTargetId, out var locked)
+            && locked.Hp > 0 && IsBossEntity(_lockTargetId, locked.Kind, locked.Label))
+        {
+            name = string.IsNullOrEmpty(locked.Label) ? _lockTargetId : locked.Label;
+            hp = locked.Hp;
+            maxHp = locked.MaxHp;
+            return true;
+        }
+
+        foreach (var pair in _entities)
+        {
+            if (pair.Value.Hp <= 0 || !IsBossEntity(pair.Key, pair.Value.Kind, pair.Value.Label))
+            {
+                continue;
+            }
+
+            name = string.IsNullOrEmpty(pair.Value.Label) ? pair.Key : pair.Value.Label;
+            hp = pair.Value.Hp;
+            maxHp = pair.Value.MaxHp;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void SpawnTelegraphDisc(Vector3 pos, float radius, float life)
+    {
+        var go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        go.name = "fx_telegraph";
+        if (_root != null)
+        {
+            go.transform.SetParent(_root, false);
+        }
+
+        StripCollider(go);
+        go.transform.position = new Vector3(pos.x, pos.y, -0.05f);
+        go.transform.localScale = new Vector3(radius * 2f, 0.035f, radius * 2f);
+        go.transform.rotation = Quaternion.FromToRotation(Vector3.up, Vector3.forward);
+        var r = go.GetComponent<Renderer>();
+        if (r != null)
+        {
+            r.material.color = new Color(1f, 0.15f, 0.1f, 0.45f);
+        }
+
+        _tempFx.Add(new TempFx { Go = go, Until = Time.time + Mathf.Max(0.2f, life) });
+    }
+
     private void SpawnPopSphere(Vector3 pos, Color color, float life)
     {
         SpawnTempPrimitive(PrimitiveType.Sphere, pos, Vector3.one * 0.4f, color, life);
@@ -2341,6 +3258,16 @@ public sealed class GrayBoxWorld : MonoBehaviour
         if (kind == "haste" || kind == "speed_mult")
         {
             return new Color(0.6f, 1f, 0.2f);
+        }
+
+        if (kind == "attr_up")
+        {
+            return new Color(1f, 0.55f, 0.15f);
+        }
+
+        if (kind == "dmg_taken_mult")
+        {
+            return new Color(0.45f, 0.85f, 1f);
         }
 
         return Color.magenta;
@@ -2566,24 +3493,37 @@ public sealed class GrayBoxWorld : MonoBehaviour
     }
 
     private static Material _sharedSpriteMat;
+    private static Material _sharedSpriteMatUrp;
+    private static Material _sharedSpriteMatBuiltin;
 
     private static void ApplyUnlit(SpriteRenderer sr)
     {
-        // Prefer classic Sprites/Default (handles sprite alpha). URP unlit is fine if present.
-        if (_sharedSpriteMat == null)
+        // Under URP 2D, Built-in Sprites/Default often draws NOTHING (invisible units).
+        // Prefer URP Sprite-Unlit; keep Built-in only as last resort.
+        if (_sharedSpriteMatUrp == null)
         {
-            var shader = Shader.Find("Sprites/Default")
-                ?? Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default")
-                ?? Shader.Find("Unlit/Transparent");
-            if (shader != null)
+            var urp = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
+            if (urp != null)
             {
-                _sharedSpriteMat = new Material(shader);
+                _sharedSpriteMatUrp = new Material(urp);
             }
         }
 
-        if (_sharedSpriteMat != null)
+        if (_sharedSpriteMatBuiltin == null)
         {
-            sr.sharedMaterial = _sharedSpriteMat;
+            var builtin = Shader.Find("Sprites/Default")
+                ?? Shader.Find("Unlit/Transparent");
+            if (builtin != null)
+            {
+                _sharedSpriteMatBuiltin = new Material(builtin);
+            }
+        }
+
+        var mat = _sharedSpriteMatUrp ?? _sharedSpriteMatBuiltin;
+        _sharedSpriteMat = mat;
+        if (mat != null)
+        {
+            sr.sharedMaterial = mat;
         }
     }
 

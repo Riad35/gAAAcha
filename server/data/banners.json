@@ -7,10 +7,12 @@
     "baseSsrRate": 0.02,
     "softStep": 0.02,
     "baseSrRate": 0.1,
+    "pullCostDust": 10,
+    "tenPullCostDust": 90,
     "pool": {
-      "ssr": ["char_aurel"],
-      "sr": ["char_nyla"],
-      "r": ["item_dust"]
+      "ssr": ["card_fighter", "card_mage", "card_marksman", "card_rogue", "char_aurel"],
+      "sr": ["spirit_ember", "spirit_tide", "spirit_gale", "staff_arcane", "gun_spark", "dagger_twin", "acc_ring", "armor_iron", "helm_iron", "char_nyla"],
+      "r": ["item_dust", "armor_leather", "helm_cap", "boots_leather", "gloves_wrap", "item_ration"]
     }
   }
 ]

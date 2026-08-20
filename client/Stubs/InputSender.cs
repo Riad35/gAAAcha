@@ -7,7 +7,7 @@ using System.Text;
 public sealed class InputSender
 {
     private readonly NetClient _net;
-    private string _targetId = "monster_slime_1";
+    private string _targetId = "";
 
     public InputSender(NetClient net)
     {
@@ -16,7 +16,10 @@ public sealed class InputSender
 
     public void SetTarget(string targetId)
     {
-        _targetId = targetId;
+        if (!string.IsNullOrEmpty(targetId))
+        {
+            _targetId = targetId;
+        }
     }
 
     public void RequestMove(float x, float y)
@@ -83,6 +86,11 @@ public sealed class InputSender
     public void RequestGacha(int count = 1)
     {
         _ = _net.SendGachaAsync("starter", count);
+    }
+
+    public void RequestRespawn()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_respawn\"}");
     }
 
     public void EquipWeapon(string weaponId)

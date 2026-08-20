@@ -1,20 +1,28 @@
 [
   {
     "id": "char_aurel",
-    "name": "Aurel",
+    "name": "Aurel Portrait",
     "rarity": "ssr",
-    "kind": "character"
+    "kind": "skin",
+    "use": "skin"
   },
   {
     "id": "char_nyla",
-    "name": "Nyla",
+    "name": "Nyla Portrait",
     "rarity": "sr",
-    "kind": "character"
+    "kind": "skin",
+    "use": "skin"
   },
   {
     "id": "item_dust",
     "name": "Star Dust",
     "rarity": "r",
+    "kind": "material"
+  },
+  {
+    "id": "item_ticket",
+    "name": "Banner Ticket",
+    "rarity": "sr",
     "kind": "material"
   },
   {
@@ -40,7 +48,10 @@
     "kind": "consumable",
     "use": "buff_food",
     "healHp": 40,
-    "healMp": 15
+    "healMp": 15,
+    "durationMs": 60000,
+    "atkBonus": 6,
+    "defBonus": 4
   },
   {
     "id": "item_bread",
@@ -64,6 +75,7 @@
     "rarity": "r",
     "kind": "armor",
     "slot": "armor",
+    "levelReq": 1,
     "defBonus": 4
   },
   {
@@ -72,6 +84,7 @@
     "rarity": "r",
     "kind": "armor",
     "slot": "helm",
+    "levelReq": 1,
     "defBonus": 2
   },
   {
@@ -80,6 +93,7 @@
     "rarity": "r",
     "kind": "armor",
     "slot": "boots",
+    "levelReq": 1,
     "defBonus": 2,
     "moveSpeedBonus": 0.3
   },
@@ -89,6 +103,7 @@
     "rarity": "r",
     "kind": "armor",
     "slot": "gloves",
+    "levelReq": 1,
     "atkBonus": 1
   },
   {
@@ -97,12 +112,153 @@
     "rarity": "sr",
     "kind": "armor",
     "slot": "accessory",
+    "levelReq": 1,
     "magicAtkBonus": 2
+  },
+  {
+    "id": "armor_iron",
+    "name": "Iron Vest",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "armor",
+    "levelReq": 8,
+    "defBonus": 8
+  },
+  {
+    "id": "helm_iron",
+    "name": "Iron Helm",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "helm",
+    "levelReq": 8,
+    "defBonus": 4
+  },
+  {
+    "id": "boots_iron",
+    "name": "Iron Boots",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "boots",
+    "levelReq": 8,
+    "defBonus": 4,
+    "moveSpeedBonus": 0.5
+  },
+  {
+    "id": "gloves_iron",
+    "name": "Iron Gauntlets",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "gloves",
+    "levelReq": 8,
+    "atkBonus": 3
+  },
+  {
+    "id": "acc_iron",
+    "name": "Iron Signet",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "accessory",
+    "levelReq": 8,
+    "magicAtkBonus": 4
+  },
+  {
+    "id": "armor_ash",
+    "name": "Ashen Plate",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "armor",
+    "levelReq": 15,
+    "defBonus": 14
+  },
+  {
+    "id": "helm_ash",
+    "name": "Ashen Helm",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "helm",
+    "levelReq": 15,
+    "defBonus": 7
+  },
+  {
+    "id": "boots_ash",
+    "name": "Ashen Greaves",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "boots",
+    "levelReq": 15,
+    "defBonus": 6,
+    "moveSpeedBonus": 0.8
+  },
+  {
+    "id": "gloves_ash",
+    "name": "Ashen Grips",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "gloves",
+    "levelReq": 15,
+    "atkBonus": 5
+  },
+  {
+    "id": "acc_ash",
+    "name": "Ashen Band",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "accessory",
+    "levelReq": 15,
+    "magicAtkBonus": 7
+  },
+  {
+    "id": "sword_iron",
+    "name": "Iron Sword",
+    "rarity": "r",
+    "kind": "weapon"
+  },
+  {
+    "id": "bow_hunter",
+    "name": "Hunter Bow",
+    "rarity": "r",
+    "kind": "weapon"
+  },
+  {
+    "id": "dagger_twin",
+    "name": "Twin Daggers",
+    "rarity": "r",
+    "kind": "weapon"
+  },
+  {
+    "id": "staff_arcane",
+    "name": "Arcane Staff",
+    "rarity": "sr",
+    "kind": "weapon"
+  },
+  {
+    "id": "gun_spark",
+    "name": "Spark Gun",
+    "rarity": "sr",
+    "kind": "weapon"
+  },
+  {
+    "id": "spirit_ember",
+    "name": "Ember Spirit",
+    "rarity": "sr",
+    "kind": "spirit"
+  },
+  {
+    "id": "spirit_tide",
+    "name": "Tide Spirit",
+    "rarity": "sr",
+    "kind": "spirit"
+  },
+  {
+    "id": "spirit_gale",
+    "name": "Gale Spirit",
+    "rarity": "sr",
+    "kind": "spirit"
   },
   {
     "id": "card_fighter",
     "name": "Fighter Class Card",
-    "rarity": "sr",
+    "rarity": "ssr",
     "kind": "class_card",
     "use": "class_card",
     "classId": "fighter",
@@ -114,7 +270,7 @@
   {
     "id": "card_mage",
     "name": "Mage Class Card",
-    "rarity": "sr",
+    "rarity": "ssr",
     "kind": "class_card",
     "use": "class_card",
     "classId": "mage",
@@ -126,7 +282,7 @@
   {
     "id": "card_marksman",
     "name": "Marksman Class Card",
-    "rarity": "sr",
+    "rarity": "ssr",
     "kind": "class_card",
     "use": "class_card",
     "classId": "marksman",
@@ -139,7 +295,7 @@
   {
     "id": "card_rogue",
     "name": "Rogue Class Card",
-    "rarity": "sr",
+    "rarity": "ssr",
     "kind": "class_card",
     "use": "class_card",
     "classId": "rogue",

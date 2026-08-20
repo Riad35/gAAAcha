@@ -2,6 +2,7 @@
   {
     "id": "q_meet_trainer",
     "name": "Meet the Trainer",
+    "chain": "main",
     "giverNpcId": "npc_quest_mira",
     "turnInNpcId": "npc_trainer",
     "steps": [
@@ -25,8 +26,10 @@
   {
     "id": "q_clear_pests",
     "name": "Clear the Pests",
+    "chain": "main",
     "giverNpcId": "npc_quest_ryn",
     "turnInNpcId": "npc_quest_ryn",
+    "requiresQuestId": "q_meet_trainer",
     "steps": [
       {
         "kind": "kill",
@@ -44,6 +47,36 @@
       ]
     },
     "dialogue": "Slay 3 Ridge Pests beyond the east gate."
+  },
+  {
+    "id": "q_delve_depths",
+    "name": "Crypt and Marsh",
+    "chain": "main",
+    "giverNpcId": "npc_quest_mira",
+    "turnInNpcId": "npc_quest_mira",
+    "requiresQuestId": "q_clear_pests",
+    "steps": [
+      {
+        "kind": "kill",
+        "monsterType": "crypt",
+        "count": 2
+      },
+      {
+        "kind": "kill",
+        "monsterType": "marsh",
+        "count": 2
+      }
+    ],
+    "rewards": {
+      "gold": 90,
+      "items": [
+        {
+          "itemId": "item_ration",
+          "quantity": 2
+        }
+      ]
+    },
+    "dialogue": "Clear 2 Crypt skeletons, then 2 Marsh toads."
   },
   {
     "id": "q_deliver_stew",
@@ -73,6 +106,7 @@
     "name": "Ascend the Tower",
     "giverNpcId": "npc_tower_ascend",
     "turnInNpcId": "npc_tower_ascend",
+    "requiresQuestId": "q_clear_pests",
     "steps": [
       {
         "kind": "talk",
@@ -96,6 +130,7 @@
     "name": "Floor 1 Clearance",
     "giverNpcId": "npc_tower_ascend",
     "turnInNpcId": "npc_tower_ascend",
+    "requiresQuestId": "q_tower_ascend",
     "steps": [
       {
         "kind": "kill",
@@ -117,8 +152,10 @@
   {
     "id": "q_tower_f2",
     "name": "Floor 2 Warden",
-    "giverNpcId": "npc_town2_quest",
-    "turnInNpcId": "npc_town2_quest",
+    "chain": "main",
+    "giverNpcId": "npc_tower_ascend",
+    "turnInNpcId": "npc_tower_ascend",
+    "requiresQuestId": "q_delve_depths",
     "steps": [
       {
         "kind": "kill",
@@ -135,13 +172,14 @@
         }
       ]
     },
-    "dialogue": "Defeat the Floor 2 Warden."
+    "dialogue": "Defeat the Floor 2 Warden and return to Rhea."
   },
   {
     "id": "q_tower_f3",
     "name": "Floor 3 Cull",
     "giverNpcId": "npc_town2_quest",
     "turnInNpcId": "npc_town2_quest",
+    "requiresQuestId": "q_tower_f2",
     "steps": [
       {
         "kind": "kill",
@@ -165,6 +203,7 @@
     "name": "Ash Knight Hunt",
     "giverNpcId": "npc_town3_quest",
     "turnInNpcId": "npc_town3_quest",
+    "requiresQuestId": "q_tower_f3",
     "steps": [
       {
         "kind": "kill",
@@ -186,8 +225,10 @@
   {
     "id": "q_tower_f5",
     "name": "Apex Conquered",
-    "giverNpcId": "npc_town3_quest",
+    "chain": "main",
+    "giverNpcId": "npc_tower_ascend",
     "turnInNpcId": "npc_tower_ascend",
+    "requiresQuestId": "q_tower_f2",
     "steps": [
       {
         "kind": "kill",
@@ -205,5 +246,31 @@
       ]
     },
     "dialogue": "Defeat the Tower Apex and return to Rhea."
+  },
+  {
+    "id": "q_class_path",
+    "name": "Choose a Path",
+    "chain": "main",
+    "giverNpcId": "npc_trainer",
+    "turnInNpcId": "npc_card_vendor",
+    "requiresQuestId": "q_tower_f5",
+    "minLevel": 20,
+    "steps": [
+      {
+        "kind": "talk",
+        "npcId": "npc_card_vendor",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 80,
+      "items": [
+        {
+          "itemId": "item_ticket",
+          "quantity": 2
+        }
+      ]
+    },
+    "dialogue": "Lv20. Talk to Card Broker Sil, then pull or buy a class card and use it."
   }
 ]

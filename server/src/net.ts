@@ -25,10 +25,11 @@ import {
   updateTradeOffer,
 } from "./trade.js";
 import { setHomestone, teleportHome, usePortal } from "./portal.js";
-import { acceptQuest, noteTalk, questsForNpc, turnInQuest } from "./quest.js";
+import { acceptQuest, decorateQuestProgress, noteTalk, questsForNpc, questSnapshot, turnInQuest } from "./quest.js";
 import { buyFromShop, sellToShop, useInventoryItem } from "./shop.js";
 import { saveGuest } from "./persist.js";
 import type { ChatChannel, ClientMessage, PlayerSession, ServerMessage } from "./types.js";
+import { channelForError, log, packetRejectReason } from "./log.js";
 import { deleteCharacterDb, isDbReady, listCharactersDb, loadGuestSlotFromDb, loginAccount, registerAccount } from "./db.js";
 import { deleteCharSlot, listCharSlots, loadCharSlot, SERVER_LIST } from "./chars.js";
 import { xpToNextLevel } from "./xp.js";
@@ -57,6 +58,7 @@ import {
   npcSwitchIds,
   onMonsterKilledBy,
   players,
+  respawnAtHome,
   snapshot,
   spawnPlayer,
   spawnProjectileFromCast,
@@ -85,6 +87,11 @@ bindCombatWorld(
 const sockets = new Map<string, WebSocket>();
 
 function send(ws: WebSocket, message: ServerMessage): void {
+  if (message.type === "error") {
+    log.warn(channelForError(message.code), message.message ?? "error", { code: message.code });
+  } else {
+    log.debug("NET", "send", { type: message.type });
+  }
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
   }
@@ -176,6 +183,7 @@ function persist(session: PlayerSession): void {
     skillPoints: session.skillPoints,
     unlockedSkillIds: session.unlockedSkillIds,
     classCardId: session.classCardId,
+    equippedSkinId: session.equippedSkinId,
     towerClearedFloor: session.towerClearedFloor,
     switchFlags: session.switchFlags,
     updatedAt: Date.now(),
@@ -220,6 +228,9 @@ function parseMessage(raw: string): ClientMessage | null {
       return data;
     }
     if (data.type === "request_use_class_card" && typeof data.slotIndex === "number") {
+      return data;
+    }
+    if (data.type === "request_respawn") {
       return data;
     }
     if (data.type === "request_equip") {
@@ -364,17 +375,19 @@ function sendState(ws: WebSocket, session: PlayerSession): void {
     equippedSpiritId: session.equippedSpiritId,
     spiritIds: session.spiritIds,
     skillIds: session.unlockedSkillIds.length ? session.unlockedSkillIds : [...cls.skillIds],
+    classSkillIds: [...cls.skillIds],
     cooldowns: cooldownSnapshot(session),
     inventory: session.inventory,
     gold: session.gold,
     homeMapId: session.homeMapId,
     homeX: session.homeX,
     homeY: session.homeY,
-    quests: session.quests,
+    quests: session.quests.map(decorateQuestProgress),
     completedQuestIds: session.completedQuestIds,
     charNameSet: session.charNameSet,
     classId: session.classId,
     classCardId: session.classCardId,
+    equippedSkinId: session.equippedSkinId,
     towerClearedFloor: session.towerClearedFloor,
     switchFlags: session.switchFlags,
     slotIndex: session.slotIndex,
@@ -414,10 +427,10 @@ export function startServer(port = 7777): WebSocketServer {
   const wss = new WebSocketServer({ port, host: "127.0.0.1" });
   wss.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
-      console.error(
-        `Port ${port} already in use. Kill the old gAAAcha server (node/tsx on 7777), then retry:\n` +
-          `  Get-NetTCPConnection -LocalPort ${port} | Select OwningProcess\n` +
-          `  Stop-Process -Id <pid> -Force`,
+      log.error(
+        "SYS",
+        `Port ${port} already in use. Kill the old gAAAcha server (node/tsx on 7777), then retry: Get-NetTCPConnection -LocalPort ${port}`,
+        { code: err.code },
       );
       process.exit(1);
     }
@@ -436,14 +449,21 @@ export function startServer(port = 7777): WebSocketServer {
     let session = spawnPlayer();
     sockets.set(session.entity.id, ws);
     sendState(ws, session);
-    console.log(`player joined ${session.entity.id} guest=${session.guestToken}`);
+    log.info("SYS", "player joined", { entity: session.entity.id, guest: session.guestToken });
 
     ws.on("message", (buf) => {
-      const msg = parseMessage(buf.toString());
+      const raw = buf.toString();
+      const msg = parseMessage(raw);
       if (!msg) {
-        send(ws, { type: "error", code: "bad_packet", message: "Unrecognized message" });
+        const reason = packetRejectReason(raw);
+        send(ws, {
+          type: "error",
+          code: "bad_packet",
+          message: `Could not read packet: ${reason.why} (type ${reason.type})`,
+        });
         return;
       }
+      log.debug("NET", "recv", { type: msg.type, entity: session.entity.id, map: session.entity.mapId });
 
       if (msg.type === "request_hello") {
         onPlayerDisconnect(session.entity.id);
@@ -453,7 +473,7 @@ export function startServer(port = 7777): WebSocketServer {
         ensureGuild(session);
         sockets.set(session.entity.id, ws);
         sendState(ws, session);
-        console.log(`player hello ${session.entity.id} guest=${session.guestToken}`);
+        log.info("SYS", "player hello", { entity: session.entity.id, guest: session.guestToken });
         return;
       }
 
@@ -617,6 +637,7 @@ export function startServer(port = 7777): WebSocketServer {
         send(ws, {
           type: "sync_equip",
           weaponId: session.equippedWeaponId,
+          weapon2Id: session.equippedWeapon2Id,
           spiritId: session.equippedSpiritId,
           you: session.entity,
         });
@@ -651,6 +672,7 @@ export function startServer(port = 7777): WebSocketServer {
         send(ws, {
           type: "sync_equip",
           weaponId: session.equippedWeaponId,
+          weapon2Id: session.equippedWeapon2Id,
           spiritId: session.equippedSpiritId,
           you: session.entity,
         });
@@ -678,6 +700,7 @@ export function startServer(port = 7777): WebSocketServer {
         send(ws, {
           type: "sync_equip",
           weaponId: session.equippedWeaponId,
+          weapon2Id: session.equippedWeapon2Id,
           spiritId: session.equippedSpiritId,
           you: session.entity,
         });
@@ -686,7 +709,7 @@ export function startServer(port = 7777): WebSocketServer {
 
       if (msg.type === "request_move") {
         if (session.entity.hp <= 0) {
-          send(ws, { type: "error", code: "you_are_dead", message: "You are dead — reconnect to respawn" });
+          send(ws, { type: "error", code: "you_are_dead", message: "You are dead — respawn at Homestone" });
           return;
         }
         const result = validateMove(session, msg.x, msg.y, now);
@@ -713,9 +736,37 @@ export function startServer(port = 7777): WebSocketServer {
         if ("ok" in gacha) {
           persist(session);
           send(ws, { type: "sync_gacha", results: gacha.results, pity: gacha.pity, inventory: gacha.inventory });
+          send(ws, {
+            type: "sync_equip",
+            weaponId: session.equippedWeaponId,
+            weapon2Id: session.equippedWeapon2Id,
+            spiritId: session.equippedSpiritId,
+            you: session.entity,
+          });
+          sendState(ws, session);
           return;
         }
         send(ws, gacha);
+        return;
+      }
+
+      if (msg.type === "request_respawn") {
+        if (session.entity.hp > 0) {
+          send(ws, { type: "error", code: "not_dead", message: "You are not dead" });
+          return;
+        }
+        respawnAtHome(session);
+        persist(session);
+        sendState(ws, session);
+        broadcast({ type: "sync_move", entityId: session.entity.id, x: session.entity.x, y: session.entity.y });
+        broadcast({
+          type: "sync_vitals",
+          entityId: session.entity.id,
+          hp: session.entity.hp,
+          maxHp: session.entity.maxHp,
+          mp: session.entity.mp,
+          maxMp: session.entity.maxMp,
+        });
         return;
       }
 
@@ -794,6 +845,11 @@ export function startServer(port = 7777): WebSocketServer {
           return;
         }
         persist(session);
+        log.info("WORLD", "portal", {
+          entity: session.entity.id,
+          map: session.entity.mapId,
+          portal: msg.portalId,
+        });
         sendState(ws, session);
         return;
       }
@@ -813,16 +869,14 @@ export function startServer(port = 7777): WebSocketServer {
         if (talkMsg) {
           send(ws, talkMsg);
         }
+        const npcQuests = questsForNpc(session, msg.targetId);
         send(ws, {
           type: "sync_interact",
           targetId: msg.targetId,
           interact,
           line: npcLines.get(msg.targetId) ?? "",
           shop: interact.startsWith("shop_") ? shopByNpcId(msg.targetId) : undefined,
-          quests:
-            interact === "quest" || interact === "trainer" || interact === "shop_cook"
-              ? questsForNpc(session, msg.targetId)
-              : undefined,
+          quests: npcQuests.length > 0 ? npcQuests : undefined,
           home:
             interact === "homestone"
               ? { mapId: session.homeMapId, x: session.homeX, y: session.homeY }
@@ -921,6 +975,13 @@ export function startServer(port = 7777): WebSocketServer {
           return;
         }
         persist(session);
+        send(ws, {
+          type: "sync_fx",
+          kind: "homestone",
+          entityId: session.entity.id,
+          x: session.entity.x,
+          y: session.entity.y,
+        });
         sendState(ws, session);
         return;
       }
@@ -932,7 +993,7 @@ export function startServer(port = 7777): WebSocketServer {
           return;
         }
         persist(session);
-        send(ws, { type: "sync_quest", quests: session.quests, completedQuestIds: session.completedQuestIds });
+        send(ws, questSnapshot(session));
         return;
       }
 
@@ -1131,12 +1192,16 @@ export function startServer(port = 7777): WebSocketServer {
       }
 
       if (msg.type !== "cast_skill") {
-        send(ws, { type: "error", code: "bad_packet", message: "Unrecognized message" });
+        send(ws, {
+          type: "error",
+          code: "bad_packet",
+          message: `Could not read packet: no handler for ${msg.type}`,
+        });
         return;
       }
 
       if (session.entity.hp <= 0) {
-        send(ws, { type: "error", code: "you_are_dead", message: "You are dead — reconnect to respawn" });
+        send(ws, { type: "error", code: "you_are_dead", message: "You are dead — respawn at Homestone" });
         return;
       }
 
@@ -1150,6 +1215,17 @@ export function startServer(port = 7777): WebSocketServer {
         send(ws, result);
         return;
       }
+
+      const hit0 = result.hits[0];
+      log.info("COMBAT", "cast", {
+        entity: session.entity.id,
+        map: session.entity.mapId,
+        skill: msg.skillId,
+        target: result.primaryTargetId,
+        dmg: hit0?.damage ?? 0,
+        hp: hit0?.hpAfter ?? 0,
+        crit: Boolean(hit0?.crit),
+      });
 
       for (const moved of result.movedEntities) {
         broadcast({ type: "sync_move", entityId: moved.id, x: moved.x, y: moved.y });
@@ -1170,7 +1246,7 @@ export function startServer(port = 7777): WebSocketServer {
           hits: result.hits,
           mpAfter: result.mpAfter,
         });
-      } else {
+      } else if (result.hits.length > 0) {
         const hit = result.hits[0];
         broadcast({
           type: "sync_skill",
@@ -1181,6 +1257,10 @@ export function startServer(port = 7777): WebSocketServer {
           hpAfter: hit?.hpAfter ?? 0,
           mpAfter: result.mpAfter,
           crit: hit?.crit,
+          element: hit?.element,
+          missed: hit?.missed,
+          advantage: hit?.advantage,
+          resistHint: hit?.resistHint,
         });
       }
 
@@ -1205,6 +1285,7 @@ export function startServer(port = 7777): WebSocketServer {
         }
         if (hit.hpAfter <= 0 && liveMonsters.has(hit.targetId) && !isImmortalMonster(hit.targetId)) {
           const mid = hit.targetId;
+          log.info("COMBAT", "kill", { entity: session.entity.id, target: mid, skill: msg.skillId });
           broadcastAll(killMonster(mid, now));
           if (!grantedLoot) {
             for (const m of onMonsterKilledBy(session, mid)) {
@@ -1212,6 +1293,19 @@ export function startServer(port = 7777): WebSocketServer {
             }
             grantedLoot = true;
             persist(session);
+          }
+        }
+        if (hit.hpAfter <= 0) {
+          const dead = [...players.values()].find((p) => p.entity.id === hit.targetId);
+          if (dead && dead.entity.hp <= 0) {
+            dead.statuses = [];
+            sendTo(dead.entity.id, {
+              type: "sync_death",
+              entityId: dead.entity.id,
+              homeMapId: dead.homeMapId,
+              homeX: dead.homeX,
+              homeY: dead.homeY,
+            });
           }
         }
       }
@@ -1247,10 +1341,10 @@ export function startServer(port = 7777): WebSocketServer {
       }
       sockets.delete(session.entity.id);
       players.delete(session.entity.id);
-      console.log(`player left ${session.entity.id}`);
+      log.info("SYS", "player left", { entity: session.entity.id });
     });
   });
 
-  console.log(`gAAAcha server ws://127.0.0.1:${port}`);
+  log.info("SYS", "server listen", { url: `ws://127.0.0.1:${port}` });
   return wss;
 }

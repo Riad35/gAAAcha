@@ -1,4 +1,5 @@
 import { mapById } from "./data.js";
+import { log } from "./log.js";
 import type { Entity, MonsterDef, PlayerSession, ServerMessage } from "./types.js";
 
 export type LiveInstance = {
@@ -67,6 +68,7 @@ export function createDungeonInstance(
     inst.monsterIds.push(mid);
   }
   instances.set(id, inst);
+  log.info("WORLD", "instance open", { map: mapId, inst: id, party: partyId ?? "solo" });
   return inst;
 }
 

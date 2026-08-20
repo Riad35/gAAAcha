@@ -5,53 +5,103 @@
     "entries": [
       {
         "itemId": "sword_iron",
-        "buyPrice": 40,
-        "sellPrice": 15
-      },
-      {
-        "itemId": "dagger_twin",
-        "buyPrice": 45,
-        "sellPrice": 18
-      },
-      {
-        "itemId": "bow_hunter",
-        "buyPrice": 50,
+        "buyPrice": 80,
         "sellPrice": 20
       },
       {
-        "itemId": "staff_arcane",
-        "buyPrice": 55,
+        "itemId": "dagger_twin",
+        "buyPrice": 90,
         "sellPrice": 22
       },
       {
-        "itemId": "gun_spark",
-        "buyPrice": 60,
+        "itemId": "bow_hunter",
+        "buyPrice": 95,
         "sellPrice": 24
       },
       {
+        "itemId": "staff_arcane",
+        "buyPrice": 120,
+        "sellPrice": 30
+      },
+      {
+        "itemId": "gun_spark",
+        "buyPrice": 130,
+        "sellPrice": 32
+      },
+      {
         "itemId": "armor_leather",
-        "buyPrice": 35,
-        "sellPrice": 12
+        "buyPrice": 70,
+        "sellPrice": 18
       },
       {
         "itemId": "helm_cap",
-        "buyPrice": 20,
-        "sellPrice": 8
+        "buyPrice": 40,
+        "sellPrice": 10
       },
       {
         "itemId": "boots_leather",
-        "buyPrice": 22,
-        "sellPrice": 8
+        "buyPrice": 45,
+        "sellPrice": 12
       },
       {
         "itemId": "gloves_wrap",
-        "buyPrice": 18,
-        "sellPrice": 6
+        "buyPrice": 38,
+        "sellPrice": 10
       },
       {
         "itemId": "acc_ring",
-        "buyPrice": 40,
-        "sellPrice": 15
+        "buyPrice": 85,
+        "sellPrice": 20
+      },
+      {
+        "itemId": "armor_iron",
+        "buyPrice": 180,
+        "sellPrice": 45
+      },
+      {
+        "itemId": "helm_iron",
+        "buyPrice": 110,
+        "sellPrice": 28
+      },
+      {
+        "itemId": "boots_iron",
+        "buyPrice": 120,
+        "sellPrice": 30
+      },
+      {
+        "itemId": "gloves_iron",
+        "buyPrice": 100,
+        "sellPrice": 25
+      },
+      {
+        "itemId": "acc_iron",
+        "buyPrice": 160,
+        "sellPrice": 40
+      },
+      {
+        "itemId": "armor_ash",
+        "buyPrice": 420,
+        "sellPrice": 105
+      },
+      {
+        "itemId": "helm_ash",
+        "buyPrice": 280,
+        "sellPrice": 70
+      },
+      {
+        "itemId": "boots_ash",
+        "buyPrice": 300,
+        "sellPrice": 75
+      },
+      {
+        "itemId": "gloves_ash",
+        "buyPrice": 260,
+        "sellPrice": 65
+      },
+      {
+        "itemId": "acc_ash",
+        "buyPrice": 400,
+        "sellPrice": 100
       }
     ]
   },
@@ -61,13 +111,18 @@
     "entries": [
       {
         "itemId": "item_dust",
-        "buyPrice": 5,
+        "buyPrice": 12,
         "sellPrice": 2
       },
       {
+        "itemId": "item_ticket",
+        "buyPrice": 80,
+        "sellPrice": 20
+      },
+      {
         "itemId": "item_homestone",
-        "buyPrice": 25,
-        "sellPrice": 10
+        "buyPrice": 40,
+        "sellPrice": 12
       },
       {
         "itemId": "item_ration",
@@ -147,6 +202,21 @@
         "itemId": "item_homestone",
         "buyPrice": 25,
         "sellPrice": 10
+      },
+      {
+        "itemId": "armor_iron",
+        "buyPrice": 160,
+        "sellPrice": 40
+      },
+      {
+        "itemId": "helm_iron",
+        "buyPrice": 95,
+        "sellPrice": 24
+      },
+      {
+        "itemId": "boots_iron",
+        "buyPrice": 105,
+        "sellPrice": 26
       }
     ]
   },
@@ -168,6 +238,31 @@
         "itemId": "item_homestone",
         "buyPrice": 25,
         "sellPrice": 10
+      },
+      {
+        "itemId": "armor_ash",
+        "buyPrice": 380,
+        "sellPrice": 95
+      },
+      {
+        "itemId": "helm_ash",
+        "buyPrice": 250,
+        "sellPrice": 62
+      },
+      {
+        "itemId": "boots_ash",
+        "buyPrice": 270,
+        "sellPrice": 68
+      },
+      {
+        "itemId": "gloves_ash",
+        "buyPrice": 230,
+        "sellPrice": 58
+      },
+      {
+        "itemId": "acc_ash",
+        "buyPrice": 360,
+        "sellPrice": 90
       }
     ]
   }

@@ -1,13 +1,66 @@
 import { questById, quests } from "./data.js";
 import { addItem, removeItem } from "./shop.js";
-import type { PlayerSession, QuestDef, QuestProgress, ServerMessage } from "./types.js";
+import type { PlayerSession, QuestDef, QuestProgress, QuestStep, ServerMessage } from "./types.js";
+
+function stepHint(step: QuestStep | undefined): string {
+  if (!step) {
+    return "Turn in";
+  }
+  if (step.kind === "kill") {
+    return `Slay ${step.count} ${prettyType(step.monsterType)}`;
+  }
+  if (step.kind === "talk") {
+    return `Talk to ${prettyNpc(step.npcId)}`;
+  }
+  return `Deliver ${step.count} ${prettyType(step.itemId)}`;
+}
+
+function prettyType(id: string): string {
+  return id.replace(/_/g, " ");
+}
+
+function prettyNpc(id: string): string {
+  return id.replace(/^npc_/, "").replace(/_/g, " ");
+}
+
+export function decorateQuestProgress(progress: QuestProgress): QuestProgress {
+  const def = questById(progress.questId);
+  const step = def?.steps[progress.stepIndex];
+  return {
+    ...progress,
+    name: def?.name ?? progress.questId,
+    hint: progress.completed ? "Ready to turn in" : stepHint(step) || def?.dialogue,
+    stepNeed: step?.count ?? 1,
+  };
+}
 
 export function questSnapshot(session: PlayerSession): ServerMessage {
   return {
     type: "sync_quest",
-    quests: session.quests,
+    quests: session.quests.map(decorateQuestProgress),
     completedQuestIds: session.completedQuestIds,
   };
+}
+
+export function canAcceptQuest(session: PlayerSession, quest: QuestDef): { ok: true } | { error: ServerMessage } {
+  if (session.completedQuestIds.includes(quest.id) || session.quests.some((q) => q.questId === quest.id)) {
+    return { error: { type: "error", code: "quest_owned", message: "Already have this quest" } };
+  }
+  if (quest.requiresQuestId && !session.completedQuestIds.includes(quest.requiresQuestId)) {
+    const prev = questById(quest.requiresQuestId);
+    return {
+      error: {
+        type: "error",
+        code: "quest_locked",
+        message: prev ? `Finish "${prev.name}" first` : "Finish the previous task first",
+      },
+    };
+  }
+  const need = quest.minLevel ?? 1;
+  if (session.level < need) {
+    return { error: { type: "error", code: "level_too_low", message: `Need level ${need}` } };
+  }
+  return { ok: true };
 }
 
 export function questsForNpc(session: PlayerSession, npcId: string): {
@@ -25,7 +78,7 @@ export function questsForNpc(session: PlayerSession, npcId: string): {
     }
     const active = session.quests.find((q) => q.questId === quest.id);
     if (!active) {
-      if (quest.giverNpcId === npcId) {
+      if (quest.giverNpcId === npcId && "ok" in canAcceptQuest(session, quest)) {
         out.push({ quest, state: "available" });
       }
       continue;
@@ -59,8 +112,9 @@ export function acceptQuest(session: PlayerSession, questId: string): { error?: 
   if (!quest) {
     return { error: { type: "error", code: "bad_quest", message: "Unknown quest" } };
   }
-  if (session.completedQuestIds.includes(questId) || session.quests.some((q) => q.questId === questId)) {
-    return { error: { type: "error", code: "quest_owned", message: "Already have this quest" } };
+  const gate = canAcceptQuest(session, quest);
+  if ("error" in gate) {
+    return { error: gate.error };
   }
   session.quests.push({ questId, stepIndex: 0, progress: 0, completed: false });
   return {};
@@ -116,6 +170,11 @@ export function noteKill(session: PlayerSession, monsterType: string): ServerMes
   return changed ? questSnapshot(session) : null;
 }
 
+function nextQuestAfter(questId: string): QuestDef | undefined {
+  const matches = quests.filter((q) => q.requiresQuestId === questId);
+  return matches.find((q) => q.chain === "main") ?? matches[0];
+}
+
 export function turnInQuest(session: PlayerSession, questId: string): {
   error?: ServerMessage;
   messages: ServerMessage[];
@@ -159,11 +218,22 @@ export function turnInQuest(session: PlayerSession, questId: string): {
     session.towerClearedFloor = floor;
   }
 
-  return {
-    messages: [
-      questSnapshot(session),
-      { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
-      { type: "sync_gold", gold: session.gold },
-    ],
-  };
+  const messages: ServerMessage[] = [
+    questSnapshot(session),
+    { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
+    { type: "sync_gold", gold: session.gold },
+  ];
+  const next = nextQuestAfter(questId);
+  if (next) {
+    const lvl = next.minLevel && session.level < next.minLevel ? ` (Lv${next.minLevel})` : "";
+    messages.push({
+      type: "sync_chat",
+      channel: "server",
+      fromId: "system",
+      fromName: "System",
+      text: `Next: ${next.name}${lvl}. ${next.dialogue}`,
+      serverTime: Date.now(),
+    });
+  }
+  return { messages };
 }

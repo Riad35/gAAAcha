@@ -71,6 +71,249 @@ public static class JsonUtil
         return json.Substring(from, Mathf.Min(after, json.Length - from));
     }
 
+    /// <summary>Extract a JSON object value for key (brace-matched). Avoids matching mapId etc.</summary>
+    public static string ExtractObject(string json, string key)
+    {
+        if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key))
+        {
+            return "";
+        }
+
+        var token = "\"" + key + "\":";
+        var searchFrom = 0;
+        while (searchFrom < json.Length)
+        {
+            var idx = json.IndexOf(token, searchFrom);
+            if (idx < 0)
+            {
+                return "";
+            }
+
+            // Reject longer keys like mapId / homeMapId that contain the same prefix.
+            if (idx > 0)
+            {
+                var prev = json[idx - 1];
+                if (prev != '{' && prev != ',' && prev != ' ' && prev != '\n' && prev != '\r' && prev != '\t')
+                {
+                    searchFrom = idx + token.Length;
+                    continue;
+                }
+            }
+
+            var i = idx + token.Length;
+            while (i < json.Length && char.IsWhiteSpace(json[i]))
+            {
+                i += 1;
+            }
+
+            if (i >= json.Length || json[i] != '{')
+            {
+                searchFrom = idx + token.Length;
+                continue;
+            }
+
+            var depth = 0;
+            var inString = false;
+            var escape = false;
+            for (var j = i; j < json.Length; j++)
+            {
+                var c = json[j];
+                if (inString)
+                {
+                    if (escape)
+                    {
+                        escape = false;
+                    }
+                    else if (c == '\\')
+                    {
+                        escape = true;
+                    }
+                    else if (c == '"')
+                    {
+                        inString = false;
+                    }
+
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    inString = true;
+                    continue;
+                }
+
+                if (c == '{')
+                {
+                    depth += 1;
+                }
+                else if (c == '}')
+                {
+                    depth -= 1;
+                    if (depth == 0)
+                    {
+                        return json.Substring(i, j - i + 1);
+                    }
+                }
+            }
+
+            return "";
+        }
+
+        return "";
+    }
+
+    /// <summary>Brace-matched JSON array value for key. Rejects suffix matches (classSkillIds vs skillIds).</summary>
+    public static string ExtractArray(string json, string key)
+    {
+        if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key))
+        {
+            return "";
+        }
+
+        var token = "\"" + key + "\":";
+        var searchFrom = 0;
+        while (searchFrom < json.Length)
+        {
+            var idx = json.IndexOf(token, searchFrom);
+            if (idx < 0)
+            {
+                return "";
+            }
+
+            if (idx > 0)
+            {
+                var prev = json[idx - 1];
+                if (char.IsLetterOrDigit(prev) || prev == '_')
+                {
+                    searchFrom = idx + token.Length;
+                    continue;
+                }
+            }
+
+            var i = idx + token.Length;
+            while (i < json.Length && char.IsWhiteSpace(json[i]))
+            {
+                i += 1;
+            }
+
+            if (i >= json.Length || json[i] != '[')
+            {
+                searchFrom = idx + token.Length;
+                continue;
+            }
+
+            var depth = 0;
+            var inString = false;
+            var escape = false;
+            for (var j = i; j < json.Length; j++)
+            {
+                var c = json[j];
+                if (inString)
+                {
+                    if (escape)
+                    {
+                        escape = false;
+                    }
+                    else if (c == '\\')
+                    {
+                        escape = true;
+                    }
+                    else if (c == '"')
+                    {
+                        inString = false;
+                    }
+
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    inString = true;
+                    continue;
+                }
+
+                if (c == '[')
+                {
+                    depth += 1;
+                }
+                else if (c == ']')
+                {
+                    depth -= 1;
+                    if (depth == 0)
+                    {
+                        return json.Substring(i, j - i + 1);
+                    }
+                }
+            }
+
+            return "";
+        }
+
+        return "";
+    }
+
+    public static List<string> ExtractStringArray(string json, string key)
+    {
+        var into = new List<string>();
+        var arr = ExtractArray(json, key);
+        if (string.IsNullOrEmpty(arr))
+        {
+            return into;
+        }
+
+        var cursor = 0;
+        while (cursor < arr.Length)
+        {
+            var a = arr.IndexOf('"', cursor);
+            if (a < 0)
+            {
+                break;
+            }
+
+            var b = a + 1;
+            var escape = false;
+            while (b < arr.Length)
+            {
+                var c = arr[b];
+                if (escape)
+                {
+                    escape = false;
+                    b += 1;
+                    continue;
+                }
+
+                if (c == '\\')
+                {
+                    escape = true;
+                    b += 1;
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    break;
+                }
+
+                b += 1;
+            }
+
+            if (b >= arr.Length)
+            {
+                break;
+            }
+
+            var s = arr.Substring(a + 1, b - a - 1);
+            if (s.Length > 0 && !s.Contains(":"))
+            {
+                into.Add(s);
+            }
+
+            cursor = b + 1;
+        }
+
+        return into;
+    }
+
     public static HashSet<Vector2Int> ParseBlockedTiles(string mapJson)
     {
         var blocked = new HashSet<Vector2Int>();

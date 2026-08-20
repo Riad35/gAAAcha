@@ -17,14 +17,19 @@
     "hitRadius": 0.4,
     "resist": { "wind": 0, "fire": 0, "water": 0, "earth": 0, "holy": 0, "dark": 0 },
     "skillIds": [
-      "auto_attack", "slash", "shot", "mend", "dash", "stun_bolt", "ember_dot", "war_cry",
-      "shove", "pull", "blind_dust", "iron_stance", "shockwave", "power_chant", "haste",
-      "barrier", "ward", "elemental_focus"
+      "auto_attack",
+      "shot",
+      "shockwave",
+      "dash",
+      "rally",
+      "hook_shot",
+      "mend",
+      "decoy"
     ],
     "startingWeaponId": "sword_iron",
-    "startingWeaponIds": ["sword_iron", "dagger_twin", "staff_arcane", "bow_hunter", "gun_spark"],
+    "startingWeaponIds": ["sword_iron", "bow_hunter"],
     "startingSpiritId": null,
-    "startingSpiritIds": ["spirit_ember", "spirit_tide", "spirit_gale"]
+    "startingSpiritIds": []
   },
   {
     "id": "fighter",

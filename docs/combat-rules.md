@@ -4,7 +4,7 @@ Shared rules for **server (TypeScript)** and **client prediction (C#)**.
 Not shared code — both sides implement this document independently.  
 If prediction and authority disagree, **this file is wrong or one side drifted**; fix the drift, don’t paper over it in netcode.
 
-**Status:** Step 1 approved. Decisions locked (see §15). Step 2 = types + session store scaffolding only.
+**Status:** Steps 1–3 live. Decisions locked (see §15). Step 2 = types + session store. Step 3 = `server/src/combat/damage.ts` wired into `combat.ts`.
 
 **Authority:** Server resolves all combat outcomes. Client may predict presentation only; it never finalizes damage, death, gauge fill, or RNG.
 

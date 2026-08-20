@@ -1,13 +1,16 @@
 import { classById, defaultBanner, defaultClass, defaultMap, itemById, mapById, monsters, npcs, skillById, spiritById, weaponById } from "./data.js";
 import { emptyInventory, padInventory, pityFor, pityView, seedStarterInventory } from "./gacha.js";
 import { loadGuest, type GuestSave } from "./persist.js";
-import { applyPendingHit, applyStatusOnHit, entityBlockedAt, hitFromCaster } from "./combat.js";
+import { applyPendingHit, applyStatusOnHit, entityBlockedAt, hitFromCaster, applyIncomingDamageMult } from "./combat.js";
+import { resolveDamage, toCombatElement } from "./combat/damage.js";
+import { loadCombatConfig } from "./combat/config.js";
 import { bindInstanceHooks, resolveBaseMapId, tickInstances } from "./instance.js";
 import { portalsOnMap } from "./portal.js";
 import { noteKill } from "./quest.js";
 import { addItem, removeItem } from "./shop.js";
 import { starterSkillsFor } from "./skills.js";
 import { grantXp } from "./xp.js";
+import { applyKillLoot, killXpFor, lootTableFor, rollKillRewards } from "./loot.js";
 import {
   addThreat,
   clearAllThreat,
@@ -68,16 +71,26 @@ let lastThreatDecayAt = 0;
 let lastMonsterAiAt = 0;
 
 type AiPhase = "idle" | "patrol" | "chase" | "attack" | "return";
-type MonsterAi = { phase: AiPhase; fixateId: string | null; patrolT: number };
+type MonsterAi = { phase: AiPhase; fixateId: string | null; patrolT: number; windupUntil: number };
 const monsterAi = new Map<string, MonsterAi>();
 
 function ensureMonsterAi(id: string): MonsterAi {
   let ai = monsterAi.get(id);
   if (!ai) {
-    ai = { phase: "idle", fixateId: null, patrolT: Math.random() * Math.PI * 2 };
+    ai = { phase: "idle", fixateId: null, patrolT: Math.random() * Math.PI * 2, windupUntil: 0 };
     monsterAi.set(id, ai);
   }
   return ai;
+}
+
+export function isBossMonster(def: { id?: string; monsterType?: string } | undefined): boolean {
+  if (!def) {
+    return false;
+  }
+  const t = def.monsterType ?? "";
+  const id = def.id ?? "";
+  return t === "boss" || t.startsWith("tower_boss") || id.includes("boss") || id.includes("colossus") ||
+    id.includes("warden") || id.includes("apex");
 }
 
 /** Simple priority list per enemy type — MVP, not a utility AI. */
@@ -89,10 +102,25 @@ function monsterSkillPriority(def: MonsterDef): string[] {
     return ["cannon_flame"];
   }
   const t = def.monsterType ?? def.id;
-  if (t.includes("boss") || t.includes("crypt") || t.includes("lord")) {
+  if (isBossMonster(def)) {
     return ["shockwave", "auto"];
   }
   return ["auto"];
+}
+
+function monsterBlockedAt(monster: Entity, nx: number, ny: number): boolean {
+  const map = mapById(resolveBaseMapId(monster.mapId)) ?? defaultMap;
+  if (nx < 0 || ny < 0 || nx > map.width - 1 || ny > map.height - 1) {
+    return true;
+  }
+  const txr = Math.round(nx);
+  const tyr = Math.round(ny);
+  if (map.blocked.some((tile) => tile.x === txr && tile.y === tyr)) {
+    return true;
+  }
+  // Ignore players so chase can enter melee; still blocked by NPCs / solids.
+  const playersIgnore = [...players.values()].map((p) => p.entity.id);
+  return entityBlockedAt(nx, ny, monster, playersIgnore);
 }
 
 function tryMoveMonster(monster: Entity, tx: number, ty: number, step: number): boolean {
@@ -104,27 +132,44 @@ function tryMoveMonster(monster: Entity, tx: number, ty: number, step: number): 
   }
   const ux = dx / dist;
   const uy = dy / dist;
-  const nx = monster.x + ux * Math.min(step, dist);
-  const ny = monster.y + uy * Math.min(step, dist);
-  const map = mapById(resolveBaseMapId(monster.mapId)) ?? defaultMap;
-  if (nx < 0 || ny < 0 || nx > map.width - 1 || ny > map.height - 1) {
-    return false;
+  const limit = Math.min(step, dist);
+  const directX = monster.x + ux * limit;
+  const directY = monster.y + uy * limit;
+  if (!monsterBlockedAt(monster, directX, directY)) {
+    monster.x = directX;
+    monster.y = directY;
+    return true;
   }
-  const txr = Math.round(nx);
-  const tyr = Math.round(ny);
-  if (map.blocked.some((tile) => tile.x === txr && tile.y === tyr)) {
-    return false;
+  const xOnly = monster.x + ux * limit;
+  const xOnlyOpen = Math.abs(dx) > 0.05 && !monsterBlockedAt(monster, xOnly, monster.y);
+  if (xOnlyOpen) {
+    monster.x = xOnly;
+    return true;
   }
-  // Allow closing to melee: ignore player overlap slightly by checking only solid blocks.
-  // Still block hard overlaps with NPCs / other non-monster entities via entityBlockedAt,
-  // but ignore players so chase can enter attack range.
-  const playersIgnore = [...players.values()].map((p) => p.entity.id);
-  if (entityBlockedAt(nx, ny, monster, playersIgnore)) {
-    return false;
+  const yOnly = monster.y + uy * limit;
+  const yOnlyOpen = Math.abs(dy) > 0.05 && !monsterBlockedAt(monster, monster.x, yOnly);
+  // Only slide on Y when we are not blocked on X (otherwise we step back into the wall).
+  if (yOnlyOpen && Math.abs(dx) <= 0.05) {
+    monster.y = yOnly;
+    return true;
   }
-  monster.x = nx;
-  monster.y = ny;
-  return true;
+  const perps: Array<[number, number]> = [
+    [monster.x - uy * limit, monster.y + ux * limit],
+    [monster.x + uy * limit, monster.y - ux * limit],
+  ];
+  perps.sort((a, b) => {
+    const aNext = !monsterBlockedAt(monster, a[0] + Math.sign(dx) * limit, a[1]) ? 1 : 0;
+    const bNext = !monsterBlockedAt(monster, b[0] + Math.sign(dx) * limit, b[1]) ? 1 : 0;
+    return bNext - aNext;
+  });
+  for (const [nx, ny] of perps) {
+    if (!monsterBlockedAt(monster, nx, ny)) {
+      monster.x = nx;
+      monster.y = ny;
+      return true;
+    }
+  }
+  return false;
 }
 
 const zeroResist = (): ResistMap => ({
@@ -296,21 +341,13 @@ function applySave(session: PlayerSession, save: GuestSave): void {
   if (Array.isArray(save.unlockedSkillIds) && save.unlockedSkillIds.length) {
     session.unlockedSkillIds = save.unlockedSkillIds;
   }
-  // Keep adventurer gray-box kit complete even on older saves.
-  if ((session.classId || "adventurer") === "adventurer") {
-    const full = starterSkillsFor("adventurer");
-    for (const id of full) {
-      if (!session.unlockedSkillIds.includes(id)) {
-        session.unlockedSkillIds.push(id);
-      }
-    }
-  }
   session.equippedArmorId = save.equippedArmorId ?? null;
   session.equippedHelmId = save.equippedHelmId ?? null;
   session.equippedBootsId = save.equippedBootsId ?? null;
   session.equippedGlovesId = save.equippedGlovesId ?? null;
   session.equippedAccessoryId = save.equippedAccessoryId ?? null;
   session.classCardId = save.classCardId ?? null;
+  session.equippedSkinId = save.equippedSkinId ?? null;
   session.towerClearedFloor = save.towerClearedFloor ?? 0;
   session.switchFlags = save.switchFlags ?? {};
   session.friends = Array.isArray(save.friends)
@@ -396,7 +433,8 @@ export function spawnPlayer(guestToken = "", opts?: { slotIndex?: number; enterW
     statuses: [],
     weaponIds: [...defaultClass.startingWeaponIds],
     equippedWeaponId: defaultClass.startingWeaponId,
-    equippedWeapon2Id: null,
+    equippedWeapon2Id:
+      defaultClass.startingWeaponIds.find((id) => id !== defaultClass.startingWeaponId) ?? null,
     spiritIds: [...defaultClass.startingSpiritIds],
     equippedSpiritId: defaultClass.startingSpiritId,
     moveLockUntil: 0,
@@ -410,7 +448,7 @@ export function spawnPlayer(guestToken = "", opts?: { slotIndex?: number; enterW
     completedQuestIds: [],
     charNameSet: false,
     homestoneReadyAt: 0,
-    unlockedSkillIds: [...defaultClass.skillIds],
+    unlockedSkillIds: starterSkillsFor(defaultClass.id),
     skillPoints: 0,
     level: 1,
     xp: 0,
@@ -421,6 +459,7 @@ export function spawnPlayer(guestToken = "", opts?: { slotIndex?: number; enterW
     equippedAccessoryId: null,
     friends: [],
     classCardId: null,
+    equippedSkinId: null,
     towerClearedFloor: 0,
     switchFlags: {},
     inWorld: enterWorld,
@@ -445,9 +484,25 @@ export function spawnPlayer(guestToken = "", opts?: { slotIndex?: number; enterW
   if (session.entity.hp <= 0) {
     respawnAtHome(session);
   }
+  ensureSecondaryWeapon(session);
   applyGearStats(session);
   players.set(entity.id, session);
   return session;
+}
+
+function ensureSecondaryWeapon(session: PlayerSession): void {
+  if (session.equippedWeapon2Id && weaponById(session.equippedWeapon2Id)) {
+    return;
+  }
+  const cls = classById(session.classId) ?? defaultClass;
+  const sec = cls.startingWeaponIds.find((id) => id !== session.equippedWeaponId);
+  if (!sec || !weaponById(sec)) {
+    return;
+  }
+  if (!session.weaponIds.includes(sec)) {
+    session.weaponIds.push(sec);
+  }
+  session.equippedWeapon2Id = sec;
 }
 
 /** Class base + gear resists only. Weapon atk/magic bonuses applied once in combat. */
@@ -583,6 +638,10 @@ export function equipGear(
   if (!item || item.kind !== "armor" || item.slot !== slot) {
     return { type: "error", code: "bad_gear", message: "Wrong gear slot" };
   }
+  const need = item.levelReq ?? 1;
+  if (session.level < need) {
+    return { type: "error", code: "level_too_low", message: `Need level ${need}` };
+  }
   if (!session.inventory.some((s) => s.itemId === itemId && s.quantity > 0)) {
     return { type: "error", code: "missing_item", message: "Not in inventory" };
   }
@@ -602,7 +661,8 @@ export function currentPityView(session: PlayerSession): PityView {
 }
 
 export function cooldownSnapshot(session: PlayerSession): CooldownEntry[] {
-  return defaultClass.skillIds.map((id) => {
+  const cls = classById(session.classId) ?? defaultClass;
+  return cls.skillIds.map((id) => {
     const skill = skillById(id);
     return {
       id,
@@ -667,6 +727,53 @@ export function spawnProjectileFromCast(
   };
 }
 
+function distPointToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const len2 = abx * abx + aby * aby;
+  if (len2 < 1e-8) {
+    return Math.hypot(px - ax, py - ay);
+  }
+  const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / len2));
+  return Math.hypot(px - (ax + t * abx), py - (ay + t * aby));
+}
+
+/** Match client sprite scale so skillshots connect on the visible body, not only the feet origin. */
+export function projectileCatchRadius(entity: Entity): number {
+  const base = entity.hitRadius > 0 ? entity.hitRadius : 0.4;
+  const id = entity.id ?? "";
+  let scale = 2.2;
+  if (id.includes("king")) {
+    scale = 3.45;
+  } else if (id.includes("ruins") || id.includes("colossus") || id.includes("apex") || id.includes("m_boss_f5")) {
+    scale = 2.15;
+  } else if (id.includes("boss") || id.includes("warden") || id.includes("crypt_lord")) {
+    scale = 1.75;
+  }
+  return Math.max(base, scale * 0.5);
+}
+
+function reapDeadMonsters(now: number): ServerMessage[] {
+  const out: ServerMessage[] = [];
+  const aliveIds = new Set(
+    [...players.values()].filter((s) => s.entity.hp > 0).map((s) => s.entity.id),
+  );
+  for (const [id, monster] of [...liveMonsters.entries()]) {
+    if (monster.hp > 0 || isImmortalMonster(id)) {
+      continue;
+    }
+    const mapId = monster.mapId;
+    const topId = topThreatId(id, aliveIds, 1);
+    out.push(...killMonster(id, now));
+    const killer = (topId ? players.get(topId) : undefined) ??
+      [...players.values()].find((p) => p.entity.mapId === mapId && p.entity.hp > 0);
+    if (killer) {
+      out.push(...onMonsterKilledBy(killer, id));
+    }
+  }
+  return out;
+}
+
 export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
   const out: ServerMessage[] = [];
   for (const [id, proj] of [...liveProjectiles.entries()]) {
@@ -674,6 +781,8 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
     const directional = proj.vx != null && proj.vy != null && (proj.maxRange ?? 0) > 0;
 
     if (directional) {
+      const ox = proj.x;
+      const oy = proj.y;
       const nx = proj.x + proj.vx! * step;
       const ny = proj.y + proj.vy! * step;
       proj.traveled = (proj.traveled ?? 0) + step;
@@ -688,11 +797,12 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
         if (entity.id === proj.casterId || entity.hp <= 0) {
           continue;
         }
-        if (entity.kind === "player" && !players.has(entity.id)) {
+        const caster = players.get(proj.casterId);
+        if (caster && entity.mapId !== caster.entity.mapId) {
           continue;
         }
-        const d = Math.hypot(entity.x - proj.x, entity.y - proj.y);
-        if (d <= halfW + (entity.hitRadius || 0.4)) {
+        const d = distPointToSegment(entity.x, entity.y, ox, oy, nx, ny);
+        if (d <= halfW + projectileCatchRadius(entity)) {
           const along = proj.traveled ?? 0;
           if (along < bestAlong) {
             bestAlong = along;
@@ -713,6 +823,10 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
             hpAfter: hit.hpAfter,
             mpAfter: proj.mpAfter,
             crit: hit.crit,
+            element: hit.element,
+            missed: hit.missed,
+            advantage: hit.advantage,
+            resistHint: hit.resistHint,
           });
           const threat = notePlayerDamageThreat(proj.casterId, hit.targetId, hit.damage, now);
           if (threat) {
@@ -765,7 +879,7 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
     const dx = target.x - proj.x;
     const dy = target.y - proj.y;
     const dist = Math.hypot(dx, dy);
-    const hitDist = (target.hitRadius || 0.4) + 0.15;
+    const hitDist = projectileCatchRadius(target) + 0.15;
 
     if (dist <= hitDist || dist <= step) {
       proj.x = target.x;
@@ -885,7 +999,7 @@ export function createCharacter(
   session.skillPoints = 1;
   session.weaponIds = [...cls.startingWeaponIds];
   session.equippedWeaponId = cls.startingWeaponId;
-  session.equippedWeapon2Id = null;
+  session.equippedWeapon2Id = cls.startingWeaponIds.find((id) => id !== cls.startingWeaponId) ?? null;
   session.classCardId = null;
   session.spiritIds = [...cls.startingSpiritIds];
   session.equippedSpiritId = cls.startingSpiritId;
@@ -912,6 +1026,15 @@ export function createCharacter(
 }
 
 export function changeClass(session: PlayerSession, classId: string, cardItemId?: string): { error?: ServerMessage } {
+  if (session.level < 20) {
+    return {
+      error: {
+        type: "error",
+        code: "level_too_low",
+        message: "Class change unlocks at level 20",
+      },
+    };
+  }
   const cls = classById(classId);
   if (!cls || cls.id === "adventurer") {
     return { error: { type: "error", code: "bad_class", message: "Invalid class card" } };
@@ -1008,8 +1131,8 @@ export function onMonsterKilledBy(session: PlayerSession, entityId: string): Ser
   const now = Date.now();
   const lootTo = resolveLootRecipient(session, entityId, now);
   const out: ServerMessage[] = [
-    grantKillLoot(lootTo),
-    ...grantXp(session, def?.monsterType === "boss" || def?.monsterType?.startsWith("tower_boss") ? 80 : 18, applyGearStats),
+    grantKillLoot(lootTo, def?.monsterType ?? "default"),
+    ...grantXp(session, killXpFor(def?.monsterType ?? "default"), applyGearStats),
   ];
   if (def?.monsterType) {
     const q = noteKill(session, def.monsterType);
@@ -1027,20 +1150,12 @@ export function onMonsterKilledBy(session: PlayerSession, entityId: string): Ser
   return out;
 }
 
-export function grantKillLoot(session: PlayerSession): ServerMessage {
-  const goldGain = 5;
-  session.gold += goldGain;
-  const slot = session.inventory.find((s) => s.itemId === "item_dust")
-    ?? session.inventory.find((s) => s.itemId === null);
-  if (slot) {
-    if (slot.itemId === null) {
-      slot.itemId = "item_dust";
-      slot.quantity = 1;
-    } else {
-      slot.quantity += 1;
-    }
-  }
-  return { type: "sync_loot", itemId: "item_dust", quantity: 1, inventory: session.inventory, gold: session.gold };
+export function grantKillLoot(
+  session: PlayerSession,
+  monsterType = "slime",
+  rng: () => number = Math.random,
+): ServerMessage {
+  return applyKillLoot(session, rollKillRewards(lootTableFor(monsterType), rng));
 }
 
 function tickDots(now: number): ServerMessage[] {
@@ -1171,23 +1286,25 @@ function tickHazards(now: number): ServerMessage[] {
       maxMp: session.entity.maxMp,
     });
     if (session.entity.hp <= 0) {
-      respawnAtHome(session);
       out.push({
-        type: "sync_vitals",
+        type: "sync_death",
         entityId: session.entity.id,
-        hp: session.entity.hp,
-        maxHp: session.entity.maxHp,
-        mp: session.entity.mp,
-        maxMp: session.entity.maxMp,
+        homeMapId: session.homeMapId,
+        homeX: session.homeX,
+        homeY: session.homeY,
       });
-      out.push({ type: "sync_move", entityId: session.entity.id, x: session.entity.x, y: session.entity.y });
     }
   }
   return out;
 }
 
 export function tickWorld(now: number): ServerMessage[] {
-  const out: ServerMessage[] = [...tickDots(now), ...tickRegen(now), ...tickHazards(now)];
+  const out: ServerMessage[] = [
+    ...tickDots(now),
+    ...tickRegen(now),
+    ...tickHazards(now),
+    ...reapDeadMonsters(now),
+  ];
   tickInstances(now);
 
   if (lastThreatDecayAt > 0) {
@@ -1254,6 +1371,7 @@ export function tickWorld(now: number): ServerMessage[] {
       clearThreat(id);
       ai.phase = "return";
       ai.fixateId = null;
+      ai.windupUntil = 0;
       monsterAggro.set(id, null);
     }
 
@@ -1337,8 +1455,7 @@ export function tickWorld(now: number): ServerMessage[] {
       continue;
     }
 
-    const typeHint = def.monsterType ?? def.id;
-    if ((typeHint.includes("boss") || typeHint.includes("crypt") || typeHint.includes("lord")) && !ai.fixateId) {
+    if (isBossMonster(def) && !ai.fixateId) {
       ai.fixateId = aggroId;
     }
 
@@ -1348,6 +1465,7 @@ export function tickWorld(now: number): ServerMessage[] {
 
     if (dist > hitRange) {
       ai.phase = "chase";
+      ai.windupUntil = 0;
       if (tryMoveMonster(monster, target.entity.x, target.entity.y, moveStep)) {
         out.push({ type: "sync_move", entityId: id, x: monster.x, y: monster.y });
       }
@@ -1360,8 +1478,55 @@ export function tickWorld(now: number): ServerMessage[] {
       continue;
     }
 
+    if (isBossMonster(def) && ai.windupUntil === 0) {
+      const windup = def.id.includes("ruins") || def.monsterType === "tower_boss_f5" ? 900 : 700;
+      const radius = def.id.includes("ruins") || def.monsterType === "tower_boss_f5" ? 2.2 : 1.7;
+      ai.windupUntil = now + windup;
+      out.push({
+        type: "sync_fx",
+        kind: "telegraph",
+        entityId: id,
+        x: target.entity.x,
+        y: target.entity.y,
+        radius,
+        durationMs: windup,
+      });
+      continue;
+    }
+    if (isBossMonster(def) && now < ai.windupUntil) {
+      continue;
+    }
+    ai.windupUntil = 0;
+
     const pick = priority[0]!;
-    const damage = Math.max(1, monster.atk - target.entity.def);
+    const resolved = resolveDamage({
+      attacker: {
+        atk: monster.atk,
+        matk: monster.magicAtk,
+        critRate: monster.critChance,
+        critDamage: monster.critDamage,
+        hitRate: 1,
+      },
+      defender: {
+        def: target.entity.def,
+        mdef: target.entity.magicResist,
+        dodgeRate: 0,
+        elementalResist: {
+          [toCombatElement(monster.element)]: (target.entity.resist?.[monster.element ?? "earth"] ?? 0) / 100,
+        },
+        element: toCombatElement(target.entity.element),
+      },
+      skill: {
+        damageType: "physical",
+        baseDamageMultiplier: 1,
+        flatDamage: 0,
+        element: toCombatElement(monster.element),
+      },
+      config: loadCombatConfig(),
+      rng: Math.random,
+    });
+    let damage = resolved.missed ? 0 : resolved.damage;
+    damage = applyIncomingDamageMult(target, damage, now);
     target.entity.hp = Math.max(0, target.entity.hp - damage);
     addThreat(id, target.entity.id, Math.min(8, Math.max(2, Math.floor(damage / 2))));
     monsterAttackReady.set(id, now + def.attackMs);
@@ -1376,9 +1541,13 @@ export function tickWorld(now: number): ServerMessage[] {
       damage,
       hpAfter: target.entity.hp,
       mpAfter: target.entity.mp,
+      crit: resolved.crit,
+      element: monster.element,
+      missed: resolved.missed,
+      advantage: resolved.advantage,
+      resistHint: resolved.resistHint,
     });
     if (target.entity.hp <= 0) {
-      respawnAtHome(target);
       out.push({
         type: "sync_vitals",
         entityId: target.entity.id,
@@ -1387,7 +1556,13 @@ export function tickWorld(now: number): ServerMessage[] {
         mp: target.entity.mp,
         maxMp: target.entity.maxMp,
       });
-      out.push({ type: "sync_move", entityId: target.entity.id, x: target.entity.x, y: target.entity.y });
+      out.push({
+        type: "sync_death",
+        entityId: target.entity.id,
+        homeMapId: target.homeMapId,
+        homeX: target.homeX,
+        homeY: target.homeY,
+      });
     } else {
       out.push({
         type: "sync_vitals",
@@ -1455,7 +1630,7 @@ export function notePlayerDamageThreat(
 export function checkBossPhase(monsterId: string): ServerMessage[] {
   const monster = liveMonsters.get(monsterId);
   const def = monsterMeta.get(monsterId);
-  if (!monster || !def || def.monsterType !== "boss" || monster.maxHp <= 0) {
+  if (!monster || !def || !isBossMonster(def) || monster.maxHp <= 0) {
     return [];
   }
   const ratio = monster.hp / monster.maxHp;

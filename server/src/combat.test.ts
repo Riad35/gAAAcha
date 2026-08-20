@@ -9,8 +9,11 @@ import {
   monsterStatuses,
   players,
   resetWorld,
-  spawnPlayer,
+  spawnPlayer as spawnPlayerRaw,
+  spawnProjectileFromCast,
+  tickProjectiles,
 } from "./world.js";
+import type { PlayerSession } from "./types.js";
 
 bindCombatWorld(
   findEntity,
@@ -21,6 +24,13 @@ bindCombatWorld(
   },
   () => [...liveMonsters.values()].filter((monster) => monster.hp > 0),
 );
+
+/** Combat suites exercise legacy + class skills — disable Adventurer lock gate. */
+function spawnPlayer(id?: string): PlayerSession {
+  const player = spawnPlayerRaw(id ?? "combat_p", { save: null });
+  player.unlockedSkillIds = [];
+  return player;
+}
 
 function freshPlayer() {
   resetWorld();
@@ -293,13 +303,15 @@ test("two monsters can overlap; two players cannot", () => {
   assert.equal(entityBlockedAt(20, 10, slime), false);
 });
 
-test("starter inventory contains weapons spirits and items", () => {
+test("starter inventory is sword bow ration dust", () => {
   const player = freshPlayer();
   const ids = player.inventory.filter((s) => s.itemId).map((s) => s.itemId);
   assert.ok(ids.includes("sword_iron"));
-  assert.ok(ids.includes("spirit_ember"));
+  assert.ok(ids.includes("bow_hunter"));
   assert.ok(ids.includes("item_dust"));
-  assert.ok(ids.includes("char_aurel"));
+  assert.ok(ids.includes("item_ration"));
+  assert.ok(!ids.includes("spirit_ember"));
+  assert.ok(!ids.includes("char_aurel"));
 });
 
 test("ranged shot returns a directional projectile", () => {
@@ -382,6 +394,44 @@ test("staff auto-attack scales magic and sword scales atk", () => {
   assert.notEqual(afterSword, 200);
 });
 
+test("linear shot hits a sprite-sized offset from the aim line", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  player.entity.x = 6;
+  player.entity.y = 10;
+  slime.x = 8;
+  slime.y = 11.15;
+  slime.hp = 80;
+  slime.maxHp = 80;
+  const now = Date.now();
+  const cast = validateCast(player, "shot", "", now, { aimDx: 1, aimDy: 0 });
+  assert.ok("ok" in cast);
+  assert.ok(cast.projectile);
+  spawnProjectileFromCast(player.entity, cast.projectile, cast.mpAfter);
+  tickProjectiles(now, 0.5);
+  assert.ok(slime.hp < 80);
+});
+
+test("linear shot hits when the projectile tick steps past the target", () => {
+  const player = freshPlayer();
+  const slime = liveMonsters.get("monster_slime_1");
+  assert.ok(slime);
+  player.entity.x = 6;
+  player.entity.y = 10;
+  slime.x = 8;
+  slime.y = 10;
+  slime.hp = 80;
+  slime.maxHp = 80;
+  const now = Date.now();
+  const cast = validateCast(player, "shot", "", now, { aimDx: 1, aimDy: 0 });
+  assert.ok("ok" in cast);
+  assert.ok(cast.projectile);
+  spawnProjectileFromCast(player.entity, cast.projectile, cast.mpAfter);
+  tickProjectiles(now, 0.5);
+  assert.ok(slime.hp < 80);
+});
+
 test("spirit boosts elemental damage vs matching element", () => {
   const player = freshPlayer();
   const slime = liveMonsters.get("monster_slime_1");
@@ -391,6 +441,7 @@ test("spirit boosts elemental damage vs matching element", () => {
   slime.hp = 500;
   slime.maxHp = 500;
   slime.resist.fire = 0;
+  player.entity.critChance = 0;
   equipWeapon(player, "gun_spark");
   equipSpirit(player, null);
   const base = validateCast(player, "auto_attack", "monster_slime_1", Date.now());
