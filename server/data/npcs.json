@@ -50,6 +50,28 @@
     "interact": "trainer"
   },
   {
+    "id": "npc_class_master",
+    "name": "Class Master",
+    "mapId": "town_ashen",
+    "x": 16,
+    "y": 9,
+    "hitRadius": 0.4,
+    "line": "At level 20, choose Fighter, Archer, Mage, or Rogue. This cannot be undone.",
+    "interact": "class_change",
+    "sprite": "player_idle"
+  },
+  {
+    "id": "npc_specialist",
+    "name": "Specialist Wren",
+    "mapId": "town_ashen",
+    "x": 18,
+    "y": 12,
+    "hitRadius": 0.4,
+    "line": "From level 30, walk a specialist path. Equip the item, then Transform.",
+    "interact": "subclass",
+    "sprite": "player_idle"
+  },
+  {
     "id": "npc_quest_mira",
     "name": "Sister Mira",
     "mapId": "town_ashen",
@@ -116,7 +138,7 @@
     "x": 15,
     "y": 7,
     "hitRadius": 0.4,
-    "line": "Class cards from the banner, or 500g here if you would rather buy one.",
+    "line": "The banner still sells portraits and gear. Classes are chosen at the Class Master.",
     "interact": "shop_item"
   },
   {

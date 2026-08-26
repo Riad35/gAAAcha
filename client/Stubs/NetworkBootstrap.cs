@@ -14,9 +14,19 @@ public sealed class NetworkBootstrap : MonoBehaviour
         "auto_attack", "shot", "shockwave", "dash", "rally", "hook_shot", "mend", "decoy",
     };
 
+    private static readonly string[] DebugClassIds =
+    {
+        "adventurer", "fighter", "marksman", "mage", "rogue",
+    };
+
+    private static readonly string[] DebugClassLabels =
+    {
+        "Adv", "Fgt", "Arc", "Mage", "Rog",
+    };
+
     private static readonly HashSet<string> NoTargetSkills = new HashSet<string>
     {
-        "mend", "dash", "rally", "decoy",
+        "dash", "decoy", "rest", "powerup", "war_cry", "iron_stance", "haste", "ward", "power_chant",
     };
 
     private enum AimKind
@@ -41,19 +51,34 @@ public sealed class NetworkBootstrap : MonoBehaviour
         { "stun_bolt", new AimDef { Kind = AimKind.Linear, Range = 4f, Width = 0.7f } },
         { "blind_dust", new AimDef { Kind = AimKind.Cone, Range = 3.5f, AngleDeg = 60f } },
         { "shockwave", new AimDef { Kind = AimKind.Ground, Range = 3.5f, AoeRadius = 2.5f } },
+        { "cleave", new AimDef { Kind = AimKind.Ground, Range = 2.2f, AoeRadius = 2.4f } },
+        { "arrow_rain", new AimDef { Kind = AimKind.Ground, Range = 5f, AoeRadius = 2.8f } },
+        { "arcane_nova", new AimDef { Kind = AimKind.Ground, Range = 4f, AoeRadius = 2.6f } },
+        { "thunderstorm", new AimDef { Kind = AimKind.Ground, Range = 5f, AoeRadius = 3.2f } },
+        { "explosion", new AimDef { Kind = AimKind.Ground, Range = 4.5f, AoeRadius = 3.4f } },
+        { "knife_fan", new AimDef { Kind = AimKind.Cone, Range = 3.2f, AngleDeg = 70f } },
     };
 
     /// <summary>Client skill cast ranges (must match server skills.json; AA uses weapon).</summary>
     private static readonly Dictionary<string, float> SkillRanges = new Dictionary<string, float>
     {
         { "auto_attack", 0f },
+        { "auto_attack_off", 0f },
         { "shot", 5f },
         { "shockwave", 3.5f },
         { "dash", 3f },
         { "rally", 0f },
         { "hook_shot", 4.5f },
-        { "mend", 0f },
+        { "mend", 5f },
         { "decoy", 0f },
+        { "rest", 0f },
+        { "powerup", 0f },
+        { "cleave", 2.2f },
+        { "arrow_rain", 5f },
+        { "arcane_nova", 4f },
+        { "thunderstorm", 5f },
+        { "explosion", 4.5f },
+        { "knife_fan", 3.2f },
         // Legacy / other classes (still castable if unlocked)
         { "slash", 1.5f },
         { "stun_bolt", 4f },
@@ -68,6 +93,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         { "barrier", 0f },
         { "ward", 0f },
         { "elemental_focus", 0f },
+        { "group_chant", 0f },
+        { "ally_mend", 5f },
+        { "target_burst", 4f },
     };
 
     private static readonly string[] ChatTabs = { "world", "server", "guild", "party", "map" };
@@ -81,7 +109,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private VirtualJoystick _joystick;
     private float _x = 3f;
     private float _y = 10f;
-    private float _moveSpeed = 6f;
+    private float _moveSpeed = 3.6f;
     private float _moveSpeedMult = 1f;
     private float _lastGoodX = 3f;
     private float _lastGoodY = 10f;
@@ -98,6 +126,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private int _spiritIndex = -1;
     private string _spirit = "none";
     private float _weaponRange = 1.5f;
+    private float _weapon2Range = 1.5f;
     private string _element = "earth";
     private float _moveLockUntil;
     private int _hp = 100;
@@ -124,13 +153,13 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private int _tutorialStep = -1;
     private static readonly string[] TutorialTips =
     {
-        "Move: WASD or click the ground.",
-        "Tab cycles lock-on. Locked enemies get a red outline.",
-        "Space is Auto Attack. 1–7 are your 8 Adventurer skills (Shot is 1).",
-        "I opens inventory. RMB uses or equips an item.",
-        "J is the quest log. Sister Mira starts the path to a class card.",
-        "Homestone is in your bag. Use it, or talk to the stone in town.",
-        "G opens the banner (pity is there). Class cards unlock at level 20.",
+        "Move: WASD or RMB-path the ground. Minimap wheel zooms; RMB on minimap/M routes. MMB-drag yaw.",
+        "Tab cycles living foes. Shift+Tab clears the lock. Click a player for an ally (blue).",
+        "Space is primary Auto Attack (sticky). Z is offhand AA (sticky). Rest sits and heals.",
+        "I is inventory: drag items, paperdoll slots, RMB equip/unequip. Class toggle is there.",
+        "J is the quest log. M opens the full map (minimap sits top-right). Sister Mira in town starts the class path.",
+        "Homestone is in your bag, or talk to the standing stone in town.",
+        "G opens the banner (pity is there). Class cards unlock at level 10.",
     };
     private readonly Dictionary<string, int> _unlockLevels = new Dictionary<string, int>();
     private string _status = "starting…";
@@ -142,10 +171,18 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private string _castSkillId = "";
     private string _castLabel = "";
     private float _castUntil;
+    private float _castCommitUntil;
     private float _castDur = 0.35f;
+    /// <summary>Windup + hit. Remainder is recovery and can be cancelled by movement.</summary>
+    private const float CastHitFrac = 0.5f;
     private string _hoverSkillId = "";
     private readonly List<BuffView> _buffs = new List<BuffView>();
     private double _serverSkewMs;
+    private bool _hasServerCond;
+    private bool _canMove = true;
+    private bool _canAct = true;
+    private float _pingAcc;
+    private int _moveAckSeq;
     private string[] _skillIds = ClassSkills;
     private bool _showInventory = false;
     private const int InvSize = 144;
@@ -153,13 +190,34 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private readonly string[] _invSlots = new string[InvSize];
     private readonly int[] _invQty = new int[InvSize];
     private Vector2 _invPanelPos = new Vector2(-1f, -1f);
+    private bool _invPosReady;
     private bool _invDragging;
     private Vector2 _invDragOffset;
+    private bool _itemDragging;
+    private int _itemDragFrom = -1;
+    private string _itemDragEquip = "";
+    private string _itemDragId = "";
+    private int _itemDragQty = 1;
+    private bool _stickyAutoAttack;
+    private string _stickyAttackSkill = "auto_attack";
+    private int _debugClassIndex;
+    private Vector2 _eqPanelPos = new Vector2(-1f, -1f);
+    private bool _eqPosReady;
+    private bool _eqDragging;
+    private Vector2 _eqDragOffset;
+    private string _hoverItemTip = "";
     private string _armor = "none";
     private string _helm = "none";
     private string _boots = "none";
     private string _gloves = "none";
     private string _accessory = "none";
+    private string _amulet = "none";
+    private string _ring1 = "none";
+    private string _ring2 = "none";
+    private string _subclass = "";
+    private readonly Dictionary<string, int> _enhanceLevels = new Dictionary<string, int>();
+    private bool _transformed;
+    private string _classPickPending = "";
     private string _playerLabel = "You";
     private int _resPresetIndex;
     private static readonly Vector2Int[] ResPresets =
@@ -190,6 +248,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     // Item tooltip
     private string _itemTooltip = "";
+    private bool _showHelp;
+    private bool _showFullMap;
 
     // Chat
     private readonly Dictionary<string, List<string>> _chatLogs = new Dictionary<string, List<string>>();
@@ -234,6 +294,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private string _tradeOfferSummary = "";
     private bool _showFriends;
     private bool _showSettings;
+    private bool _musicOn = true;
     private readonly List<string> _friendNames = new List<string>();
     private readonly List<string> _friendTokens = new List<string>();
     private readonly List<bool> _friendOnline = new List<bool>();
@@ -292,6 +353,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private string _interactKind = "";
     private string _interactLine = "";
     private string _interactTargetId = "";
+    private string _interactNpcName = "";
+    private string _pendingTalkId = "";
+    private bool _showNpcDialog;
+    private bool _showShopBuy;
+    private bool _showShopSell;
+    private bool _showClassService;
+    private bool _showEnhance;
+    private const float NpcTalkRange = 2.2f;
     private string _shopId = "";
     private readonly List<string> _shopItemIds = new List<string>();
     private readonly List<int> _shopBuyPrices = new List<int>();
@@ -317,6 +386,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
         public int ManaCost;
         public int WeaponSlot;
         public float CastSec;
+        public string TargetingType;
+        public string Affects;
+        public string AoeOrigin;
+        public float Range;
+        public float AoeRadius;
     }
 
     private struct BuffView
@@ -346,6 +420,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         SeedDefaultSkillHud();
+        SoundCatalog.Ensure();
+        UiChrome.Ensure();
 
         for (var i = 0; i < ChatTabs.Length; i++)
         {
@@ -357,6 +433,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _inWorld = false;
         _uiScale = Mathf.Clamp(PlayerPrefs.GetFloat("gaaacha_ui_scale", 1f), 0.8f, 1.4f);
         _resPresetIndex = PlayerPrefs.GetInt("gaaacha_res_preset", 2);
+        _musicOn = PlayerPrefs.GetInt("gaaacha_music", 1) == 1;
+        SoundCatalog.SetMusicEnabled(_musicOn);
         for (var i = 0; i < 8; i++)
         {
             _charEmpty[i] = true;
@@ -394,10 +472,58 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private bool _clickMoveActive;
     private float _clickMoveX;
     private float _clickMoveY;
+    private readonly List<Vector2> _route = new List<Vector2>(64);
+    private int _routeI;
+    private float _repathAt;
+    private int _minimapRadius = 24;
+    private Rect _minimapArea;
+    private float _minimapCell = 5f;
+    private Rect _fullMapArea;
+    private float _fullMapCell = 4f;
+    private readonly List<GrayBoxWorld.MinimapMark> _minimapMarks = new List<GrayBoxWorld.MinimapMark>(64);
     private string _pendingSkillId = "";
     private string _pendingSkillTarget = "";
     private float _pendingSkillRange;
     private float _pendingSkillUntil;
+    private string _queuedSkillId = "";
+
+    private bool IsStunned()
+    {
+        var now = Time.realtimeSinceStartup;
+        for (var i = 0; i < _buffs.Count; i++)
+        {
+            if (_buffs[i].Kind == "stun" && _buffs[i].UntilLocal > now)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsCasting => Time.time < _castUntil && !string.IsNullOrEmpty(_castSkillId);
+
+    private bool CanMoveCancelCast => IsCasting && Time.time >= _castCommitUntil;
+
+    private bool IsActionLocked => _hp <= 0 || _showDeath || ActLockedNow || IsCasting;
+
+    private bool MoveLockedNow =>
+        _hasServerCond ? !_canMove : (Time.time < _moveLockUntil || IsStunned());
+
+    private bool ActLockedNow =>
+        _hasServerCond ? !_canAct : IsStunned();
+
+    private void FlushQueuedSkill()
+    {
+        if (IsActionLocked || string.IsNullOrEmpty(_queuedSkillId))
+        {
+            return;
+        }
+
+        var id = _queuedSkillId;
+        _queuedSkillId = "";
+        CastSkill(id);
+    }
 
     private void Update()
     {
@@ -405,6 +531,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             HandlePacket(json);
         }
+
+        TickHeartbeat();
 
         if (_gatePhase < 3 || !_inWorld)
         {
@@ -414,13 +542,15 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _joystick?.Tick();
         TickAiming();
         TickPendingSkillChase();
+        TickStickyAutoAttack();
+        FlushQueuedSkill();
         HandleContinuousMove();
         TryAutoPortal();
         HandleActionKeys();
         TrySkillBarClicks();
-        TryInventoryClicks();
         TryWorldTargetClicks();
         TryWorldMoveClicks();
+        TickMinimapZoom();
         TryContextMenuOpen();
         TryContextMenuClicks();
         TryChat();
@@ -459,6 +589,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void OnGuiScaled()
     {
+        UiChrome.ApplyGuiSkin();
         if (_gatePhase < 3 || !_inWorld)
         {
             DrawGate();
@@ -466,6 +597,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         DrawHud();
+        DrawMinimapHud();
         DrawInventory();
         DrawSkillBar();
         DrawCastBar();
@@ -484,6 +616,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         DrawGachaPanel();
         DrawDeathPanel();
         DrawClassChangePanel();
+        DrawHelpPanel();
         DrawTutorialTips();
         DrawSkillTreePanel();
         DrawAuctionPanel();
@@ -492,6 +625,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
         DrawLoginPanel();
         DrawCharCreate();
         DrawInteractPanel();
+        DrawNpcDialog();
+        DrawShopBuyPanel();
+        DrawShopSellPanel();
+        DrawClassServicePanel();
+        DrawEnhancePanel();
         DrawQuestLog();
         DrawQuestTracker();
         DrawToast();
@@ -502,6 +640,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _world.DrawOverlays();
         }
 
+        DrawFullMapOverlay();
         DrawLoadingScreen();
     }
 
@@ -517,21 +656,50 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _status = string.IsNullOrEmpty(msg)
                 ? ("error " + code)
                 : (code + ": " + msg);
+            if (!_inWorld || _gatePhase < 3)
+            {
+                _authStatus = string.IsNullOrEmpty(msg) ? code : msg;
+                if (code == "db_offline")
+                {
+                    _authStatus = "No DATABASE_URL — continue as Guest. Login is optional.";
+                }
+            }
 
-            // Snap predicted pos back to last server-acked coords on move rejects.
-            if (code == "blocked" || code == "too_fast" || code == "blocked_entity" ||
-                code == "move_locked" || code == "rate_limited")
+            // Snap only when a wall/entity/shove actually stopped us. too_fast is clamped
+            // on the server — snapping here is what made walking feel laggy.
+            if ((code == "blocked" || code == "blocked_entity" || code == "move_locked") &&
+                !IsStaleMoveReject(json))
             {
                 _x = _lastGoodX;
                 _y = _lastGoodY;
-                _world?.SetLocalPos(_x, _y, instant: true);
-                if (code == "move_locked")
+                _world?.SetLocalPos(_x, _y, instant: false);
+                if (code == "move_locked" && !_hasServerCond)
                 {
                     _moveLockUntil = Time.time + 0.25f;
                 }
 
-                GameLog.Warn(GameLog.Channel.Combat, "snap  code=" + code + "  @" +
-                    _x.ToString("0.0") + "," + _y.ToString("0.0"));
+                GameLog.WarnOnce(GameLog.Channel.Combat, "snap:" + code, "lerp-back  code=" + code);
+            }
+            else if (code == "too_fast" || code == "rate_limited")
+            {
+                var dx = _x - _lastGoodX;
+                var dy = _y - _lastGoodY;
+                if (dx * dx + dy * dy > 2.25f)
+                {
+                    _x = _lastGoodX;
+                    _y = _lastGoodY;
+                    _world?.SetLocalPos(_x, _y, instant: false);
+                }
+
+                GameLog.WarnOnce(GameLog.Channel.Combat, "snap:" + code, "keep-pred  code=" + code);
+            }
+
+            if (code == "no_offhand")
+            {
+                if (_stickyAttackSkill == "auto_attack_off")
+                {
+                    _stickyAutoAttack = false;
+                }
             }
 
             if (code == "you_are_dead")
@@ -662,6 +830,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             if (!string.IsNullOrEmpty(cid))
             {
                 _classId = cid;
+                _world?.SetClassLook(_classId);
             }
 
             var skinId = JsonUtil.ExtractString(json, "equippedSkinId");
@@ -681,6 +850,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
 
             ApplyGearIdsFromJson(json);
+            _transformed = json.Contains("\"transformed\":true");
             RefreshWeaponMeta();
             var youSlice = JsonUtil.ExtractObject(json, "you");
             if (string.IsNullOrEmpty(youSlice))
@@ -726,6 +896,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (json.Contains("\"type\":\"sync_xp\""))
         {
+            var prevLevel = _level;
             if (JsonUtil.TryInt(json, "level", out var lv))
             {
                 _level = lv;
@@ -744,6 +915,12 @@ public sealed class NetworkBootstrap : MonoBehaviour
             if (JsonUtil.TryInt(json, "skillPoints", out var pts))
             {
                 _skillPoints = pts;
+            }
+
+            if (_inWorld && _level > prevLevel)
+            {
+                SoundCatalog.Play(SoundCatalog.Id.LevelUp);
+                _world?.PlayLevelUpFx(_world.SelfId);
             }
 
             return;
@@ -864,6 +1041,22 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 _status = "auto-lock " + _world.LockTargetId;
             }
 
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_pong\""))
+        {
+            if (JsonUtil.TryNumber(json, "serverTime", out var st))
+            {
+                _serverSkewMs = st - (Time.realtimeSinceStartupAsDouble * 1000.0);
+            }
+
+            return;
+        }
+
+        if (json.Contains("\"type\":\"sync_cond\""))
+        {
+            ApplyCondFromJson(json);
             return;
         }
 
@@ -1035,17 +1228,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (json.Contains("\"type\":\"sync_interact\""))
         {
             ApplyInteractFromJson(json);
-            _showInteract = true;
-            if (_interactKind == "trainer")
-            {
-                _showSkillTree = true;
-            }
-
-            if (_interactKind == "auction")
-            {
-                _showAuction = true;
-            }
-
+            _showNpcDialog = true;
+            _showInteract = false;
+            _pendingTalkId = "";
             _status = "talk " + _interactKind;
             return;
         }
@@ -1080,30 +1265,49 @@ public sealed class NetworkBootstrap : MonoBehaviour
             var id = JsonUtil.ExtractString(json, "entityId");
             if (id == _world.SelfId && JsonUtil.TryNumber(json, "x", out var x) && JsonUtil.TryNumber(json, "y", out var y))
             {
-                _x = x;
-                _y = y;
+                if (JsonUtil.TryInt(json, "seq", out var seq) && seq > 0)
+                {
+                    if (seq <= _moveAckSeq)
+                    {
+                        return;
+                    }
+
+                    _moveAckSeq = seq;
+                }
+
                 _lastGoodX = x;
                 _lastGoodY = y;
-                _status = "sync_move " + x.ToString("0.0") + "," + y.ToString("0.0");
+                var dx = _x - x;
+                var dy = _y - y;
+                if (dx * dx + dy * dy > 2.25f)
+                {
+                    _x = x;
+                    _y = y;
+                    _world.SetLocalPos(_x, _y, instant: false);
+                }
             }
 
             return;
         }
 
-        if (json.Contains("\"code\":\"move_locked\"") || json.Contains("\"code\":\"too_fast\"") || json.Contains("\"code\":\"blocked_entity\"") || json.Contains("\"code\":\"blocked\""))
+        if (json.Contains("\"code\":\"move_locked\"") || json.Contains("\"code\":\"blocked_entity\"") || json.Contains("\"code\":\"blocked\""))
         {
+            if (IsStaleMoveReject(json))
+            {
+                return;
+            }
+
             _x = _lastGoodX;
             _y = _lastGoodY;
-            _world.SetLocalPos(_x, _y);
-            if (json.Contains("move_locked"))
+            _world.SetLocalPos(_x, _y, instant: false);
+            if (json.Contains("move_locked") && !_hasServerCond)
             {
                 _moveLockUntil = Time.time + 0.25f;
             }
 
             _status = json.Contains("blocked_entity") ? "blocked entity"
                 : json.Contains("move_locked") ? "move_locked"
-                : json.Contains("blocked") ? "blocked tile"
-                : "too_fast snap";
+                : "blocked tile";
             return;
         }
 
@@ -1195,6 +1399,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (json.Contains("\"type\":\"sync_gacha\""))
         {
+            SoundCatalog.Play(SoundCatalog.Id.Pull);
             var pitySlice = JsonUtil.SliceAround(json, "\"pity\"", 0, 640);
             if (pitySlice.Length > 0)
             {
@@ -1227,6 +1432,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _gachaSummary = ssrN + " SSR  " + srN + " SR  " + rN + " R";
             _showGacha = true;
             _status = "gacha " + _lastDrop;
+            _world?.PlayGachaRevealFx();
             return;
         }
 
@@ -1250,6 +1456,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _classChangeTitle = string.IsNullOrEmpty(cname) ? _classId : cname;
             _classChangeBody = "New skill set unlocked. Resist bonus applied.\nHUD sprite updates with class.";
             _showClassChange = true;
+            _world?.SetClassLook(_classId);
             ApplySkillIdsFromState(json);
             _status = "class change " + _classChangeTitle;
             return;
@@ -1305,6 +1512,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _lastDrop = JsonUtil.ExtractString(json, "itemId") + " x" +
                 (JsonUtil.TryInt(json, "quantity", out var qty) ? qty.ToString() : "1");
             _status = "loot " + _lastDrop;
+            SoundCatalog.Play(SoundCatalog.Id.Loot);
+            _world?.PlayPickupAnim();
             return;
         }
 
@@ -1573,6 +1782,80 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
             cursor = idx + 7;
         }
+
+        var resting = false;
+        for (var i = 0; i < _buffs.Count; i++)
+        {
+            if (_buffs[i].Id == "resting")
+            {
+                resting = true;
+                break;
+            }
+        }
+
+        _world?.SetResting(resting);
+    }
+
+    private void CancelRestOnMove()
+    {
+        for (var i = _buffs.Count - 1; i >= 0; i--)
+        {
+            if (_buffs[i].Id == "resting")
+            {
+                _buffs.RemoveAt(i);
+            }
+        }
+
+        _world?.BreakRestFromMove();
+    }
+
+    private void TickHeartbeat()
+    {
+        if (_net == null || !_net.IsConnected)
+        {
+            return;
+        }
+
+        _pingAcc += Time.unscaledDeltaTime;
+        if (_pingAcc < 5f)
+        {
+            return;
+        }
+
+        _pingAcc = 0f;
+        _ = _net.SendPingAsync();
+    }
+
+    private bool IsStaleMoveReject(string json)
+    {
+        if (!JsonUtil.TryInt(json, "seq", out var seq) || seq <= 0 || _net == null)
+        {
+            return false;
+        }
+
+        return seq < _net.LastMoveSeq;
+    }
+
+    private void ApplyCondFromJson(string json)
+    {
+        var wasMove = _canMove;
+        _hasServerCond = true;
+        _canMove = !json.Contains("\"canMove\":false");
+        _canAct = !json.Contains("\"canAct\":false");
+        var resting = json.Contains("\"resting\":true");
+        if (JsonUtil.TryNumber(json, "serverTime", out var serverTime))
+        {
+            _serverSkewMs = serverTime - (Time.realtimeSinceStartupAsDouble * 1000.0);
+        }
+
+        _world?.SetResting(resting);
+        if (wasMove && !_canMove)
+        {
+            _x = _lastGoodX;
+            _y = _lastGoodY;
+            _world?.SetLocalPos(_x, _y, instant: false);
+            CancelClickMove();
+        }
     }
 
     private void HandleContinuousMove()
@@ -1582,7 +1865,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        if (Time.time < _moveLockUntil)
+        if (MoveLockedNow)
         {
             return;
         }
@@ -1590,11 +1873,23 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var dir = ReadMoveIntent();
         var kbOnly = ReadKeyboardMove();
         var steering = kbOnly.sqrMagnitude >= 0.01f || dir.sqrMagnitude >= 0.45f;
+        if (IsCasting)
+        {
+            if (!CanMoveCancelCast || (!steering && !_clickMoveActive))
+            {
+                return;
+            }
+
+            CancelLocalCast();
+        }
+
         if (steering)
         {
-            // WASD / strong stick cancels chase. Tiny joystick noise must not.
             CancelClickMove();
-            ClearPendingSkill(false);
+            if (!(_stickyAutoAttack && IsAutoAttackSkill(_pendingSkillId)))
+            {
+                ClearPendingSkill(false);
+            }
         }
         else if (_clickMoveActive || HasPendingSkillChase())
         {
@@ -1622,40 +1917,21 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 {
                     dir.Normalize();
                 }
-
-                int facing;
-                if (Mathf.Abs(intentX) > Mathf.Abs(intentY))
-                {
-                    facing = intentX < 0f ? 1 : 2;
-                }
-                else
-                {
-                    facing = intentY < 0f ? 0 : 3;
-                }
-
-                _world.SetLocalFacing(facing);
             }
-            else
-            {
-                int facing;
-                if (Mathf.Abs(dir.x) > Mathf.Abs(dir.y))
-                {
-                    facing = dir.x < 0f ? 1 : 2;
-                }
-                else
-                {
-                    facing = dir.y < 0f ? 0 : 3;
-                }
 
-                _world.SetLocalFacing(facing);
-            }
+            _world.SetLocalFacingFromWorld(dir.x, dir.y);
         }
 
         var speed = _moveSpeed * _moveSpeedMult;
         var dt = Time.deltaTime;
+        if (_world != null)
+        {
+            _world.Depenetrate(ref _x, ref _y);
+        }
+
         var nx = _x + dir.x * speed * dt;
         var ny = _y + dir.y * speed * dt;
-        // Soft local collision — walls + combatants (mirror server blocked / blocked_entity).
+        // Soft local collision — walls + other players/NPCs. Player↔monster overlap is allowed.
         if (_world != null && _world.WouldBlockLocalMove(nx, ny))
         {
             if (!_world.WouldBlockLocalMove(nx, _y))
@@ -1668,13 +1944,29 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
             else
             {
-                return;
+                var sx = nx;
+                var sy = ny;
+                _world.Depenetrate(ref sx, ref sy);
+                if (_world.WouldBlockLocalMove(sx, sy))
+                {
+                    if (_clickMoveActive || HasPendingSkillChase())
+                    {
+                        TryRebuildRoute();
+                    }
+
+                    return;
+                }
+
+                nx = sx;
+                ny = sy;
             }
         }
 
         _x = nx;
         _y = ny;
         _world.SetLocalPos(_x, _y);
+        CancelRestOnMove();
+        TryPendingNpcTalk();
 
         if (_clickMoveActive)
         {
@@ -1683,11 +1975,12 @@ public sealed class NetworkBootstrap : MonoBehaviour
             if (dx * dx + dy * dy <= 0.12f * 0.12f)
             {
                 CancelClickMove();
+                TryPendingNpcTalk();
             }
         }
 
         _moveSendAcc += dt;
-        if (_moveSendAcc < 0.05f)
+        if (_moveSendAcc < 1f / 12f)
         {
             return;
         }
@@ -1710,16 +2003,25 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (HasPendingSkillChase() && _world != null &&
             _world.TryGetMapXY(_pendingSkillTarget, out tx, out ty))
         {
-            // Approach until lastGood is in skill range — never stop early on predicted pos alone.
             var dx = tx - _x;
             var dy = ty - _y;
-            var gap = _world.RangeGapTo(_pendingSkillTarget, _lastGoodX, _lastGoodY);
-            if (gap <= _pendingSkillRange + 0.08f)
+            if (BestRangeGap(_pendingSkillTarget) <= _pendingSkillRange + 0.08f)
             {
                 return Vector2.zero;
             }
 
-            // Keep walking toward target even if predicted sprite looks "close".
+            if (Time.time >= _repathAt)
+            {
+                BuildRoute(tx, ty, false);
+                _repathAt = Time.time + 0.4f;
+            }
+
+            var along = FollowRouteDir();
+            if (along.sqrMagnitude >= 1e-6f)
+            {
+                return along;
+            }
+
             if (dx * dx + dy * dy < 1e-6f)
             {
                 return Vector2.zero;
@@ -1730,10 +2032,106 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (_clickMoveActive)
         {
+            var along = FollowRouteDir();
+            if (along.sqrMagnitude >= 1e-6f)
+            {
+                return along;
+            }
+
             return new Vector2(_clickMoveX - _x, _clickMoveY - _y);
         }
 
         return Vector2.zero;
+    }
+
+    private Vector2 FollowRouteDir()
+    {
+        while (_routeI < _route.Count)
+        {
+            var wp = _route[_routeI];
+            var dx = wp.x - _x;
+            var dy = wp.y - _y;
+            if (dx * dx + dy * dy <= 0.22f * 0.22f)
+            {
+                _routeI++;
+                continue;
+            }
+
+            return new Vector2(dx, dy);
+        }
+
+        if (_clickMoveActive)
+        {
+            var dx = _clickMoveX - _x;
+            var dy = _clickMoveY - _y;
+            if (dx * dx + dy * dy <= 0.12f * 0.12f)
+            {
+                CancelClickMove();
+                TryPendingNpcTalk();
+                return Vector2.zero;
+            }
+        }
+
+        return Vector2.zero;
+    }
+
+    private void BuildRoute(float destX, float destY, bool announce)
+    {
+        _clickMoveX = destX;
+        _clickMoveY = destY;
+        _route.Clear();
+        _routeI = 0;
+        if (_world == null)
+        {
+            return;
+        }
+
+        if (!_world.TryFindPath(_x, _y, destX, destY, _route))
+        {
+            _route.Clear();
+            if (announce)
+            {
+                _status = "no path";
+                _clickMoveActive = false;
+            }
+
+            return;
+        }
+
+        if (_route.Count > 0 && Vector2.Distance(_route[0], new Vector2(_x, _y)) < 0.35f)
+        {
+            _routeI = 1;
+        }
+
+        var last = _route[_route.Count - 1];
+        _clickMoveX = last.x;
+        _clickMoveY = last.y;
+
+        if (announce)
+        {
+            _status = "route " + _clickMoveX.ToString("0.0") + "," + _clickMoveY.ToString("0.0");
+        }
+    }
+
+    private void TryRebuildRoute()
+    {
+        if (Time.time < _repathAt)
+        {
+            return;
+        }
+
+        _repathAt = Time.time + 0.25f;
+        if (HasPendingSkillChase() && _world != null &&
+            _world.TryGetMapXY(_pendingSkillTarget, out var tx, out var ty))
+        {
+            BuildRoute(tx, ty, false);
+            return;
+        }
+
+        if (_clickMoveActive)
+        {
+            BuildRoute(_clickMoveX, _clickMoveY, false);
+        }
     }
 
     private bool HasPendingSkillChase()
@@ -1744,6 +2142,74 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private void CancelClickMove()
     {
         _clickMoveActive = false;
+        _route.Clear();
+        _routeI = 0;
+    }
+
+    private bool NpcInTalkRange(string npcId)
+    {
+        if (_world == null || string.IsNullOrEmpty(npcId) || !_world.TryGetMapXY(npcId, out var tx, out var ty))
+        {
+            return false;
+        }
+
+        var dx = tx - _x;
+        var dy = ty - _y;
+        return dx * dx + dy * dy <= NpcTalkRange * NpcTalkRange;
+    }
+
+    private void StartNpcTalk(string npcId)
+    {
+        if (string.IsNullOrEmpty(npcId) || _input == null || _world == null)
+        {
+            return;
+        }
+
+        _world.SetLockTarget(npcId);
+        _pendingTalkId = npcId;
+        if (NpcInTalkRange(npcId))
+        {
+            _pendingTalkId = "";
+            _input.RequestInteract(npcId);
+            _status = "talk " + npcId;
+            return;
+        }
+
+        if (_world.TryGetMapXY(npcId, out var tx, out var ty))
+        {
+            StartClickRoute(tx, ty);
+            _status = "approach " + npcId;
+        }
+    }
+
+    private void TryPendingNpcTalk()
+    {
+        if (string.IsNullOrEmpty(_pendingTalkId) || _input == null)
+        {
+            return;
+        }
+
+        if (!NpcInTalkRange(_pendingTalkId))
+        {
+            return;
+        }
+
+        var id = _pendingTalkId;
+        _pendingTalkId = "";
+        CancelClickMove();
+        _input.RequestInteract(id);
+        _status = "talk " + id;
+    }
+
+    private void CloseNpcDialog()
+    {
+        if (_showNpcDialog)
+        {
+            _input?.RequestDialogClose();
+        }
+
+        _showNpcDialog = false;
+        _showInteract = false;
     }
 
     private void ClearPendingSkill(bool announce)
@@ -1757,6 +2223,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _pendingSkillTarget = "";
         _pendingSkillRange = 0f;
         _pendingSkillUntil = 0f;
+        _world?.ClearAimIndicator();
     }
 
     private void BeginPendingSkill(string skillId, string targetId, float range)
@@ -1765,7 +2232,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _pendingSkillTarget = targetId;
         _pendingSkillRange = range;
         _pendingSkillUntil = Time.time + 8f;
+        RefreshTargetAoeAim(skillId, targetId);
         CancelClickMove();
+        _repathAt = 0f;
         _status = skillId + " → approach " + targetId;
         GameLog.CastLocal(skillId, targetId, "approach");
     }
@@ -1788,10 +2257,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var gapAck = _world.RangeGapTo(_pendingSkillTarget, _lastGoodX, _lastGoodY);
-        var gapPred = _world.RangeGapTo(_pendingSkillTarget, _x, _y);
-        if (gapAck > _pendingSkillRange + 0.08f && gapPred > _pendingSkillRange + 0.08f)
+        var gap = BestRangeGap(_pendingSkillTarget);
+        if (gap > _pendingSkillRange + 0.08f)
         {
+            RefreshTargetAoeAim(_pendingSkillId, _pendingSkillTarget);
             return;
         }
 
@@ -1799,6 +2268,47 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var targetId = _pendingSkillTarget;
         ClearPendingSkill(false);
         ExecuteCastNow(skillId, targetId);
+    }
+
+    private void TickStickyAutoAttack()
+    {
+        if (!_stickyAutoAttack || _world == null || _hp <= 0 || _showDeath || ActLockedNow)
+        {
+            return;
+        }
+
+        var lockId = _world.LockTargetId;
+        if (string.IsNullOrEmpty(lockId) || !_world.IsLivingFoe(lockId))
+        {
+            _stickyAutoAttack = false;
+            return;
+        }
+
+        if (IsCasting || HasPendingSkillChase() || _clickMoveActive)
+        {
+            return;
+        }
+
+        var kb = ReadKeyboardMove();
+        if (kb.sqrMagnitude >= 0.01f)
+        {
+            return;
+        }
+
+        var stick = ReadMoveIntent();
+        if (stick.sqrMagnitude >= 0.45f)
+        {
+            return;
+        }
+
+        var skill = string.IsNullOrEmpty(_stickyAttackSkill) ? "auto_attack" : _stickyAttackSkill;
+        if (_readyAtLocal.TryGetValue(skill, out var readyAt) &&
+            readyAt > Time.realtimeSinceStartup + 0.04f)
+        {
+            return;
+        }
+
+        TryCastOrChase(skill, lockId);
     }
 
     private Vector2 ReadKeyboardMove()
@@ -1849,6 +2359,21 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
+        if (kb.f1Key.wasPressedThisFrame)
+        {
+            _showHelp = !_showHelp;
+            _status = _showHelp ? "help on (F1)" : "help off";
+            return;
+        }
+
+        if (kb.f8Key.wasPressedThisFrame)
+        {
+            var n = SpriteCatalog.AuditWiredClips();
+            _status = n == 0
+                ? "sprite audit ok (F8)"
+                : "sprite audit FAIL " + n + " empty_facing/invisible — GFX log";
+        }
+
         if (kb.f9Key.wasPressedThisFrame)
         {
             var path = GameLog.DumpRing();
@@ -1874,11 +2399,32 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 return;
             }
 
-            if (_showCtxMenu || _showInspect || _showGacha || _chatFocused || !string.IsNullOrEmpty(_itemTooltip))
+            if (_showNpcDialog || _showShopBuy || _showShopSell || _showClassService || _showEnhance)
+            {
+                CloseNpcDialog();
+                _showShopBuy = false;
+                _showShopSell = false;
+                _showClassService = false;
+                _showEnhance = false;
+                _showSkillTree = false;
+                _showAuction = false;
+                _status = "menu closed";
+                return;
+            }
+
+            if (_showFullMap)
+            {
+                _showFullMap = false;
+                _status = "map closed";
+                return;
+            }
+
+            if (_showCtxMenu || _showInspect || _showGacha || _showHelp || _chatFocused || !string.IsNullOrEmpty(_itemTooltip))
             {
                 _showCtxMenu = false;
                 _showInspect = false;
                 _showGacha = false;
+                _showHelp = false;
                 _chatFocused = false;
                 _itemTooltip = "";
                 return;
@@ -1896,11 +2442,19 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 return;
             }
 
-            var target = _world.ToggleLockClosest();
+            if (kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed)
+            {
+                _world.ClearLockTarget();
+                _input?.SetTarget("");
+                _status = "target cleared";
+                return;
+            }
+
+            var target = _world.CycleLockTarget();
             _input?.SetTarget(target ?? "");
             if (string.IsNullOrEmpty(target))
             {
-                _status = "target cleared";
+                _status = "no foes in range";
             }
             else
             {
@@ -1927,6 +2481,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
+        if (TryPlayEmote(kb))
+        {
+            return;
+        }
+
         if (_input == null || _net == null || !_net.IsConnected)
         {
             return;
@@ -1940,7 +2499,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 return;
             }
 
-            if (kb.spaceKey.wasPressedThisFrame || DigitPressedThisFrame(kb) >= 0)
+            if (kb.spaceKey.wasPressedThisFrame || kb.zKey.wasPressedThisFrame || DigitPressedThisFrame(kb) >= 0)
             {
                 return;
             }
@@ -1949,6 +2508,20 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (kb.spaceKey.wasPressedThisFrame)
         {
             CastHotbar(0);
+        }
+
+        if (kb.zKey.wasPressedThisFrame)
+        {
+            if (!HasSecondaryWeapon())
+            {
+                _status = "no offhand equipped";
+            }
+            else
+            {
+                CastSkill("auto_attack_off");
+            }
+
+            return;
         }
 
         var digit = DigitPressedThisFrame(kb);
@@ -1971,6 +2544,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _status = _showQuestLog ? "quests on" : "quests off";
         }
         if (kb.mKey.wasPressedThisFrame)
+        {
+            _showFullMap = !_showFullMap;
+            _status = _showFullMap ? "map open (M close)" : "map closed";
+        }
+        if (kb.pKey.wasPressedThisFrame)
         {
             CycleSpirit();
         }
@@ -2103,7 +2681,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private bool SkillUnlocked(string skillId)
     {
-        if (string.IsNullOrEmpty(skillId) || skillId == "auto_attack")
+        if (string.IsNullOrEmpty(skillId) || IsAutoAttackSkill(skillId))
         {
             return true;
         }
@@ -2114,6 +2692,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         return _unlockedSkills.Contains(skillId);
+    }
+
+    private static bool IsAutoAttackSkill(string skillId)
+    {
+        return skillId == "auto_attack" || skillId == "auto_attack_off";
     }
 
     private int HotbarIndexOf(string skillId)
@@ -2145,7 +2728,35 @@ public sealed class NetworkBootstrap : MonoBehaviour
         if (kb.digit7Key.wasPressedThisFrame) return 7;
         if (kb.digit8Key.wasPressedThisFrame) return 8;
         if (kb.digit9Key.wasPressedThisFrame) return 9;
+        if (kb.digit0Key.wasPressedThisFrame) return 0;
         return -1;
+    }
+
+    private bool TryPlayEmote(Keyboard kb)
+    {
+        if (kb == null || _world == null)
+        {
+            return false;
+        }
+
+        if (!kb.leftShiftKey.isPressed && !kb.rightShiftKey.isPressed)
+        {
+            return false;
+        }
+
+        var digit = DigitPressedThisFrame(kb);
+        if (digit < 0)
+        {
+            return false;
+        }
+
+        var msg = _world.PlayEmoteSlot(digit);
+        if (!string.IsNullOrEmpty(msg))
+        {
+            _status = msg;
+        }
+
+        return true;
     }
 
     private static bool DigitIsPressed(Keyboard kb, int n)
@@ -2189,6 +2800,24 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
+        if (ActLockedNow)
+        {
+            _status = "cannot act";
+            return;
+        }
+
+        if (IsCasting)
+        {
+            if (IsAutoAttackSkill(skillId) || skillId == _castSkillId || skillId == _queuedSkillId)
+            {
+                return;
+            }
+
+            _queuedSkillId = skillId;
+            _status = SkillDisplayName(skillId) + " queued";
+            return;
+        }
+
         if (!SkillUnlocked(skillId))
         {
             var need = 0;
@@ -2222,23 +2851,38 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        if (SkillWeaponSlot(skillId) == 2 && !HasSecondaryWeapon())
+        if (IsAutoAttackSkill(skillId))
         {
-            _status = SkillDisplayName(skillId) + " needs Sekundärwaffe (equip a bow)";
-            return;
+            _stickyAutoAttack = true;
+            _stickyAttackSkill = skillId;
+        }
+
+        if (skillId == "rest")
+        {
+            _stickyAutoAttack = false;
         }
 
         if (IndicatorSkills.ContainsKey(skillId))
         {
-            if (!TryCastIndicatorAtLock(skillId))
+            var shotLock = _world.LockTargetId;
+            if (string.IsNullOrEmpty(shotLock) || shotLock == _world.SelfId || !_world.IsLivingTarget(shotLock) ||
+                _world.IsPlayerEntity(shotLock))
             {
-                BeginAim(skillId, fromBar: false);
+                shotLock = _world.LockClosestEnemy();
             }
 
+            if (!string.IsNullOrEmpty(shotLock) && _world.IsLivingTarget(shotLock) && !_world.IsPlayerEntity(shotLock))
+            {
+                _world.SetLockTarget(shotLock);
+                TryCastOrChase(skillId, shotLock);
+                return;
+            }
+
+            BeginAim(skillId, fromBar: false);
             return;
         }
 
-        if (NoTargetSkills.Contains(skillId))
+        if (NoTargetSkills.Contains(skillId) || IsCasterAoeSkill(skillId))
         {
             ClearPendingSkill(false);
             _input.SetTarget(_world.SelfId);
@@ -2249,13 +2893,22 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var lockId = _world.LockTargetId;
-        if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId || !_world.IsLivingTarget(lockId))
+        if (IsAllyTargetSkill(skillId))
         {
-            if (skillId == "auto_attack")
+            var allyId = ResolveAllyTargetId();
+            TryCastOrChase(skillId, allyId);
+            return;
+        }
+
+        var lockId = _world.LockTargetId;
+        if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId || !_world.IsLivingTarget(lockId) ||
+            _world.IsPlayerEntity(lockId))
+        {
+            if (IsAutoAttackSkill(skillId))
             {
-                lockId = _world.FindClosestEnemyInRange(_weaponRange);
-                if (string.IsNullOrEmpty(lockId))
+                var aaRange = skillId == "auto_attack_off" ? _weapon2Range : _weaponRange;
+                lockId = _world.FindClosestEnemyInRange(aaRange);
+                if (string.IsNullOrEmpty(lockId) || _world.IsPlayerEntity(lockId))
                 {
                     lockId = _world.LockClosestEnemy();
                 }
@@ -2278,14 +2931,19 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private float ResolveSkillRange(string skillId)
     {
-        if (skillId == "auto_attack")
+        if (IsAutoAttackSkill(skillId))
         {
-            return Mathf.Max(0.8f, _weaponRange);
+            return Mathf.Max(0.8f, skillId == "auto_attack_off" ? _weapon2Range : _weaponRange);
         }
 
         if (SkillRanges.TryGetValue(skillId, out var r) && r > 0f)
         {
             return r;
+        }
+
+        if (_skillHud.TryGetValue(skillId, out var hud) && hud.Range > 0f)
+        {
+            return hud.Range;
         }
 
         if (IndicatorSkills.TryGetValue(skillId, out var def))
@@ -2294,6 +2952,82 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         return 1.5f;
+    }
+
+    private bool IsAllyTargetSkill(string skillId)
+    {
+        if (_skillHud.TryGetValue(skillId, out var hud) && hud.TargetingType == "ALLY_TARGET")
+        {
+            return true;
+        }
+
+        return skillId == "ally_mend" || skillId == "mend";
+    }
+
+    private bool IsCasterAoeSkill(string skillId)
+    {
+        if (_skillHud.TryGetValue(skillId, out var hud) &&
+            hud.AoeOrigin == "caster" &&
+            (hud.Affects == "friendly" || hud.Affects == "self"))
+        {
+            return true;
+        }
+
+        return skillId == "group_chant" || skillId == "rally";
+    }
+
+    private string ResolveAllyTargetId()
+    {
+        var lockId = _world.LockTargetId;
+        if (!string.IsNullOrEmpty(lockId) && _world.IsLivingTarget(lockId) && _world.IsPlayerEntity(lockId))
+        {
+            return lockId;
+        }
+
+        var closest = _world.FindClosestPlayer(12f);
+        if (!string.IsNullOrEmpty(closest) && _world.IsLivingTarget(closest))
+        {
+            return closest;
+        }
+
+        return _world.SelfId;
+    }
+
+    private bool IsEnemySplashSkill(string skillId)
+    {
+        if (_skillHud.TryGetValue(skillId, out var hud) &&
+            hud.AoeOrigin == "target" &&
+            hud.Affects == "hostile")
+        {
+            return true;
+        }
+
+        return skillId == "target_burst";
+    }
+
+    private void RefreshTargetAoeAim(string skillId, string targetId)
+    {
+        if (_world == null || !IsEnemySplashSkill(skillId))
+        {
+            return;
+        }
+
+        if (!_world.TryGetMapXY(_world.SelfId, out var sx, out var sy) ||
+            !_world.TryGetMapXY(targetId, out var tx, out var ty))
+        {
+            return;
+        }
+
+        var radius = 2.5f;
+        if (_skillHud.TryGetValue(skillId, out var hud) && hud.AoeRadius > 0.1f)
+        {
+            radius = hud.AoeRadius;
+        }
+
+        _world.UpdateGroundAim(
+            WorldCoords.TileToWorld(sx, sy),
+            WorldCoords.TileToWorld(tx, ty),
+            ResolveSkillRange(skillId), radius);
     }
 
     private static float SkillProjectileSpeed(string skillId)
@@ -2330,14 +3064,26 @@ public sealed class NetworkBootstrap : MonoBehaviour
     private void TryCastOrChase(string skillId, string targetId)
     {
         var range = ResolveSkillRange(skillId);
-        var gap = _world.RangeGapTo(targetId, _lastGoodX, _lastGoodY);
-        if (gap > range + 0.08f)
+        if (BestRangeGap(targetId) > range + 0.08f)
         {
             BeginPendingSkill(skillId, targetId, range);
             return;
         }
 
         ExecuteCastNow(skillId, targetId);
+    }
+
+    private float BestRangeGap(string targetId)
+    {
+        if (_world == null || string.IsNullOrEmpty(targetId))
+        {
+            return float.MaxValue;
+        }
+
+        var ack = _world.RangeGapTo(targetId, _lastGoodX, _lastGoodY);
+        var pred = _world.RangeGapTo(targetId, _x, _y);
+        var vis = _world.RangeGapTo(targetId);
+        return Mathf.Min(ack, Mathf.Min(pred, vis));
     }
 
     private void ExecuteCastNow(string skillId, string targetId)
@@ -2368,6 +3114,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         _world.PlayCastAttack(_world.SelfId, targetId, skillId);
         BeginLocalCast(skillId);
+        if (IsEnemySplashSkill(skillId))
+        {
+            _world.ClearAimIndicator();
+        }
 
         var reqId = _prediction.NextRequestId("cast");
         _lastCastRequestId = reqId;
@@ -2405,7 +3155,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             if (tgtPos.HasValue)
             {
                 adx = tgtPos.Value.x - selfPos.Value.x;
-                ady = tgtPos.Value.y - selfPos.Value.y;
+                ady = tgtPos.Value.z - selfPos.Value.z;
                 var len = Mathf.Sqrt(adx * adx + ady * ady);
                 if (len < 1e-4f)
                 {
@@ -2424,7 +3174,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
             {
                 if (tgtPos.HasValue)
                 {
-                    _input.Cast(skillId, targetId, null, null, tgtPos.Value.x, tgtPos.Value.y);
+                    var ground = WorldCoords.WorldToTile(tgtPos.Value);
+                    _input.Cast(skillId, targetId, null, null, ground.x, ground.y);
                 }
                 else
                 {
@@ -2450,71 +3201,32 @@ public sealed class NetworkBootstrap : MonoBehaviour
     /// <summary>Cast skillshot/AoE toward current lock (or closest). Returns false if no target.</summary>
     private bool TryCastIndicatorAtLock(string skillId)
     {
-        if (_world == null || _input == null || !IndicatorSkills.TryGetValue(skillId, out var def))
+        if (_world == null || _input == null || !IndicatorSkills.ContainsKey(skillId))
         {
             return false;
         }
 
         var lockId = _world.LockTargetId;
-        if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId)
+        if (string.IsNullOrEmpty(lockId) || lockId == _world.SelfId || !_world.IsLivingTarget(lockId) ||
+            _world.IsPlayerEntity(lockId))
         {
             lockId = _world.LockClosestEnemy();
         }
 
-        if (string.IsNullOrEmpty(lockId))
+        if (string.IsNullOrEmpty(lockId) || !_world.IsLivingTarget(lockId))
         {
             return false;
-        }
-
-        var selfPos = _world.GetEntityWorldPos(_world.SelfId);
-        var tgtPos = _world.GetEntityWorldPos(lockId);
-        if (!selfPos.HasValue || !tgtPos.HasValue)
-        {
-            return false;
-        }
-
-        var dx = tgtPos.Value.x - selfPos.Value.x;
-        var dy = tgtPos.Value.y - selfPos.Value.y;
-        var len = Mathf.Sqrt(dx * dx + dy * dy);
-        if (len > def.Range + 0.05f)
-        {
-            BeginPendingSkill(skillId, lockId, def.Range);
-            return true;
-        }
-
-        if (len < 1e-4f)
-        {
-            dx = 1f;
-            dy = 0f;
-        }
-        else
-        {
-            dx /= len;
-            dy /= len;
         }
 
         _world.SetLockTarget(lockId);
-        _input.SetTarget(lockId);
-        _world.PlayCastAttack(_world.SelfId, lockId, skillId);
-        BeginLocalCast(skillId);
-        CancelAim();
-        if (def.Kind == AimKind.Ground)
-        {
-            _input.Cast(skillId, lockId, null, null, tgtPos.Value.x, tgtPos.Value.y);
-        }
-        else
-        {
-            _input.Cast(skillId, lockId, dx, dy);
-            SpawnShotVisual(skillId, dx, dy);
-        }
-
-        _status = skillId + " → " + lockId;
+        TryCastOrChase(skillId, lockId);
         return true;
     }
 
     private void TryWorldTargetClicks()
     {
-        if (_world == null || _showSettings || _showGacha || _showCtxMenu || _showInspect || _chatFocused ||
+        if (_world == null || _showSettings || _showGacha || _showCtxMenu || _showInspect || _showFullMap || _chatFocused ||
+            _showNpcDialog || _showShopBuy || _showShopSell || _showClassService || _showEnhance ||
             !string.IsNullOrEmpty(_aimSkillId))
         {
             return;
@@ -2528,6 +3240,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         var screen = mouse.position.ReadValue();
         var gui = ScreenToGui(screen);
+        if (_minimapArea.width > 1f && _minimapArea.Contains(gui))
+        {
+            return;
+        }
 
         // Ignore HUD / inventory panel clicks (inventory open must not block the whole map).
         if (gui.y > GuiH - 140f)
@@ -2564,12 +3280,20 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
+        var npcId = _world.PickNpcNear(mx, my, 1.25f);
+        if (!string.IsNullOrEmpty(npcId))
+        {
+            _world.SetLockTarget(npcId);
+            _status = "lock-on " + npcId;
+        }
+
         // Empty LMB: keep current target (no clear / no move).
     }
 
     private void TryWorldMoveClicks()
     {
         if (_world == null || _input == null || _showSettings || _showGacha || _showCtxMenu || _showInspect || _chatFocused ||
+            _showNpcDialog || _showShopBuy || _showShopSell || _showClassService || _showEnhance ||
             !string.IsNullOrEmpty(_aimSkillId))
         {
             return;
@@ -2583,6 +3307,19 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         var screen = mouse.position.ReadValue();
         var gui = ScreenToGui(screen);
+
+        if (_showFullMap)
+        {
+            TryRouteFromMapPixel(gui, _fullMapArea, false, _fullMapCell);
+            return;
+        }
+
+        if (_minimapArea.width > 1f && _minimapArea.Contains(gui))
+        {
+            TryRouteFromMapPixel(gui, _minimapArea, true, _minimapCell);
+            return;
+        }
+
         if (gui.y > GuiH - 140f)
         {
             return;
@@ -2599,12 +3336,93 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        // RMB always click-to-move. Cancel pending skill chase; keep target lock (2A).
+        var combat = _world.PickCombatTargetNear(mx, my, 1.25f);
+        var npcId = _world.PickNpcNear(mx, my, 1.25f);
+        if (!string.IsNullOrEmpty(npcId) && string.IsNullOrEmpty(combat))
+        {
+            StartNpcTalk(npcId);
+            return;
+        }
+
+        _pendingTalkId = "";
+        StartClickRoute(mx, my);
+    }
+
+    private void TickMinimapZoom()
+    {
+        if (_world == null || !_inWorld || _gatePhase < 3 || _showFullMap)
+        {
+            return;
+        }
+
+        var mouse = Mouse.current;
+        if (mouse == null)
+        {
+            return;
+        }
+
+        var gui = ScreenToGui(mouse.position.ReadValue());
+        if (_minimapArea.width < 1f || !_minimapArea.Contains(gui))
+        {
+            return;
+        }
+
+        var scroll = mouse.scroll.y.ReadValue();
+        if (Mathf.Abs(scroll) < 0.01f)
+        {
+            return;
+        }
+
+        var maxR = Mathf.Max(12, Mathf.Max(_world.MapWidth, _world.MapHeight));
+        var next = _minimapRadius + (scroll > 0f ? -3 : 3);
+        _minimapRadius = Mathf.Clamp(next, 8, maxR);
+    }
+
+    private void StartClickRoute(float mx, float my)
+    {
+        if (IsCasting)
+        {
+            _clickMoveActive = true;
+            BuildRoute(mx, my, true);
+            return;
+        }
+
         ClearPendingSkill(false);
         _clickMoveActive = true;
-        _clickMoveX = mx;
-        _clickMoveY = my;
-        _status = "move-to " + mx.ToString("0.0") + "," + my.ToString("0.0");
+        BuildRoute(mx, my, true);
+    }
+
+    private bool TryRouteFromMapPixel(Vector2 gui, Rect area, bool followPlayer, float cell)
+    {
+        if (cell < 0.1f || !area.Contains(gui))
+        {
+            return false;
+        }
+
+        var cols = Mathf.Max(1, Mathf.RoundToInt(area.width / cell));
+        var rows = Mathf.Max(1, Mathf.RoundToInt(area.height / cell));
+        var gx = Mathf.FloorToInt((gui.x - area.x) / cell);
+        var gy = Mathf.FloorToInt((gui.y - area.y) / cell);
+        gx = Mathf.Clamp(gx, 0, cols - 1);
+        gy = Mathf.Clamp(gy, 0, rows - 1);
+
+        int tx;
+        int ty;
+        if (followPlayer)
+        {
+            var px = MapPathing.TileOf(_x);
+            var py = MapPathing.TileOf(_y);
+            tx = px + gx - cols / 2;
+            ty = py + (rows / 2 - gy);
+        }
+        else
+        {
+            tx = gx;
+            ty = rows - 1 - gy;
+        }
+
+        StartClickRoute(tx, ty);
+        return true;
     }
 
     private static bool TryScreenToMap(Camera cam, Vector2 screenPx, out float mapX, out float mapY)
@@ -2612,8 +3430,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         mapX = 0f;
         mapY = 0f;
         var ray = cam.ScreenPointToRay(screenPx);
-        // Map lives on the XY plane (z ≈ 0).
-        var plane = new Plane(Vector3.forward, Vector3.zero);
+        var plane = new Plane(Vector3.up, Vector3.zero);
         if (!plane.Raycast(ray, out var enter))
         {
             return false;
@@ -2621,7 +3438,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         var p = ray.GetPoint(enter);
         mapX = p.x;
-        mapY = p.y;
+        mapY = p.z;
         return true;
     }
 
@@ -2691,8 +3508,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var selfPos = _world.GetEntityWorldPos(_world.SelfId);
         if (selfPos.HasValue)
         {
-            _aimX = selfPos.Value.x + 1f;
-            _aimY = selfPos.Value.y;
+            var tile = WorldCoords.WorldToTile(selfPos.Value);
+            _aimX = tile.x + 1f;
+            _aimY = tile.y;
         }
         else
         {
@@ -2799,9 +3617,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var casterPos = _world.GetEntityWorldPos(_world.SelfId) ?? new Vector3(_x, _y, 0f);
+        var casterPos = _world.GetEntityWorldPos(_world.SelfId) ?? WorldCoords.TileToWorld(_x, _y);
         var mouseWorld = ReadMouseWorld();
-        var dir = new Vector2(mouseWorld.x - casterPos.x, mouseWorld.y - casterPos.y);
+        var dir = WorldCoords.MapXZ(mouseWorld) - WorldCoords.MapXZ(casterPos);
         if (dir.sqrMagnitude < 0.0001f)
         {
             dir = new Vector2(_aimDx, _aimDy);
@@ -2825,16 +3643,16 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
         else
         {
-            var point = new Vector3(mouseWorld.x, mouseWorld.y, casterPos.z);
-            var flat = new Vector2(point.x - casterPos.x, point.y - casterPos.y);
+            var point = WorldCoords.OnGround(mouseWorld);
+            var flat = WorldCoords.MapXZ(point) - WorldCoords.MapXZ(casterPos);
             if (flat.magnitude > def.Range)
             {
                 flat = flat.normalized * def.Range;
             }
 
             _aimX = casterPos.x + flat.x;
-            _aimY = casterPos.y + flat.y;
-            _world.UpdateGroundAim(casterPos, new Vector3(_aimX, _aimY, casterPos.z), def.Range, def.AoeRadius);
+            _aimY = casterPos.z + flat.y;
+            _world.UpdateGroundAim(casterPos, WorldCoords.TileToWorld(_aimX, _aimY), def.Range, def.AoeRadius);
         }
     }
 
@@ -2844,13 +3662,16 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var mouse = Mouse.current;
         if (cam == null || mouse == null)
         {
-            return new Vector3(_x + _aimDx, _y + _aimDy, 0f);
+            return WorldCoords.TileToWorld(_x + _aimDx, _y + _aimDy);
         }
 
         var screen = mouse.position.ReadValue();
-        var world = cam.ScreenToWorldPoint(screen);
-        world.z = 0f;
-        return world;
+        if (TryScreenToMap(cam, screen, out var mx, out var my))
+        {
+            return WorldCoords.TileToWorld(mx, my);
+        }
+
+        return WorldCoords.TileToWorld(_x + _aimDx, _y + _aimDy);
     }
 
     private bool TryConfirmAimHotkey(Keyboard kb)
@@ -2953,6 +3774,12 @@ public sealed class NetworkBootstrap : MonoBehaviour
             CastSkill(skillId);
 
             break;
+        }
+
+        var restRect = SkillSlotRect(Mathf.Min(_skillIds != null ? _skillIds.Length : 8, 8));
+        if (restRect.Contains(new Vector2(gui.x, guiY)))
+        {
+            CastSkill("rest");
         }
     }
 
@@ -3182,7 +4009,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         if (action == "Talk")
         {
-            _input?.RequestInteract(_ctxTargetId);
+            StartNpcTalk(_ctxTargetId);
             _status = "talk " + _ctxTargetId;
         }
     }
@@ -3212,11 +4039,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void RefreshWeaponMeta()
     {
-        _weaponRange = _weapon.Contains("bow") ? 5f
-            : _weapon.Contains("staff") ? 4.5f
-            : _weapon.Contains("gun") ? 4f
-            : _weapon.Contains("dagger") ? 1.2f
-            : 1.5f;
+        _weaponRange = WeaponRangeOf(_weapon);
+        _weapon2Range = WeaponRangeOf(_weapon2);
         if (_spirit == "none" || string.IsNullOrEmpty(_spirit))
         {
             _element = _weapon.Contains("staff") ? "holy"
@@ -3229,17 +4053,52 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _world?.SetHeldWeapon(_weapon);
     }
 
+    private static float WeaponRangeOf(string weaponId)
+    {
+        if (string.IsNullOrEmpty(weaponId) || weaponId == "none")
+        {
+            return 1.5f;
+        }
+
+        if (weaponId.Contains("bow") || weaponId.Contains("charm"))
+        {
+            return 5f;
+        }
+
+        if (weaponId.Contains("staff") || weaponId.Contains("orb"))
+        {
+            return 4.5f;
+        }
+
+        if (weaponId.Contains("gun"))
+        {
+            return 4f;
+        }
+
+        if (weaponId.Contains("tome"))
+        {
+            return 4.2f;
+        }
+
+        if (weaponId.Contains("dagger"))
+        {
+            return 1.2f;
+        }
+
+        return 1.5f;
+    }
+
     private void TryEquipKey(Keyboard kb)
     {
-        var keys = new[] { kb.zKey, kb.xKey, kb.cKey, kb.vKey, kb.bKey, kb.nKey };
-        for (var i = 0; i < keys.Length && i < _weapons.Length; i++)
+        var keys = new[] { kb.xKey, kb.cKey, kb.vKey, kb.bKey };
+        for (var i = 0; i < keys.Length && i + 1 < _weapons.Length; i++)
         {
             if (!keys[i].wasPressedThisFrame)
             {
                 continue;
             }
 
-            _weapon = _weapons[i];
+            _weapon = _weapons[i + 1];
             _input.Equip(_weapon);
             RefreshWeaponMeta();
             _status = "equip " + _weapon;
@@ -3301,7 +4160,52 @@ public sealed class NetworkBootstrap : MonoBehaviour
         SetGearField(json, "equippedHelmId", "helmId", ref _helm);
         SetGearField(json, "equippedBootsId", "bootsId", ref _boots);
         SetGearField(json, "equippedGlovesId", "glovesId", ref _gloves);
-        SetGearField(json, "equippedAccessoryId", "accessoryId", ref _accessory);
+        SetGearField(json, "equippedAmuletId", "amuletId", ref _amulet);
+        if (_amulet == "none" || string.IsNullOrEmpty(_amulet))
+        {
+            SetGearField(json, "equippedAccessoryId", "accessoryId", ref _amulet);
+        }
+
+        _accessory = _amulet;
+        SetGearField(json, "equippedRing1Id", "ring1Id", ref _ring1);
+        SetGearField(json, "equippedRing2Id", "ring2Id", ref _ring2);
+        SetGearField(json, "equippedSubclassId", "subclassId", ref _subclass);
+        ParseEnhanceLevels(json);
+    }
+
+    private void ParseEnhanceLevels(string json)
+    {
+        _enhanceLevels.Clear();
+        var idx = json.IndexOf("\"enhanceLevels\"");
+        if (idx < 0)
+        {
+            return;
+        }
+
+        var slice = json.Substring(idx, Mathf.Min(400, json.Length - idx));
+        var keys = new[] { "mainhand", "armor", "helm", "boots", "gloves", "amulet", "ring1", "ring2", "subclass" };
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var token = "\"" + keys[i] + "\":";
+            var at = slice.IndexOf(token);
+            if (at < 0)
+            {
+                continue;
+            }
+
+            var nStart = at + token.Length;
+            var n = 0;
+            var digits = "";
+            while (nStart + digits.Length < slice.Length && char.IsDigit(slice[nStart + digits.Length]))
+            {
+                digits += slice[nStart + digits.Length];
+            }
+
+            if (int.TryParse(digits, out n))
+            {
+                _enhanceLevels[keys[i]] = n;
+            }
+        }
     }
 
     private static void SetGearField(string json, string longKey, string shortKey, ref string field)
@@ -3327,16 +4231,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private Rect InventoryWindowRect()
     {
-        const float charW = 200f;
+        const float charW = 220f;
         const float slot = 28f;
         const float gap = 2f;
         var gridW = InvCols * (slot + gap);
         var gridH = InvCols * (slot + gap);
         var w = 16f + charW + 12f + gridW + 16f;
-        var h = 36f + Mathf.Max(gridH, 220f) + 16f;
-        if (_invPanelPos.x < 0f)
+        var h = 36f + Mathf.Max(gridH, 420f) + 16f;
+        if (!_invPosReady)
         {
             _invPanelPos = new Vector2(GuiW - w - 16f, 90f);
+            _invPosReady = true;
         }
 
         return new Rect(_invPanelPos.x, _invPanelPos.y, w, h);
@@ -3346,260 +4251,677 @@ public sealed class NetworkBootstrap : MonoBehaviour
     {
         if (!_showInventory)
         {
+            _hoverItemTip = "";
+            if (_itemDragging)
+            {
+                CancelItemDrag();
+            }
+
             return;
         }
 
-        const float charW = 200f;
+        const float charW = 220f;
         const float slot = 28f;
         const float gap = 2f;
         var win = InventoryWindowRect();
-        GUI.color = new Color(0.08f, 0.09f, 0.12f, 0.94f);
-        GUI.DrawTexture(win, Texture2D.whiteTexture);
-        GUI.color = Color.white;
+        UiChrome.Panel(win, UiChrome.Gold);
 
         var title = new Rect(win.x, win.y, win.width, 28f);
         GUI.Label(title,
             string.IsNullOrEmpty(_tradeId)
-                ? "  Inventory (I) — drag title · LMB equip / RMB use"
+                ? "  Inventory (I) — drag title · drag items · RMB equip/unequip"
                 : "  Inventory — LMB add to TRADE");
-        HandleInvDrag(title);
+        HandleInvDrag(title, new Rect(0, 0, 0, 0));
 
         var charRect = new Rect(win.x + 10f, win.y + 34f, charW, win.height - 46f);
         GUI.color = new Color(0.12f, 0.14f, 0.18f, 0.95f);
         GUI.DrawTexture(charRect, Texture2D.whiteTexture);
         GUI.color = Color.white;
         GUI.Label(new Rect(charRect.x + 8, charRect.y + 6, charW - 16, 20), _playerLabel);
-        GUI.Label(new Rect(charRect.x + 8, charRect.y + 28, charW - 16, 80),
-            "Class " + _classId + "\nLv " + _level + "  XP " + _xp + "/" + _xpToLevel +
-            "\nHP " + _hp + "/" + _maxHp + "  MP " + _mp + "/" + _maxMp +
-            "\nGold " + _gold + "  Tower F" + _towerFloor);
-        GUI.Label(new Rect(charRect.x + 8, charRect.y + 120, charW - 16, 140),
-            "Equipment\n" +
-            "Haupt (AA / N) " + ShortInv(_weapon) + "\n" +
-            "Sekundär (N) " + ShortInv(_weapon2) + "\n" +
-            "Spirit " + ShortInv(_spirit) + "\n" +
-            "Armor " + ShortInv(_armor) + "\n" +
-            "Helm " + ShortInv(_helm) + "\n" +
-            "Boots " + ShortInv(_boots) + "\n" +
-            "Gloves " + ShortInv(_gloves) + "\n" +
-            "Acc " + ShortInv(_accessory));
+        GUI.Label(new Rect(charRect.x + 8, charRect.y + 26, charW - 16, 54),
+            ClassPretty(_classId) + "  Lv " + _level + "\nHP " + _hp + "/" + _maxHp + "  MP " + _mp + "/" + _maxMp +
+            "\nGold " + _gold);
+
+        GUI.Label(new Rect(charRect.x + 8, charRect.y + 82, charW - 16, 16), "Assume class (debug)");
+        var btnW = (charW - 20f) / 5f;
+        for (var c = 0; c < DebugClassIds.Length; c++)
+        {
+            var br = new Rect(charRect.x + 8 + c * btnW, charRect.y + 100, btnW - 2f, 22f);
+            var on = _classId == DebugClassIds[c];
+            GUI.color = on ? new Color(0.85f, 0.72f, 0.28f) : Color.white;
+            if (GUI.Button(br, DebugClassLabels[c]))
+            {
+                _debugClassIndex = c;
+                _input?.RequestDebugSetClass(DebugClassIds[c]);
+                _status = "class → " + ClassPretty(DebugClassIds[c]);
+            }
+
+            GUI.color = Color.white;
+        }
+
+        GUI.Label(new Rect(charRect.x + 8, charRect.y + 126, 70f, 16), "Level");
+        if (GUI.Button(new Rect(charRect.x + 78, charRect.y + 124, 50f, 20f), "L20"))
+        {
+            _input?.RequestDebugSetLevel(20);
+            _status = "debug level → 20";
+        }
+
+        if (GUI.Button(new Rect(charRect.x + 132, charRect.y + 124, 50f, 20f), "L30"))
+        {
+            _input?.RequestDebugSetLevel(30);
+            _status = "debug level → 30";
+        }
+
+        GUI.Label(new Rect(charRect.x + 8, charRect.y + 148, charW - 16, 16), "Equipment");
+        DrawPaperdoll(charRect);
 
         var startX = win.x + 10f + charW + 12f;
         var startY = win.y + 34f;
+        _hoverItemTip = "";
+        var pointer = GuiPointer();
         for (var i = 0; i < InvSize; i++)
         {
             var col = i % InvCols;
             var row = i / InvCols;
             var rect = new Rect(startX + col * (slot + gap), startY + row * (slot + gap), slot, slot);
             var id = _invSlots[i];
-            GUI.color = InventorySlotColor(id);
-            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            UiChrome.Slot(rect, UiChrome.Rarity(id));
             GUI.color = Color.white;
-            if (!string.IsNullOrEmpty(id))
+            if (!string.IsNullOrEmpty(id) && !(_itemDragging && _itemDragFrom == i))
             {
-                var label = ShortInv(id);
+                var iconTint = ItemLevelReq(id) > _level
+                    ? new Color(0.4f, 0.4f, 0.42f, 1f)
+                    : Color.white;
+                SpriteCatalog.DrawGui(
+                    new Rect(rect.x + 2f, rect.y + 2f, rect.width - 4f, rect.height - 4f),
+                    SpriteCatalog.ItemIcon(id),
+                    iconTint);
                 if (_invQty[i] > 1)
                 {
-                    label += "x" + _invQty[i];
+                    GUI.Label(new Rect(rect.x + 1, rect.y + rect.height - 14, rect.width - 2, 14), "x" + _invQty[i]);
                 }
+            }
 
-                GUI.Label(new Rect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2), label);
+            if (rect.Contains(pointer) && !string.IsNullOrEmpty(id))
+            {
+                _hoverItemTip = ItemDetailText(id, _invQty[i]);
+            }
+        }
+
+        HandleInventoryEvents(win, charRect, startX, startY, slot, gap, pointer);
+
+        if (_itemDragging && !string.IsNullOrEmpty(_itemDragId))
+        {
+            var ghost = new Rect(pointer.x - 14f, pointer.y - 14f, 28f, 28f);
+            UiChrome.Slot(ghost, UiChrome.Rarity(_itemDragId));
+            SpriteCatalog.DrawGui(
+                new Rect(ghost.x + 2f, ghost.y + 2f, 24f, 24f),
+                SpriteCatalog.ItemIcon(_itemDragId),
+                Color.white);
+        }
+    }
+
+    private void DrawPaperdoll(Rect charRect)
+    {
+        var labels = new[]
+        {
+            "Mainhand", "Offhand", "Body", "Helm", "Boots", "Gloves", "Amulet", "Ring A", "Ring B", "Fairy", "Spec",
+        };
+        var keys = new[]
+        {
+            "mainhand", "offhand", "armor", "helm", "boots", "gloves", "amulet", "ring1", "ring2", "spirit", "subclass",
+        };
+        var ids = new[]
+        {
+            EquipId(_weapon), EquipId(_weapon2), EquipId(_armor), EquipId(_helm),
+            EquipId(_boots), EquipId(_gloves), EquipId(_amulet), EquipId(_ring1), EquipId(_ring2),
+            EquipId(_spirit), EquipId(_subclass),
+        };
+        const float slot = 28f;
+        var pointer = GuiPointer();
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var col = i % 2;
+            var row = i / 2;
+            var x = charRect.x + 8 + col * 104f;
+            var y = charRect.y + 168 + row * 38f;
+            GUI.Label(new Rect(x, y, 70f, 14f), labels[i]);
+            var rect = new Rect(x + 70f, y, slot, slot);
+            var id = ids[i];
+            UiChrome.Slot(rect, UiChrome.Rarity(id));
+            if (!string.IsNullOrEmpty(id) && !(_itemDragging && _itemDragEquip == keys[i]))
+            {
+                SpriteCatalog.DrawGui(
+                    new Rect(rect.x + 2f, rect.y + 2f, 24f, 24f),
+                    SpriteCatalog.ItemIcon(id),
+                    Color.white);
+            }
+
+            if (rect.Contains(pointer) && !string.IsNullOrEmpty(id))
+            {
+                _hoverItemTip = ItemDetailText(id, 1);
             }
         }
     }
 
-    private void HandleInvDrag(Rect titleBar)
+    private static string EquipId(string id)
     {
-        var mouse = Mouse.current;
-        if (mouse == null)
-        {
-            return;
-        }
-
-        var p = mouse.position.ReadValue();
-        var gui = ScreenToGui(p);
-        if (mouse.leftButton.wasPressedThisFrame && titleBar.Contains(gui))
-        {
-            _invDragging = true;
-            _invDragOffset = gui - _invPanelPos;
-        }
-
-        if (mouse.leftButton.wasReleasedThisFrame)
-        {
-            _invDragging = false;
-        }
-
-        if (_invDragging && mouse.leftButton.isPressed)
-        {
-            _invPanelPos = gui - _invDragOffset;
-        }
+        return string.IsNullOrEmpty(id) || id == "none" || id == "null" ? "" : id;
     }
 
-    private void TryInventoryClicks()
+    private static string ClassPretty(string id)
     {
-        if (!_showInventory)
+        return id switch
         {
-            return;
-        }
+            "fighter" => "Fighter",
+            "marksman" => "Archer",
+            "mage" => "Mage",
+            "rogue" => "Rogue",
+            _ => "Adventurer",
+        };
+    }
 
-        var mouse = Mouse.current;
-        if (mouse == null || _input == null)
+    private Rect PaperdollSlotRect(Rect charRect, string key)
+    {
+        var keys = new[]
         {
-            return;
-        }
-
-        var lmb = mouse.leftButton.wasPressedThisFrame;
-        var rmb = mouse.rightButton.wasPressedThisFrame;
-        if (!lmb && !rmb)
-        {
-            return;
-        }
-
-        if (_invDragging)
-        {
-            return;
-        }
-
-        var p = mouse.position.ReadValue();
-        var gui = ScreenToGui(p); var guiY = gui.y;
-        const float charW = 200f;
+            "mainhand", "offhand", "armor", "helm", "boots", "gloves", "amulet", "ring1", "ring2", "spirit", "subclass",
+        };
         const float slot = 28f;
-        const float gap = 2f;
-        var win = InventoryWindowRect();
-        var title = new Rect(win.x, win.y, win.width, 28f);
-        if (title.Contains(gui))
+        for (var i = 0; i < keys.Length; i++)
         {
-            return;
-        }
-
-        var startX = win.x + 10f + charW + 12f;
-        var startY = win.y + 34f;
-        for (var i = 0; i < InvSize; i++)
-        {
-            var col = i % InvCols;
-            var row = i / InvCols;
-            var rect = new Rect(startX + col * (slot + gap), startY + row * (slot + gap), slot, slot);
-            if (!rect.Contains(gui))
+            if (keys[i] != key)
             {
                 continue;
             }
 
-            var id = _invSlots[i];
-            if (string.IsNullOrEmpty(id))
+            var col = i % 2;
+            var row = i / 2;
+            var x = charRect.x + 8 + col * 104f + 70f;
+            var y = charRect.y + 168 + row * 38f;
+            return new Rect(x, y, slot, slot);
+        }
+
+        return new Rect(0, 0, 0, 0);
+    }
+
+    private string PaperdollKeyAt(Rect charRect, Vector2 pointer)
+    {
+        var keys = new[]
+        {
+            "mainhand", "offhand", "armor", "helm", "boots", "gloves", "amulet", "ring1", "ring2", "spirit", "subclass",
+        };
+        for (var i = 0; i < keys.Length; i++)
+        {
+            if (PaperdollSlotRect(charRect, keys[i]).Contains(pointer))
             {
-                return;
+                return keys[i];
+            }
+        }
+
+        return "";
+    }
+
+    private string PaperdollId(string key)
+    {
+        return key switch
+        {
+            "mainhand" => EquipId(_weapon),
+            "offhand" => EquipId(_weapon2),
+            "armor" => EquipId(_armor),
+            "helm" => EquipId(_helm),
+            "boots" => EquipId(_boots),
+            "gloves" => EquipId(_gloves),
+            "amulet" => EquipId(_amulet),
+            "ring1" => EquipId(_ring1),
+            "ring2" => EquipId(_ring2),
+            "spirit" => EquipId(_spirit),
+            "subclass" => EquipId(_subclass),
+            _ => "",
+        };
+    }
+
+    private void HandleInventoryEvents(Rect win, Rect charRect, float startX, float startY, float slot, float gap, Vector2 pointer)
+    {
+        var e = Event.current;
+        if (e == null || !string.IsNullOrEmpty(_tradeId))
+        {
+            return;
+        }
+
+        var title = new Rect(win.x, win.y, win.width, 28f);
+        if (title.Contains(pointer) && e.type == EventType.MouseDown)
+        {
+            return;
+        }
+
+        var bagIndex = -1;
+        for (var i = 0; i < InvSize; i++)
+        {
+            var col = i % InvCols;
+            var row = i / InvCols;
+            var rect = new Rect(startX + col * (slot + gap), startY + row * (slot + gap), slot, slot);
+            if (rect.Contains(pointer))
+            {
+                bagIndex = i;
+                break;
+            }
+        }
+
+        var eqKey = PaperdollKeyAt(charRect, pointer);
+
+        if (e.type == EventType.MouseDown && e.button == 1)
+        {
+            if (bagIndex >= 0 && !string.IsNullOrEmpty(_invSlots[bagIndex]))
+            {
+                EquipOrUseBagItem(bagIndex, _invSlots[bagIndex]);
+                e.Use();
+            }
+            else if (!string.IsNullOrEmpty(eqKey) && !string.IsNullOrEmpty(PaperdollId(eqKey)))
+            {
+                UnequipPaperdoll(eqKey);
+                e.Use();
             }
 
-            HandleInventorySlotClick(i, id, lmb, rmb);
             return;
+        }
+
+        if (e.type == EventType.MouseDown && e.button == 0)
+        {
+            if (bagIndex >= 0 && !string.IsNullOrEmpty(_invSlots[bagIndex]))
+            {
+                _itemDragging = true;
+                _itemDragFrom = bagIndex;
+                _itemDragEquip = "";
+                _itemDragId = _invSlots[bagIndex];
+                _itemDragQty = _invQty[bagIndex];
+                e.Use();
+            }
+            else if (!string.IsNullOrEmpty(eqKey) && !string.IsNullOrEmpty(PaperdollId(eqKey)))
+            {
+                _itemDragging = true;
+                _itemDragFrom = -1;
+                _itemDragEquip = eqKey;
+                _itemDragId = PaperdollId(eqKey);
+                _itemDragQty = 1;
+                e.Use();
+            }
+
+            return;
+        }
+
+        if (_itemDragging && e.type == EventType.MouseUp && e.button == 0)
+        {
+            DropItemDrag(bagIndex, eqKey);
+            e.Use();
         }
     }
 
-    private void HandleInventorySlotClick(int i, string id, bool lmb, bool rmb)
+    private void DropItemDrag(int bagIndex, string eqKey)
     {
-        var kind = id.StartsWith("spirit_") ? "spirit"
-            : id.StartsWith("char_") ? "portrait skin (RMB equip)"
-            : id.StartsWith("card_") ? "class card (RMB use)"
-            : id.StartsWith("item_") ? "item"
-            : id.Contains("sword") || id.Contains("dagger") || id.Contains("bow") || id.Contains("gun") || id.Contains("staff")
-                ? "weapon (RMB=secondary, N=swap)"
-            : "equipment";
-        _itemTooltip = id + "\nkind: " + kind + "\nqty: " + _invQty[i];
-        var req = ItemLevelReq(id);
-        if (req > 1)
-        {
-            _itemTooltip += "\nreq Lv " + req + (_level < req ? "  (too low)" : "");
-        }
-
-        if (rmb)
-        {
-            _input.RequestUseItem(i);
-            _status = "use slot " + i;
-            return;
-        }
-
-        if (!lmb)
+        var fromBag = _itemDragFrom;
+        var fromEq = _itemDragEquip;
+        var id = _itemDragId;
+        CancelItemDrag();
+        if (string.IsNullOrEmpty(id) || _input == null)
         {
             return;
         }
 
-        if (!string.IsNullOrEmpty(_tradeId))
+        if (bagIndex >= 0)
         {
-            if (id == "item_homestone")
+            if (fromBag >= 0)
             {
-                _status = "cannot trade Homestone";
+                _input.RequestSwapInventory(fromBag, bagIndex);
+                _status = "move slot";
                 return;
             }
 
-            var found = _tradeOfferSlots.IndexOf(i);
-            if (found >= 0)
+            if (!string.IsNullOrEmpty(fromEq))
             {
-                _tradeOfferQtys[found] = Mathf.Min(_invQty[i], _tradeOfferQtys[found] + 1);
+                UnequipPaperdoll(fromEq);
+                return;
             }
-            else if (_tradeOfferSlots.Count < 5)
+        }
+
+        if (!string.IsNullOrEmpty(eqKey))
+        {
+            TryEquipInto(eqKey, id, fromBag);
+        }
+    }
+
+    private void CancelItemDrag()
+    {
+        _itemDragging = false;
+        _itemDragFrom = -1;
+        _itemDragEquip = "";
+        _itemDragId = "";
+        _itemDragQty = 1;
+    }
+
+    private void TryEquipInto(string slotKey, string id, int fromBag)
+    {
+        if (string.IsNullOrEmpty(id) || _input == null)
+        {
+            return;
+        }
+
+        var why = EquipRejectReason(slotKey, id);
+        if (!string.IsNullOrEmpty(why))
+        {
+            _status = why;
+            _comingSoonToast = why;
+            _comingSoonUntil = Time.time + 2.2f;
+            return;
+        }
+
+        switch (slotKey)
+        {
+            case "mainhand":
+                _input.EquipWeapon(id);
+                break;
+            case "offhand":
+                _input.EquipOffhand(id);
+                break;
+            case "spirit":
+                _input.EquipSpirit(id);
+                break;
+            case "armor":
+            case "helm":
+            case "boots":
+            case "gloves":
+            case "amulet":
+            case "ring1":
+            case "ring2":
+            case "subclass":
+                _input.RequestEquipGear(slotKey, id);
+                break;
+        }
+
+        _status = "equip " + ShortInv(id);
+    }
+
+    private void UnequipPaperdoll(string slotKey)
+    {
+        if (_input == null)
+        {
+            return;
+        }
+
+        switch (slotKey)
+        {
+            case "mainhand":
+                _input.EquipWeapon(null);
+                break;
+            case "offhand":
+                _input.EquipOffhand(null);
+                break;
+            case "spirit":
+                _input.EquipSpirit(null);
+                break;
+            default:
+                _input.RequestEquipGear(slotKey, null);
+                break;
+        }
+
+        _status = "unequip " + slotKey;
+    }
+
+    private void EquipOrUseBagItem(int bagIndex, string id)
+    {
+        if (string.IsNullOrEmpty(id) || _input == null)
+        {
+            return;
+        }
+
+        if (id.StartsWith("item_") || id.StartsWith("card_"))
+        {
+            _input.RequestUseItem(bagIndex);
+            _status = "use " + ShortInv(id);
+            return;
+        }
+
+        var slot = GuessEquipSlot(id);
+        if (string.IsNullOrEmpty(slot))
+        {
+            _input.RequestUseItem(bagIndex);
+            return;
+        }
+
+        TryEquipInto(slot, id, bagIndex);
+    }
+
+    private static string GuessEquipSlot(string id)
+    {
+        if (id.StartsWith("spirit_")) return "spirit";
+        if (id.StartsWith("subclass_")) return "subclass";
+        if (id.StartsWith("armor_")) return "armor";
+        if (id.StartsWith("helm_")) return "helm";
+        if (id.StartsWith("boots_")) return "boots";
+        if (id.StartsWith("gloves_")) return "gloves";
+        if (id.StartsWith("acc_amulet")) return "amulet";
+        if (id.StartsWith("acc_ring2")) return "ring2";
+        if (id.StartsWith("acc_ring") || id == "acc_iron" || id == "acc_ash") return "ring1";
+        if (id.StartsWith("acc_")) return "amulet";
+        if (id.Contains("charm") || id.Contains("orb") || id.Contains("_off")) return "offhand";
+        if (id.Contains("sword") || id.Contains("dagger") || id.Contains("staff") || id.Contains("bow")
+            || id.Contains("gun") || id.Contains("tome"))
+        {
+            return "mainhand";
+        }
+
+        return "";
+    }
+
+    private string EquipRejectReason(string slotKey, string id)
+    {
+        var cls = _classId ?? "adventurer";
+        if (cls == "adventurer")
+        {
+            return "";
+        }
+
+        if (slotKey == "mainhand")
+        {
+            if (cls == "fighter" && (id.Contains("staff") || id.Contains("bow") || id.Contains("tome") || id.Contains("gun")))
             {
-                _tradeOfferSlots.Add(i);
-                _tradeOfferQtys.Add(1);
+                return "Fighter cannot equip that mainhand";
             }
 
-            SendTradeOffers();
-            _status = "trade offer updated";
-            return;
+            if (cls == "marksman" && !id.Contains("bow"))
+            {
+                return "Archer mainhand needs a bow";
+            }
+
+            if (cls == "mage" && !id.Contains("staff") && !id.Contains("tome"))
+            {
+                return "Mage mainhand needs a staff or tome";
+            }
+
+            if (cls == "rogue" && id.Contains("zwei"))
+            {
+                return "Rogue cannot wield a two-handed sword";
+            }
+        }
+
+        if (slotKey == "offhand")
+        {
+            if ((_weapon ?? "").Contains("zwei"))
+            {
+                return "Two-handed mainhand blocks offhand";
+            }
+
+            if (cls == "marksman" && !id.Contains("charm"))
+            {
+                return "Archer offhand needs a charm";
+            }
+
+            if (cls == "mage" && !id.Contains("orb"))
+            {
+                return "Mage offhand needs an orb";
+            }
+
+            if (cls == "rogue" && !id.Contains("dagger"))
+            {
+                return "Rogue offhand needs a dagger";
+            }
+
+            if (cls == "fighter" && !id.Contains("sword"))
+            {
+                return "Fighter offhand needs a one-handed sword";
+            }
+        }
+
+        if (slotKey == "armor" || slotKey == "helm" || slotKey == "boots" || slotKey == "gloves")
+        {
+            var w = ArmorWeightOf(id);
+            if (cls == "mage" && w != "light")
+            {
+                return "Mage can wear light armor only";
+            }
+
+            if ((cls == "marksman" || cls == "rogue") && (w == "heavy" || w == "plate"))
+            {
+                return ClassPretty(cls) + " cannot wear " + w + " armor";
+            }
+        }
+
+        return "";
+    }
+
+    private static string ArmorWeightOf(string id)
+    {
+        if (id.Contains("plate") || id.Contains("_ash")) return "plate";
+        if (id.Contains("_iron")) return "heavy";
+        if (id.Contains("hide")) return "medium";
+        return "light";
+    }
+
+    private static string ItemHandLabel(string id)
+    {
+        if (id.Contains("charm") || id.Contains("orb") || id.Contains("_off")) return "Offhand";
+        if (id.Contains("zwei")) return "Mainhand (2H)";
+        if (id.Contains("sword") || id.Contains("dagger") || id.Contains("staff") || id.Contains("bow")
+            || id.Contains("gun") || id.Contains("tome"))
+        {
+            return id.Contains("dagger") || id.Contains("sword_iron") ? "Mainhand or Offhand" : "Mainhand";
+        }
+
+        return "";
+    }
+
+    private string ItemDetailText(string id, int qty)
+    {
+        var name = ShortInv(id);
+        var flavor = ItemFlavor(id);
+        var req = ItemLevelReq(id);
+        var line = name;
+        var hand = ItemHandLabel(id);
+        if (!string.IsNullOrEmpty(hand))
+        {
+            line += "\nSlot: " + hand;
+        }
+
+        if (id.StartsWith("armor_") || id.StartsWith("helm_") || id.StartsWith("boots_") || id.StartsWith("gloves_"))
+        {
+            line += "\nArmor: " + ArmorWeightOf(id);
         }
 
         if (id.StartsWith("spirit_"))
         {
-            _input.EquipSpirit(id);
-            _spirit = id;
-            _status = "equip spirit " + id;
+            line += "\nFairy / spirit";
         }
-        else if (id.StartsWith("armor_") || id == "armor_leather")
+
+        line += "\n" + flavor;
+        if (qty > 1)
         {
-            _input.RequestEquipGear("armor", id);
-            _status = "equip armor " + id;
+            line += "\nx" + qty;
         }
-        else if (id.StartsWith("helm_"))
+
+        if (req > 1)
         {
-            _input.RequestEquipGear("helm", id);
-            _status = "equip helm " + id;
+            line += "\nRequires Lv " + req + (_level < req ? " (too low)" : "");
         }
-        else if (id.StartsWith("boots_"))
+
+        var slot = GuessEquipSlot(id);
+        if (!string.IsNullOrEmpty(slot))
         {
-            _input.RequestEquipGear("boots", id);
-            _status = "equip boots " + id;
-        }
-        else if (id.StartsWith("gloves_"))
-        {
-            _input.RequestEquipGear("gloves", id);
-            _status = "equip gloves " + id;
-        }
-        else if (id.StartsWith("acc_"))
-        {
-            _input.RequestEquipGear("accessory", id);
-            _status = "equip accessory " + id;
-        }
-        else if (id.StartsWith("card_"))
-        {
-            _input.RequestUseItem(i);
-            _status = "use class card " + id;
-        }
-        else if (id.Contains("sword") || id.Contains("dagger") || id.Contains("staff") || id.Contains("bow") || id.Contains("gun"))
-        {
-            if (_weapon == id)
+            var why = EquipRejectReason(slot, id);
+            if (!string.IsNullOrEmpty(why))
             {
-                _status = "already primary";
-            }
-            else
-            {
-                _input.RequestUseItem(i);
-                _weapon2 = id;
-                _status = "secondary " + id;
+                line += "\n" + why;
             }
         }
-        else
+
+        return line;
+    }
+
+    private Vector2 GuiPointer()
+    {
+        var e = Event.current;
+        if (e != null)
         {
-            _input.RequestUseItem(i);
-            _status = "use " + id;
+            var s = Mathf.Max(0.1f, UiScaleSafe);
+            return e.mousePosition / s;
+        }
+
+        var mouse = Mouse.current;
+        if (mouse == null)
+        {
+            return Vector2.zero;
+        }
+
+        return ScreenToGui(mouse.position.ReadValue());
+    }
+
+    private string HoverItemText(string id, int qty)
+    {
+        var name = ShortInv(id);
+        var flavor = ItemFlavor(id);
+        var req = ItemLevelReq(id);
+        var line = name + "\n" + flavor;
+        if (qty > 1)
+        {
+            line += "\nx" + qty;
+        }
+
+        if (req > 1)
+        {
+            line += "\nLv " + req + (_level < req ? " (too low)" : "");
+        }
+
+        return line;
+    }
+
+    private void HandleInvDrag(Rect titleBar, Rect extraHandle)
+    {
+        var e = Event.current;
+        if (e == null)
+        {
+            return;
+        }
+
+        var gui = GuiPointer();
+        var over = titleBar.Contains(gui) || extraHandle.Contains(gui);
+        if (e.type == EventType.MouseDown && e.button == 0 && over)
+        {
+            _invDragging = true;
+            _invDragOffset = gui - _invPanelPos;
+            e.Use();
+        }
+
+        if (_invDragging && e.type == EventType.MouseDrag)
+        {
+            _invPanelPos = gui - _invDragOffset;
+            var win = InventoryWindowRect();
+            _invPanelPos.x = Mathf.Clamp(_invPanelPos.x, 8f - win.width * 0.6f, GuiW - 48f);
+            _invPanelPos.y = Mathf.Clamp(_invPanelPos.y, 8f, GuiH - 36f);
+            e.Use();
+        }
+
+        if (e.type == EventType.MouseUp && e.button == 0)
+        {
+            _invDragging = false;
         }
     }
 
@@ -3616,6 +4938,49 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         return id.Replace('_', ' ');
+    }
+
+    private static string ItemFlavor(string id)
+    {
+        switch (id)
+        {
+            case "item_dust": return "Pull currency. 10 dust = 1 banner pull.";
+            case "item_ticket": return "Pays for one banner pull before dust.";
+            case "item_homestone": return "Warp to your set homestone.";
+            case "item_ration": return "Field food. Restores a little HP and MP.";
+            case "item_stew": return "60s ATK/DEF buff. R uses this first.";
+            case "item_bread": return "Cheap snack. Small heal.";
+            case "item_skill_tome": return "Grants +1 skill point. Spend it at the Trainer.";
+            case "char_aurel": return "SSR portrait skin. RMB to equip.";
+            case "char_nyla": return "SR portrait skin. RMB to equip.";
+            case "card_fighter": return "Lv10 Warrior card. Earth resist + melee kit.";
+            case "card_mage": return "Lv10 Mage card. Fire resist + staff kit.";
+            case "card_marksman": return "Lv10 Archer card. Wind resist + charm seed.";
+            case "card_rogue": return "Lv10 Rogue card. Dark resist + daggers.";
+            case "sword_iron": return "One-handed sword. Mainhand or offhand.";
+            case "sword_zwei": return "Two-handed sword. Blocks offhand.";
+            case "sword_off": return "Offhand one-handed sword.";
+            case "bow_hunter": return "Mainhand bow. Archer default.";
+            case "staff_arcane": return "Mainhand staff. Mage default.";
+            case "tome_novice": return "Mainhand tome. Uses staff animations.";
+            case "dagger_twin": return "Light daggers. Mainhand or offhand.";
+            case "dagger_off": return "Offhand dagger.";
+            case "charm_leaf": return "Archer offhand charm.";
+            case "orb_glass": return "Mage offhand orb.";
+            case "gun_spark": return "Mainhand gun. Adventurer testing.";
+            case "armor_leather": return "Light vest. Smith and early loot.";
+            case "armor_hide": return "Medium hide armor.";
+            case "armor_iron": return "Heavy iron vest. Requires level 8.";
+            case "armor_ash": return "Plate ashen armor. Requires level 15.";
+            case "armor_plate": return "Plate cuirass. Warrior / Adventurer.";
+            default:
+                if (id != null && id.StartsWith("spirit_")) return "Equip to boost a matching element.";
+                if (id != null && id.Contains("_iron")) return "Iron tier. Requires level 8.";
+                if (id != null && id.Contains("_ash")) return "Ashen tier. Requires level 15.";
+                if (id != null && (id.Contains("leather") || id.Contains("_cap") || id.Contains("wrap")))
+                    return "Leather tier. Wear from level 1.";
+                return "An Ashen Realm item.";
+        }
     }
 
     private static int ItemLevelReq(string id)
@@ -3697,45 +5062,55 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void DrawHud()
     {
-        var box = new GUIStyle(GUI.skin.box)
+        var plateH = string.IsNullOrEmpty(EquipId(_subclass)) ? 112f : 138f;
+        var plate = new Rect(10f, 8f, 276f, plateH);
+        UiChrome.Panel(plate, UiChrome.Gold);
+        GUI.Label(new Rect(plate.x + 10f, plate.y + 6f, 180f, 18f),
+            _playerLabel + "  ·  " + ClassPretty(_classId) + "  L" + _level);
+        GUI.color = UiChrome.Gold;
+        GUI.Label(new Rect(plate.x + 188f, plate.y + 6f, 80f, 18f), _gold + " g");
+        GUI.color = Color.white;
+        UiChrome.Bar(new Rect(plate.x + 10f, plate.y + 30f, 256f, 14f),
+            _maxHp <= 0 ? 0f : (float)_hp / _maxHp, UiChrome.Hp, "HP", _hp + "/" + _maxHp);
+        UiChrome.Bar(new Rect(plate.x + 10f, plate.y + 48f, 256f, 12f),
+            _maxMp <= 0 ? 0f : (float)_mp / _maxMp, UiChrome.Mp, "MP", _mp + "/" + _maxMp);
+        UiChrome.Bar(new Rect(plate.x + 10f, plate.y + 64f, 256f, 10f),
+            _xpToLevel <= 0 ? 0f : (float)_xp / _xpToLevel, UiChrome.Xp, "XP", _xp + "/" + _xpToLevel);
+        GUI.color = new Color(0.85f, 0.85f, 0.88f);
+        GUI.Label(new Rect(plate.x + 10f, plate.y + 78f, 256f, 28f),
+            WeaponPretty(_weapon) + " / " + WeaponPretty(_weapon2) + "   SP " + _skillPoints +
+            ClassCardHint());
+        GUI.color = Color.white;
+        if (!string.IsNullOrEmpty(EquipId(_subclass)))
         {
-            fontSize = 14,
-            alignment = TextAnchor.UpperLeft,
-            wordWrap = true,
-            padding = new RectOffset(10, 10, 10, 10),
-        };
-        GUI.Box(new Rect(10, 10, GuiW - 20, 118),
-            "gAAAcha  |  " + _status + "\n" +
-            "HP " + _hp + "/" + _maxHp + "  MP " + _mp + "/" + _maxMp +
-            "  Lv " + _level + " XP " + _xp + "/" + _xpToLevel + " SP " + _skillPoints +
-            "  Gold " + _gold +
-            "  spd " + (_moveSpeed * _moveSpeedMult).ToString("0.0") +
-            "  class " + _classId + " towerF" + _towerFloor + "\n" +
-            "  " + _weapon + " r" + _weaponRange + "  2nd " + _weapon2 + "  spirit " + _spirit +
-            "  skin " + _skin + "\n" +
-            "Lock: " + _world.LockTargetId +
-            "  Guild: " + _guildName +
-            (string.IsNullOrEmpty(_partyId) ? "" : "  Party: " + _partyMembersLine) +
-            ClassCardHint() + "\n" +
-            "Tab lock · Space AA · 1–7 skills · N swap · R food · I inv · G banner · J quests",
-            box);
-
-        var log = GameLog.RecentText(7);
-        if (!string.IsNullOrEmpty(log))
-        {
-            var logBox = new GUIStyle(GUI.skin.box)
+            if (GUI.Button(new Rect(plate.x + 10f, plate.y + 108f, 130f, 22f),
+                    _transformed ? "Revert" : "Transform"))
             {
-                fontSize = 12,
-                alignment = TextAnchor.UpperLeft,
-                wordWrap = true,
-                padding = new RectOffset(8, 8, 8, 8),
-            };
-            GUI.Box(new Rect(10, 132, Mathf.Min(520f, GuiW - 20f), 128f), log, logBox);
+                _input?.RequestTransform(!_transformed);
+            }
         }
 
-        DrawResourceBar(new Rect(20, GuiH - 54, 180, 12), (float)_hp / _maxHp, Color.red, "HP");
-        DrawResourceBar(new Rect(20, GuiH - 36, 180, 12), (float)_mp / _maxMp, new Color(0.3f, 0.55f, 1f), "MP");
+        var ticker = new Rect(296f, 8f, GuiW - 586f, 28f);
+        if (ticker.width > 80f)
+        {
+            UiChrome.Panel(ticker, UiChrome.Steel);
+            GUI.Label(new Rect(ticker.x + 8f, ticker.y + 5f, ticker.width - 16f, 20f), _status);
+        }
+
         DrawWeaponPair();
+
+        var log = GameLog.RecentText(5);
+        if (!string.IsNullOrEmpty(log))
+        {
+            var logBox = new Rect(10f, 126f, Mathf.Min(360f, GuiW - 300f), 88f);
+            UiChrome.Panel(logBox, UiChrome.Steel);
+            var logStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                wordWrap = true,
+            };
+            GUI.Label(new Rect(logBox.x + 8f, logBox.y + 4f, logBox.width - 16f, logBox.height - 8f), log, logStyle);
+        }
     }
 
     private bool HasSecondaryWeapon()
@@ -3760,6 +5135,21 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return "Gun";
         }
 
+        if (id.Contains("tome"))
+        {
+            return "Tome";
+        }
+
+        if (id.Contains("charm"))
+        {
+            return "Charm";
+        }
+
+        if (id.Contains("orb"))
+        {
+            return "Orb";
+        }
+
         if (id.Contains("staff"))
         {
             return "Staff";
@@ -3780,28 +5170,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void TryWeaponSwap()
     {
-        if (_input == null)
-        {
-            return;
-        }
-
-        if (!HasSecondaryWeapon())
-        {
-            _comingSoonToast = "No secondary — equip a bow (I)";
-            _comingSoonUntil = Time.time + 2.2f;
-            _status = "no Sekundärwaffe";
-            return;
-        }
-
-        var a = _weapon;
-        _weapon = _weapon2;
-        _weapon2 = a;
-        RefreshWeaponMeta();
-        _weaponSwapUntil = Time.time + 1.15f;
-        _comingSoonToast = "Haupt: " + WeaponPretty(_weapon) + "   N  " + WeaponPretty(_weapon2);
-        _comingSoonUntil = Time.time + 1.6f;
-        _status = "swap → " + _weapon;
-        _input.RequestWeaponSwap();
+        _comingSoonToast = "Offhand is a paperdoll slot (I) — N no longer swaps weapons";
+        _comingSoonUntil = Time.time + 2.2f;
+        _status = "use inventory offhand";
     }
 
     private void TryQuickUseConsumable()
@@ -3841,13 +5212,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void DrawWeaponPair()
     {
-        var y = GuiH - 118f;
+        var y = GuiH - 196f;
         var flash = Time.time < _weaponSwapUntil;
-        DrawWeaponChip(new Rect(20f, y, 88f, 42f), "AA  W1", _weapon, true, flash);
-        DrawWeaponChip(new Rect(112f, y, 88f, 42f), "N   W2", _weapon2, false, flash);
-        GUI.color = new Color(0.85f, 0.85f, 0.88f, 0.9f);
-        GUI.Label(new Rect(20f, y - 16f, 180f, 16f), "Haupt ↔ Sekundär  (N)");
-        GUI.color = Color.white;
+        DrawWeaponChip(new Rect(12f, y, 88f, 36f), "Main", _weapon, true, flash);
+        DrawWeaponChip(new Rect(104f, y, 88f, 36f), "Off", _weapon2, false, flash);
     }
 
     private void DrawWeaponChip(Rect rect, string tag, string weaponId, bool haupt, bool flash)
@@ -3865,9 +5233,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         GUI.color = fill;
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
-        DrawSlotEdge(rect, haupt
-            ? new Color(0.95f, 0.82f, 0.28f, 1f)
-            : new Color(0.55f, 0.82f, 0.95f, 1f));
+        UiChrome.Border(rect, haupt
+            ? UiChrome.Gold
+            : new Color(0.55f, 0.82f, 0.95f, 1f), 2f);
         GUI.color = Color.white;
         GUI.Label(new Rect(rect.x + 6f, rect.y + 2f, rect.width - 8f, 38f),
             tag + "\n" + WeaponPretty(weaponId));
@@ -3875,12 +5243,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private static void DrawSlotEdge(Rect rect, Color color)
     {
-        GUI.color = color;
-        GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, 2f), Texture2D.whiteTexture);
-        GUI.DrawTexture(new Rect(rect.x, rect.yMax - 2f, rect.width, 2f), Texture2D.whiteTexture);
-        GUI.DrawTexture(new Rect(rect.x, rect.y, 2f, rect.height), Texture2D.whiteTexture);
-        GUI.DrawTexture(new Rect(rect.xMax - 2f, rect.y, 2f, rect.height), Texture2D.whiteTexture);
-        GUI.color = Color.white;
+        UiChrome.Border(rect, color, 2f);
     }
 
     private void DrawTargetFrame()
@@ -3890,22 +5253,19 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var frame = new Rect(GuiW - 280f, 110f, 260f, 118f);
-        var border = new Color(0.45f, 0.45f, 0.5f, 0.95f);
+        var frame = new Rect(GuiW - 280f, 164f, 260f, 118f);
         if (!string.IsNullOrEmpty(info.ThreatTopId) && info.ThreatTopId == _world.SelfId)
         {
-            border = new Color(0.95f, 0.25f, 0.2f, 1f);
+            UiChrome.Panel(frame, new Color(0.95f, 0.25f, 0.2f, 1f));
         }
         else if (info.ThreatSelf >= 35f)
         {
-            border = new Color(0.95f, 0.85f, 0.2f, 1f);
+            UiChrome.Panel(frame, new Color(0.95f, 0.85f, 0.2f, 1f));
         }
-
-        GUI.color = border;
-        GUI.DrawTexture(frame, Texture2D.whiteTexture);
-        GUI.color = new Color(0.08f, 0.09f, 0.12f, 0.92f);
-        GUI.DrawTexture(new Rect(frame.x + 2, frame.y + 2, frame.width - 4, frame.height - 4), Texture2D.whiteTexture);
-        GUI.color = Color.white;
+        else
+        {
+            UiChrome.Panel(frame, UiChrome.Steel);
+        }
 
         var portrait = new Rect(frame.x + 10, frame.y + 12, 48, 48);
         GUI.color = info.Kind == "player"
@@ -3919,11 +5279,18 @@ public sealed class NetworkBootstrap : MonoBehaviour
         GUI.Label(new Rect(frame.x + 68, frame.y + 8, 180, 20),
             string.IsNullOrEmpty(info.Label) ? info.Id : info.Label);
 
+        if (info.Kind == "npc")
+        {
+            GUI.Label(new Rect(frame.x + 68, frame.y + 32, 180, 40), "NPC — LMB inspect, RMB talk");
+            return;
+        }
+
         var hpRatio = info.MaxHp <= 0 ? 0f : (float)info.Hp / info.MaxHp;
         var mpRatio = info.MaxMp <= 0 ? 0f : (float)info.Mp / info.MaxMp;
-        DrawResourceBar(new Rect(frame.x + 68, frame.y + 32, 170, 10), hpRatio, Color.red, "");
-        GUI.Label(new Rect(frame.x + 68, frame.y + 30, 170, 14), info.Hp + "/" + info.MaxHp);
-        DrawResourceBar(new Rect(frame.x + 68, frame.y + 50, 170, 10), mpRatio, new Color(0.3f, 0.55f, 1f), "");
+        DrawResourceBar(new Rect(frame.x + 68, frame.y + 32, 170, 10), hpRatio, UiChrome.Hp, "");
+        GUI.Label(new Rect(frame.x + 68, frame.y + 30, 170, 14),
+            info.Hp + "/" + info.MaxHp + "  (" + Mathf.RoundToInt(hpRatio * 100f) + "%)");
+        DrawResourceBar(new Rect(frame.x + 68, frame.y + 50, 170, 10), mpRatio, UiChrome.Mp, "");
         GUI.Label(new Rect(frame.x + 68, frame.y + 48, 170, 14), info.Mp + "/" + info.MaxMp);
 
         if (info.Kind == "monster")
@@ -4152,8 +5519,10 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         var name = JsonUtil.ExtractString(mapSlice, "name");
         _loadMapTitle = string.IsNullOrEmpty(name) ? PrettyMapId(mapId) : name;
-        _loadArt = SpriteCatalog.ForFloor(mapId, true);
+        _loadArt = SpriteCatalog.ForLoadArt(mapId);
         _loadUntil = Time.unscaledTime + 1.2f;
+        SoundCatalog.Play(SoundCatalog.Id.Portal);
+        _world?.PlayPortalRipple();
     }
 
     private static string PrettyMapId(string id)
@@ -4269,6 +5638,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _interactTargetId = JsonUtil.ExtractString(json, "targetId");
         _interactKind = JsonUtil.ExtractString(json, "interact");
         _interactLine = JsonUtil.ExtractString(json, "line");
+        _interactNpcName = JsonUtil.ExtractString(json, "name");
         _shopId = "";
         _shopItemIds.Clear();
         _shopBuyPrices.Clear();
@@ -4343,10 +5713,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         var rect = new Rect(GuiW * 0.5f - 170f, GuiH * 0.18f, 340f, 170f);
-        GUI.color = new Color(0.08f, 0.1f, 0.14f, 0.96f);
-        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        UiChrome.Panel(rect, UiChrome.Gold);
         GUI.color = Color.white;
-        GUI.Label(new Rect(rect.x + 12, rect.y + 8, 320, 20), "Account (Postgres when DATABASE_URL set)");
+        GUI.Label(new Rect(rect.x + 12, rect.y + 8, 320, 20), "Account optional — Guest works without DATABASE_URL");
         _loginUser = GUI.TextField(new Rect(rect.x + 12, rect.y + 36, 316, 24), _loginUser ?? "");
         _loginPass = GUI.PasswordField(new Rect(rect.x + 12, rect.y + 66, 316, 24), _loginPass ?? "", '*');
         if (GUI.Button(new Rect(rect.x + 12, rect.y + 100, 150, 28), "Register"))
@@ -4370,37 +5739,38 @@ public sealed class NetworkBootstrap : MonoBehaviour
         GUI.DrawTexture(new Rect(0, 0, GuiW, GuiH), Texture2D.whiteTexture);
         GUI.color = Color.white;
         var panel = new Rect(GuiW * 0.5f - 220f, GuiH * 0.12f, 440f, 420f);
-        GUI.color = new Color(0.1f, 0.12f, 0.16f, 0.98f);
-        GUI.DrawTexture(panel, Texture2D.whiteTexture);
+        UiChrome.Panel(panel, UiChrome.Gold);
         GUI.color = Color.white;
-        GUI.Label(new Rect(panel.x + 16, panel.y + 10, 400, 24), "Ashen Realm — Login Gate");
+        GUI.Label(new Rect(panel.x + 16, panel.y + 10, 400, 24), "Ashen Realm — Guest first");
         GUI.Label(new Rect(panel.x + 16, panel.y + 34, 400, 20), _status ?? "");
 
         if (_gatePhase <= 0)
         {
-            GUI.Label(new Rect(panel.x + 16, panel.y + 70, 400, 20), "Login / Register");
-            _loginUser = GUI.TextField(new Rect(panel.x + 16, panel.y + 96, 408, 26), _loginUser ?? "");
-            _loginPass = GUI.PasswordField(new Rect(panel.x + 16, panel.y + 128, 408, 26), _loginPass ?? "", '*');
-            if (GUI.Button(new Rect(panel.x + 16, panel.y + 168, 196, 32), "Register"))
-            {
-                _input?.RequestRegister(_loginUser, _loginPass);
-                _authStatus = "registering…";
-            }
-
-            if (GUI.Button(new Rect(panel.x + 228, panel.y + 168, 196, 32), "Login"))
-            {
-                _input?.RequestLogin(_loginUser, _loginPass);
-                _authStatus = "logging in…";
-            }
-
-            if (GUI.Button(new Rect(panel.x + 16, panel.y + 214, 408, 32), "Continue as Guest"))
+            GUI.Label(new Rect(panel.x + 16, panel.y + 64, 408, 36),
+                "Guest play is the default. Login/register need Postgres (DATABASE_URL).");
+            if (GUI.Button(new Rect(panel.x + 16, panel.y + 108, 408, 40), "Continue as Guest"))
             {
                 _gatePhase = 3;
                 _inWorld = true;
                 _status = "guest world";
             }
 
-            GUI.Label(new Rect(panel.x + 16, panel.y + 260, 408, 40), _authStatus ?? "");
+            GUI.Label(new Rect(panel.x + 16, panel.y + 158, 400, 20), "Optional account");
+            _loginUser = GUI.TextField(new Rect(panel.x + 16, panel.y + 182, 408, 26), _loginUser ?? "");
+            _loginPass = GUI.PasswordField(new Rect(panel.x + 16, panel.y + 214, 408, 26), _loginPass ?? "", '*');
+            if (GUI.Button(new Rect(panel.x + 16, panel.y + 248, 196, 32), "Register"))
+            {
+                _input?.RequestRegister(_loginUser, _loginPass);
+                _authStatus = "registering…";
+            }
+
+            if (GUI.Button(new Rect(panel.x + 228, panel.y + 248, 196, 32), "Login"))
+            {
+                _input?.RequestLogin(_loginUser, _loginPass);
+                _authStatus = "logging in…";
+            }
+
+            GUI.Label(new Rect(panel.x + 16, panel.y + 288, 408, 40), _authStatus ?? "");
             return;
         }
 
@@ -4478,6 +5848,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             {
                 if (GUI.Button(new Rect(panel.x + 16, panel.y + 290, 200, 32), "Enter world"))
                 {
+                    SoundCatalog.Play(SoundCatalog.Id.UiClick);
                     _input?.RequestCharSelect(_selectedSlot);
                     _status = "entering…";
                 }
@@ -4523,77 +5894,342 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void DrawInteractPanel()
     {
-        if (!_showInteract)
+    }
+
+    private void DrawNpcDialog()
+    {
+        if (!_showNpcDialog)
         {
             return;
         }
 
-        var shopRows = _shopItemIds.Count <= 0 ? 0 : (_shopItemIds.Count + 1) / 2;
-        var panelH = Mathf.Clamp(220f + shopRows * 24f + _questIds.Count * 24f, 260f, 560f);
-        var rect = new Rect(40f, 80f, 460f, panelH);
+        GUI.color = new Color(0f, 0f, 0f, 0.6f);
+        GUI.DrawTexture(new Rect(0f, 0f, GuiW, GuiH), Texture2D.whiteTexture);
+        GUI.color = Color.white;
+
+        var portrait = new Rect(GuiW * 0.5f - 420f, 80f, 280f, 360f);
+        GUI.color = new Color(0.12f, 0.12f, 0.14f, 1f);
+        GUI.DrawTexture(portrait, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        var frames = SpriteCatalog.GetClip(_interactTargetId, "npc", SpriteCatalog.Clip.Idle, 2);
+        if (frames != null && frames.Length > 0 && frames[0] != null)
+        {
+            SpriteCatalog.DrawGui(new Rect(portrait.x + 16f, portrait.y + 16f, 248f, 328f), frames[0], Color.white);
+        }
+        else
+        {
+            GUI.color = new Color(0.95f, 0.85f, 0.35f, 1f);
+            GUI.DrawTexture(new Rect(portrait.x + 40f, portrait.y + 80f, 200f, 200f), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+        }
+
+        var box = new Rect(GuiW * 0.5f - 120f, GuiH - 280f, 560f, 220f);
+        GUI.color = new Color(0.08f, 0.09f, 0.12f, 0.96f);
+        GUI.DrawTexture(box, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        var who = string.IsNullOrEmpty(_interactNpcName) ? _interactTargetId : _interactNpcName;
+        GUI.Label(new Rect(box.x + 12f, box.y + 8f, 440f, 22f), who);
+        GUI.Label(new Rect(box.x + 12f, box.y + 32f, 530f, 40f),
+            string.IsNullOrEmpty(_interactLine) ? "…" : _interactLine);
+        GUI.Label(new Rect(box.x + 12f, box.y + 74f, 530f, 20f), "What do you want to do, Traveler?");
+
+        var y = box.y + 100f;
+        var btnW = 250f;
+        var col = 0;
+        void Option(string label, System.Action onClick)
+        {
+            var r = new Rect(box.x + 12f + col * (btnW + 8f), y, btnW, 24f);
+            if (GUI.Button(r, label))
+            {
+                onClick();
+            }
+
+            col += 1;
+            if (col >= 2)
+            {
+                col = 0;
+                y += 28f;
+            }
+        }
+
+        if (_interactKind.StartsWith("shop_"))
+        {
+            Option("Buy items from " + who, () =>
+            {
+                CloseNpcDialog();
+                _showShopBuy = true;
+            });
+            Option("Sell items to " + who, () =>
+            {
+                CloseNpcDialog();
+                _showShopSell = true;
+            });
+            if (_interactKind == "shop_weapon")
+            {
+                Option("Enhance gear", () =>
+                {
+                    CloseNpcDialog();
+                    _showEnhance = true;
+                });
+            }
+        }
+
+        if (_interactKind == "quest" || _questIds.Count > 0)
+        {
+            for (var i = 0; i < _questIds.Count; i++)
+            {
+                var qid = _questIds[i];
+                var qname = _questNames[i];
+                var st = _questStates[i];
+                if (st == "available")
+                {
+                    Option("Accept: " + qname, () =>
+                    {
+                        _input?.RequestQuestAccept(qid);
+                        CloseNpcDialog();
+                    });
+                }
+                else if (st == "ready")
+                {
+                    Option("Turn in: " + qname, () =>
+                    {
+                        _input?.RequestQuestTurnIn(qid);
+                        CloseNpcDialog();
+                    });
+                }
+            }
+        }
+
+        if (_interactKind == "trainer")
+        {
+            Option("Train skills", () =>
+            {
+                CloseNpcDialog();
+                _showSkillTree = true;
+            });
+        }
+
+        if (_interactKind == "class_change")
+        {
+            Option("Choose a class", () =>
+            {
+                CloseNpcDialog();
+                _showClassService = true;
+            });
+        }
+
+        if (_interactKind == "subclass")
+        {
+            Option("Specialist path", () => { CloseNpcDialog(); });
+        }
+
+        if (_interactKind == "homestone")
+        {
+            Option("Set home", () =>
+            {
+                _input?.RequestHomestone("set");
+                CloseNpcDialog();
+            });
+            Option("Teleport home", () =>
+            {
+                _input?.RequestHomestone("teleport");
+                CloseNpcDialog();
+            });
+        }
+
+        if (_interactKind == "auction")
+        {
+            Option("Open auction", () =>
+            {
+                CloseNpcDialog();
+                _showAuction = true;
+            });
+        }
+
+        if (_interactKind == "switch")
+        {
+            Option("Flip switch", CloseNpcDialog);
+        }
+
+        if (_interactKind == "flavor")
+        {
+            Option("Continue", CloseNpcDialog);
+        }
+
+        if (GUI.Button(new Rect(box.x + box.width - 90f, box.y + box.height - 32f, 78f, 24f), "Exit"))
+        {
+            CloseNpcDialog();
+        }
+    }
+
+    private void DrawShopBuyPanel()
+    {
+        if (!_showShopBuy)
+        {
+            return;
+        }
+
+        var shopRows = _shopItemIds.Count <= 0 ? 1 : (_shopItemIds.Count + 1) / 2;
+        var rect = new Rect(40f, 80f, 460f, Mathf.Clamp(160f + shopRows * 26f, 200f, 520f));
         GUI.color = new Color(0.1f, 0.11f, 0.14f, 0.95f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = Color.white;
-        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 440, 40), _interactKind + "\n" + _interactLine);
-
-        var y = rect.y + 55f;
-        if (!string.IsNullOrEmpty(_shopId))
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 360, 22), "Buy — " + _interactNpcName);
+        var y = rect.y + 36f;
+        for (var i = 0; i < _shopItemIds.Count; i++)
         {
-            for (var i = 0; i < _shopItemIds.Count; i++)
+            var col = i % 2;
+            var row = i / 2;
+            var req = ItemLevelReq(_shopItemIds[i]);
+            var lockTag = _level < req ? " LOCK" : "";
+            var reqTag = req > 1 ? " L" + req : "";
+            var btn = new Rect(rect.x + 10 + col * 220f, y + row * 24f, 214f, 22f);
+            if (GUI.Button(btn,
+                    "Buy " + ShopItemLabel(_shopItemIds[i]) + reqTag + " (" + _shopBuyPrices[i] + "g)" + lockTag))
             {
-                var col = i % 2;
-                var row = i / 2;
-                var req = ItemLevelReq(_shopItemIds[i]);
-                var lockTag = _level < req ? " LOCK" : "";
-                var reqTag = req > 1 ? " L" + req : "";
-                var btn = new Rect(rect.x + 10 + col * 220f, y + row * 24f, 214f, 22f);
-                if (GUI.Button(btn,
-                        "Buy " + ShopItemLabel(_shopItemIds[i]) + reqTag + " (" + _shopBuyPrices[i] + "g)" + lockTag))
-                {
-                    _input?.RequestShopBuy(_shopId, _shopItemIds[i]);
-                }
+                _input?.RequestShopBuy(_shopId, _shopItemIds[i]);
             }
-
-            y += shopRows * 24f;
         }
 
-        for (var i = 0; i < _questIds.Count; i++)
+        if (GUI.Button(new Rect(rect.x + rect.width - 80, rect.y + rect.height - 30, 70, 24), "Exit"))
         {
-            var label = _questNames[i] + " [" + _questStates[i] + "]";
-            if (_questStates[i] == "available" && GUI.Button(new Rect(rect.x + 10, y, 340, 22), "Accept " + label))
+            _showShopBuy = false;
+        }
+    }
+
+    private void DrawShopSellPanel()
+    {
+        if (!_showShopSell)
+        {
+            return;
+        }
+
+        var rect = new Rect(40f, 80f, 460f, 360f);
+        GUI.color = new Color(0.1f, 0.11f, 0.14f, 0.95f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 360, 22), "Sell — " + _interactNpcName);
+        var y = rect.y + 36f;
+        var shown = 0;
+        for (var i = 0; i < _invSlots.Length && shown < 10; i++)
+        {
+            var id = _invSlots[i];
+            if (string.IsNullOrEmpty(id) || id == "none")
             {
-                _input?.RequestQuestAccept(_questIds[i]);
+                continue;
             }
-            else if (_questStates[i] == "ready" && GUI.Button(new Rect(rect.x + 10, y, 340, 22), "Turn in " + label))
+
+            if (GUI.Button(new Rect(rect.x + 10, y, 360, 22), "Sell " + ShopItemLabel(id) + " x" + _invQty[i]))
             {
-                _input?.RequestQuestTurnIn(_questIds[i]);
+                _input?.RequestShopSell(_shopId, id);
             }
-            else
+
+            y += 24f;
+            shown += 1;
+        }
+
+        if (GUI.Button(new Rect(rect.x + rect.width - 80, rect.y + rect.height - 30, 70, 24), "Exit"))
+        {
+            _showShopSell = false;
+        }
+    }
+
+    private void DrawClassServicePanel()
+    {
+        if (!_showClassService)
+        {
+            return;
+        }
+
+        var rect = new Rect(40f, 80f, 460f, 240f);
+        GUI.color = new Color(0.1f, 0.11f, 0.14f, 0.95f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 430, 36), "Choose a class. This cannot be undone.");
+        var picks = new[] { ("fighter", "Fighter"), ("marksman", "Archer"), ("mage", "Mage"), ("rogue", "Rogue") };
+        var y = rect.y + 50f;
+        for (var i = 0; i < picks.Length; i++)
+        {
+            var on = _classPickPending == picks[i].Item1;
+            GUI.color = on ? new Color(0.9f, 0.75f, 0.3f) : Color.white;
+            if (GUI.Button(new Rect(rect.x + 10 + (i % 2) * 220f, y + (i / 2) * 26f, 210f, 24f), picks[i].Item2))
             {
-                GUI.Label(new Rect(rect.x + 10, y, 340, 22), label);
+                _classPickPending = picks[i].Item1;
+            }
+
+            GUI.color = Color.white;
+        }
+
+        y += 60f;
+        var canConfirm = !string.IsNullOrEmpty(_classPickPending) && _level >= 20 && _classId == "adventurer";
+        var confirm = canConfirm
+            ? "Confirm " + ClassPretty(_classPickPending)
+            : (_classId != "adventurer" ? "Already classed" : "Need L20 + a pick");
+        GUI.enabled = canConfirm;
+        if (GUI.Button(new Rect(rect.x + 10, y, 340, 26), confirm))
+        {
+            _input?.RequestChooseClass(_classPickPending);
+            _showClassService = false;
+            _classPickPending = "";
+        }
+
+        GUI.enabled = true;
+        if (GUI.Button(new Rect(rect.x + rect.width - 80, rect.y + rect.height - 30, 70, 24), "Exit"))
+        {
+            _showClassService = false;
+        }
+    }
+
+    private void DrawEnhancePanel()
+    {
+        if (!_showEnhance)
+        {
+            return;
+        }
+
+        var slots = new[]
+        {
+            ("mainhand", "Weapon", EquipId(_weapon)),
+            ("armor", "Armor", EquipId(_armor)),
+            ("helm", "Helm", EquipId(_helm)),
+            ("boots", "Boots", EquipId(_boots)),
+            ("gloves", "Gloves", EquipId(_gloves)),
+            ("amulet", "Amulet", EquipId(_amulet)),
+            ("ring1", "Ring A", EquipId(_ring1)),
+            ("ring2", "Ring B", EquipId(_ring2)),
+            ("subclass", "Subclass", EquipId(_subclass)),
+        };
+        var rect = new Rect(40f, 60f, 480f, 380f);
+        GUI.color = new Color(0.1f, 0.11f, 0.14f, 0.95f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 400, 22), "Enhance (gold + star dust, max +5)");
+        var y = rect.y + 36f;
+        for (var i = 0; i < slots.Length; i++)
+        {
+            var key = slots[i].Item1;
+            var label = slots[i].Item2;
+            var id = slots[i].Item3;
+            var lv = 0;
+            _enhanceLevels.TryGetValue(key, out lv);
+            var next = lv + 1;
+            var gold = 50 * next;
+            var dust = 2 * next;
+            var row = id + (string.IsNullOrEmpty(id) ? " (empty)" : "") + "  +" + lv + "  → " + gold + "g / " + dust + " dust";
+            if (GUI.Button(new Rect(rect.x + 10, y, 460, 22), "Enhance " + label + ": " + row))
+            {
+                if (!string.IsNullOrEmpty(id) && lv < 5)
+                {
+                    _input?.RequestEnhance(key);
+                }
             }
 
             y += 24f;
         }
 
-        if (_interactKind == "homestone")
+        if (GUI.Button(new Rect(rect.x + rect.width - 80, rect.y + rect.height - 30, 70, 24), "Exit"))
         {
-            if (GUI.Button(new Rect(rect.x + 10, y, 160, 24), "Set home"))
-            {
-                _input?.RequestHomestone("set");
-            }
-
-            if (GUI.Button(new Rect(rect.x + 180, y, 160, 24), "Teleport home"))
-            {
-                _input?.RequestHomestone("teleport");
-            }
-
-            y += 28f;
-        }
-
-        if (GUI.Button(new Rect(rect.x + rect.width - 80, rect.y + rect.height - 30, 70, 24), "Close"))
-        {
-            _showInteract = false;
+            _showEnhance = false;
         }
     }
 
@@ -4620,11 +6256,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var y = GuiH - 210f;
-        GUI.color = new Color(0.08f, 0.1f, 0.14f, 0.82f);
-        GUI.DrawTexture(new Rect(20f, y, 420f, 22f), Texture2D.whiteTexture);
+        var y = GuiH - 214f;
+        GUI.color = new Color(0.08f, 0.1f, 0.14f, 0.88f);
+        GUI.DrawTexture(new Rect(20f, y, 440f, 28f), Texture2D.whiteTexture);
         GUI.color = new Color(0.95f, 0.88f, 0.55f, 1f);
-        GUI.Label(new Rect(24f, y + 2f, 412f, 18f), _questTrackerLine);
+        GUI.Label(new Rect(24f, y + 2f, 432f, 24f), "J  " + _questTrackerLine);
         GUI.color = Color.white;
     }
 
@@ -4673,11 +6309,20 @@ public sealed class NetworkBootstrap : MonoBehaviour
         {
             var y = rect.y + 24f + i * 28f;
             var label = "Lv" + _partyMemberLevel[i] + " " + _partyMemberClass[i] + " " + _partyMemberNames[i];
-            GUI.Label(new Rect(rect.x + 8, y, 220, 14), label);
+            if (GUI.Button(new Rect(rect.x + 8, y, 160, 24), label, GUI.skin.label))
+            {
+                var pid = _partyMemberIds[i];
+                if (!string.IsNullOrEmpty(pid) && _world != null)
+                {
+                    _world.SetLockTarget(pid);
+                    _input?.SetTarget(pid);
+                    _status = "lock-on " + _partyMemberNames[i];
+                }
+            }
             var hpRatio = _partyMemberMaxHp[i] <= 0 ? 0f : (float)_partyMemberHp[i] / _partyMemberMaxHp[i];
             var mpRatio = _partyMemberMaxMp[i] <= 0 ? 0f : (float)_partyMemberMp[i] / _partyMemberMaxMp[i];
             DrawResourceBar(new Rect(rect.x + 8, y + 14, 160, 5), hpRatio, Color.red, "");
-            DrawResourceBar(new Rect(rect.x + 8, y + 20, 160, 4), mpRatio, new Color(0.3f, 0.55f, 1f), "");
+            DrawResourceBar(new Rect(rect.x + 8, y + 20, 160, 4), mpRatio, new Color(0.3f, 0.55f, 1f, 1f), "");
         }
 
         if (GUI.Button(new Rect(rect.x + rect.width - 70f, rect.y + 4, 60, 20), "Leave"))
@@ -4829,7 +6474,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             y += 24f;
         }
 
-        if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 28, 100, 22), "Close"))
+        if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 28, 100, 22), "Exit"))
         {
             _showSkillTree = false;
         }
@@ -4869,7 +6514,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             _input?.RequestAuctionList();
         }
 
-        if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 28, 100, 22), "Close"))
+        if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 28, 100, 22), "Exit"))
         {
             _showAuction = false;
         }
@@ -4890,9 +6535,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
         var mins = leftMs / 60000;
         var secs = (leftMs % 60000) / 1000;
-        var phase = _bossPhase > 0 ? "  phase " + _bossPhase : "";
-        GUI.Label(new Rect(GuiW * 0.5f - 90f, 90f, 200, 20),
-            "Instance " + mins + "m " + secs + "s" + phase);
+        var urgent = leftMs < 30000;
+        var phase = _bossPhase > 0 ? "  ·  phase " + _bossPhase : "";
+        var y = 56f;
+        var rect = new Rect(GuiW * 0.5f - 120f, y, 240f, 22f);
+        GUI.color = urgent
+            ? new Color(0.35f, 0.08f, 0.08f, 0.88f)
+            : new Color(0.08f, 0.1f, 0.14f, 0.82f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = urgent ? new Color(1f, 0.55f, 0.4f, 1f) : new Color(0.85f, 0.9f, 1f, 1f);
+        GUI.Label(rect, "  " + mins + ":" + secs.ToString("00") + phase);
+        GUI.color = Color.white;
     }
 
     private void DrawBossFrame()
@@ -4906,9 +6559,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var phase = ratio > 0.66f ? 1 : (ratio > 0.33f ? 2 : 3);
         var width = Mathf.Min(520f, GuiW - 80f);
         var rect = new Rect(GuiW * 0.5f - width * 0.5f, 8f, width, 44f);
-        GUI.color = new Color(0.08f, 0.07f, 0.1f, 0.92f);
-        GUI.DrawTexture(rect, Texture2D.whiteTexture);
-        GUI.color = Color.white;
+        UiChrome.Panel(rect, new Color(0.85f, 0.2f, 0.22f, 1f));
         GUI.Label(new Rect(rect.x + 8, rect.y + 2, width - 16, 18), name + "  ·  Phase " + phase);
         var bar = new Rect(rect.x + 8, rect.y + 22, width - 16, 14);
         GUI.color = new Color(0.2f, 0.12f, 0.12f, 1f);
@@ -5053,25 +6704,34 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var rect = new Rect(GuiW * 0.5f - 160f, GuiH * 0.5f - 160f, 320f, 320f);
+        var rect = new Rect(GuiW * 0.5f - 160f, GuiH * 0.5f - 180f, 320f, 360f);
         GUI.color = new Color(0.09f, 0.1f, 0.14f, 0.96f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = Color.white;
         GUI.Label(new Rect(rect.x + 8, rect.y + 6, 300, 18), "Settings (Esc / U)");
         _showNameplates = GUI.Toggle(new Rect(rect.x + 8, rect.y + 32, 300, 20), _showNameplates, " Show nameplates");
-        GUI.Label(new Rect(rect.x + 8, rect.y + 56, 300, 18), "UI scale " + _uiScale.ToString("0.0"));
+        var music = GUI.Toggle(new Rect(rect.x + 8, rect.y + 54, 300, 20), _musicOn, " Map music");
+        if (music != _musicOn)
+        {
+            _musicOn = music;
+            PlayerPrefs.SetInt("gaaacha_music", _musicOn ? 1 : 0);
+            PlayerPrefs.Save();
+            SoundCatalog.SetMusicEnabled(_musicOn);
+        }
+
+        GUI.Label(new Rect(rect.x + 8, rect.y + 80, 300, 18), "UI scale " + _uiScale.ToString("0.0"));
         var prevScale = _uiScale;
-        _uiScale = GUI.HorizontalSlider(new Rect(rect.x + 8, rect.y + 78, 300, 18), _uiScale, 0.8f, 1.4f);
+        _uiScale = GUI.HorizontalSlider(new Rect(rect.x + 8, rect.y + 102, 300, 18), _uiScale, 0.8f, 1.4f);
         if (Mathf.Abs(_uiScale - prevScale) > 0.001f)
         {
             PersistUiScale();
         }
 
-        GUI.Label(new Rect(rect.x + 8, rect.y + 104, 300, 18), "Resolution");
+        GUI.Label(new Rect(rect.x + 8, rect.y + 126, 300, 18), "Resolution");
         var labels = new[] { "1280x720", "1600x900", "1920x1080", "Native" };
         for (var i = 0; i < labels.Length; i++)
         {
-            var r = new Rect(rect.x + 8 + (i % 2) * 150, rect.y + 126 + (i / 2) * 26, 144, 22);
+            var r = new Rect(rect.x + 8 + (i % 2) * 150, rect.y + 148 + (i / 2) * 26, 144, 22);
             var on = _resPresetIndex == i;
             if (GUI.Toggle(r, on, " " + labels[i]) && !on)
             {
@@ -5079,17 +6739,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
         }
 
-        if (GUI.Button(new Rect(rect.x + 8, rect.y + 186, 140, 26), "Apply resolution"))
+        if (GUI.Button(new Rect(rect.x + 8, rect.y + 208, 140, 26), "Apply resolution"))
         {
             ApplyResolutionPreset(_resPresetIndex);
         }
 
 #if UNITY_EDITOR
-        GUI.Label(new Rect(rect.x + 8, rect.y + 218, 300, 36),
+        GUI.Label(new Rect(rect.x + 8, rect.y + 240, 300, 36),
             "Editor: set Game view size to match. Builds apply Screen.SetResolution.");
 #else
-        GUI.Label(new Rect(rect.x + 8, rect.y + 218, 300, 36),
-            "Cam: Z/C or RMB-drag  |  WASD move  |  I inventory");
+        GUI.Label(new Rect(rect.x + 8, rect.y + 240, 300, 36),
+            "Cam: MMB-drag yaw  |  WASD move  |  I inventory");
 #endif
 
         if (GUI.Button(new Rect(rect.x + 8, rect.y + rect.height - 40, 140, 28), "Log out"))
@@ -5158,46 +6818,59 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var rect = new Rect(GuiW * 0.5f - 190f, GuiH * 0.5f - 190f, 380f, 380f);
-        GUI.color = new Color(0.08f, 0.09f, 0.13f, 0.97f);
-        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        var rect = new Rect(GuiW * 0.5f - 190f, GuiH * 0.5f - 220f, 380f, 440f);
+        UiChrome.Panel(rect, UiChrome.Gold);
         GUI.color = Color.white;
-        GUI.Label(new Rect(rect.x + 10, rect.y + 8, 360, 22), _bannerName + "  (G to close)");
-        GUI.Label(new Rect(rect.x + 10, rect.y + 34, 360, 20),
+        SpriteCatalog.DrawGui(new Rect(rect.x + 10, rect.y + 8, 360f, 72f), SpriteCatalog.BannerArt(), Color.white);
+        GUI.Label(new Rect(rect.x + 10, rect.y + 84, 360, 22), _bannerName + "  (G to close)");
+        GUI.Label(new Rect(rect.x + 10, rect.y + 108, 360, 20),
             "Pity " + _pity + " / " + _hardPity + "  (hard)");
-        GUI.Label(new Rect(rect.x + 10, rect.y + 56, 360, 20),
+        GUI.Label(new Rect(rect.x + 10, rect.y + 128, 360, 20),
             "Soft pity from pull " + _softPityStart);
-        GUI.Label(new Rect(rect.x + 10, rect.y + 78, 360, 20),
+        GUI.Label(new Rect(rect.x + 10, rect.y + 148, 360, 20),
             "Next SSR  " + (_nextSsr * 100f).ToString("0.0") + "%");
-        GUI.Label(new Rect(rect.x + 10, rect.y + 100, 360, 36),
+        GUI.Label(new Rect(rect.x + 10, rect.y + 168, 360, 36),
             "Rates  SSR " + (_baseSsr * 100f).ToString("0") + "%   SR " + (_baseSr * 100f).ToString("0") +
             "%   10-pull: at least 1 SR");
-        GUI.Label(new Rect(rect.x + 10, rect.y + 140, 360, 20), "Last  " + _lastDrop);
+        GUI.Label(new Rect(rect.x + 10, rect.y + 204, 360, 20), "Last  " + _lastDrop);
+        var lastRarity = UiChrome.Rarity(_lastDrop);
+        UiChrome.Border(new Rect(rect.x + 8, rect.y + 202, 364, 22), lastRarity, 1.5f);
+        if (!string.IsNullOrEmpty(_lastDrop))
+        {
+            SpriteCatalog.DrawGui(new Rect(rect.x + 330, rect.y + 198, 36f, 36f),
+                _lastDrop.StartsWith("char_") || _lastDrop.StartsWith("card_")
+                    ? SpriteCatalog.Portrait(_lastDrop)
+                    : SpriteCatalog.ItemIcon(_lastDrop.Split(' ')[0]),
+                Color.white);
+        }
         if (!string.IsNullOrEmpty(_gachaSummary))
         {
-            GUI.Label(new Rect(rect.x + 10, rect.y + 162, 360, 20), "This pull  " + _gachaSummary);
+            GUI.Label(new Rect(rect.x + 10, rect.y + 226, 360, 20), "This pull  " + _gachaSummary);
         }
 
-        GUI.Label(new Rect(rect.x + 10, rect.y + 188, 360, 36),
-            "Pool: class cards + spirits + gear + Aurel/Nyla portraits.\nPortrait: " + _skin);
-        GUI.Label(new Rect(rect.x + 10, rect.y + 226, 360, 20),
+        GUI.Label(new Rect(rect.x + 10, rect.y + 248, 360, 36),
+            "Pool: portraits, spirits, gear. Classes are chosen in town.\nPortrait: " + _skin);
+        GUI.Label(new Rect(rect.x + 10, rect.y + 286, 360, 20),
             "1-pull: " + _pullCostDust + " dust or 1 ticket   10-pull: " + _tenPullCostDust +
             " dust or 10 tickets");
 
-        if (GUI.Button(new Rect(rect.x + 10, rect.y + 256, 170, 36), "Pull x1"))
+        if (GUI.Button(new Rect(rect.x + 10, rect.y + 314, 170, 36), "Pull x1"))
         {
+            SoundCatalog.Play(SoundCatalog.Id.UiClick);
             _input?.RequestGacha(1);
             _status = "sent gacha";
         }
 
-        if (GUI.Button(new Rect(rect.x + 200, rect.y + 256, 170, 36), "Pull x10"))
+        if (GUI.Button(new Rect(rect.x + 200, rect.y + 314, 170, 36), "Pull x10"))
         {
+            SoundCatalog.Play(SoundCatalog.Id.UiClick);
             _input?.RequestGacha(10);
             _status = "sent 10-pull";
         }
 
         if (GUI.Button(new Rect(rect.x + 10, rect.y + rect.height - 40, 360, 28), "Close"))
         {
+            SoundCatalog.Play(SoundCatalog.Id.UiClick);
             _showGacha = false;
         }
     }
@@ -5210,8 +6883,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         return _level < 20
-            ? "  · Class card from level 20"
-            : "  · Use a class card (banner or Card Broker)";
+            ? "  · Class Master at L20"
+            : "  · Talk to the Class Master";
     }
 
     private void MaybeStartTutorial()
@@ -5378,8 +7051,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = Color.white;
         GUI.Label(new Rect(rect.x + 12, rect.y + 12, 336, 40), "You died.");
-        GUI.Label(new Rect(rect.x + 12, rect.y + 40, 336, 24), "Respawn at your Homestone.");
-        if (GUI.Button(new Rect(rect.x + 12, rect.y + 80, 336, 40), "Respawn at Homestone"))
+        GUI.Label(new Rect(rect.x + 12, rect.y + 40, 336, 24), "Respawn at this map's spawn.");
+        if (GUI.Button(new Rect(rect.x + 12, rect.y + 80, 336, 40), "Respawn"))
         {
             _input?.RequestRespawn();
             _showDeath = false;
@@ -5394,16 +7067,287 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        var rect = new Rect(GuiW * 0.5f - 190f, GuiH * 0.5f - 90f, 380f, 180f);
+        var rect = new Rect(GuiW * 0.5f - 190f, GuiH * 0.5f - 110f, 380f, 220f);
         GUI.color = new Color(0.12f, 0.1f, 0.05f, 0.97f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = Color.white;
-        GUI.Label(new Rect(rect.x + 12, rect.y + 10, 356, 28), "Class change — " + _classChangeTitle);
-        GUI.Label(new Rect(rect.x + 12, rect.y + 42, 356, 70), _classChangeBody);
-        if (GUI.Button(new Rect(rect.x + 12, rect.y + 130, 356, 32), "Continue"))
+        SpriteCatalog.DrawGui(new Rect(rect.x + 12, rect.y + 12, 72f, 72f),
+            SpriteCatalog.ClassCardArt(_classId), Color.white);
+        GUI.Label(new Rect(rect.x + 96, rect.y + 10, 272, 28), "Class change — " + _classChangeTitle);
+        GUI.Label(new Rect(rect.x + 96, rect.y + 42, 272, 70), _classChangeBody);
+        if (GUI.Button(new Rect(rect.x + 12, rect.y + 170, 356, 32), "Continue"))
         {
             _showClassChange = false;
         }
+    }
+
+    private void DrawMinimapHud()
+    {
+        if (_world == null || !_inWorld || _gatePhase < 3 || _showFullMap)
+        {
+            _minimapArea = default;
+            return;
+        }
+
+        var maxR = Mathf.Max(12, Mathf.Max(_world.MapWidth, _world.MapHeight));
+        _minimapRadius = Mathf.Clamp(_minimapRadius, 8, maxR);
+        const float boxInner = 148f;
+        var span = _minimapRadius * 2 + 1;
+        var cell = boxInner / span;
+        _minimapCell = cell;
+        var box = new Rect(GuiW - boxInner - 18f, 8f, boxInner + 10f, boxInner + 24f);
+        UiChrome.Panel(box, UiChrome.Gold);
+        GUI.Label(new Rect(box.x + 6f, box.y + 2f, box.width - 12f, 16f),
+            MapPretty(_world.MapId) + "  M  ·  wheel");
+        _minimapArea = new Rect(box.x + 5f, box.y + 18f, boxInner, boxInner);
+        DrawMapPixels(_minimapArea, true, cell);
+    }
+
+    private void DrawFullMapOverlay()
+    {
+        if (!_showFullMap || _world == null || !_inWorld || _gatePhase < 3)
+        {
+            _fullMapArea = default;
+            return;
+        }
+
+        GUI.color = new Color(0f, 0f, 0f, 0.72f);
+        GUI.DrawTexture(new Rect(0f, 0f, GuiW, GuiH), Texture2D.whiteTexture);
+        GUI.color = Color.white;
+
+        var mw = Mathf.Max(1, _world.MapWidth);
+        var mh = Mathf.Max(1, _world.MapHeight);
+        var cell = Mathf.Max(3f, Mathf.Floor(Mathf.Min((GuiW - 80f) / mw, (GuiH - 80f) / mh)));
+        var mapPxW = mw * cell;
+        var mapPxH = mh * cell;
+        var panel = new Rect(
+            (GuiW - mapPxW) * 0.5f - 10f,
+            (GuiH - mapPxH) * 0.5f - 24f,
+            mapPxW + 20f,
+            mapPxH + 58f);
+        UiChrome.Panel(panel, UiChrome.Gold);
+        GUI.Label(new Rect(panel.x + 10f, panel.y + 4f, panel.width - 90f, 18f),
+            MapPretty(_world.MapId) + "  ·  gold you  red foe  cyan gate");
+        GUI.Label(new Rect(panel.x + 10f, panel.y + panel.height - 18f, panel.width - 20f, 16f),
+            "violet npc   blue player   dark wall   brown prop   orange hazard");
+        if (GUI.Button(new Rect(panel.xMax - 78f, panel.y + 3f, 68f, 20f), "Close"))
+        {
+            _showFullMap = false;
+            _status = "map closed";
+        }
+
+        DrawMapPixels(new Rect(panel.x + 10f, panel.y + 24f, mapPxW, mapPxH), false, cell);
+        _fullMapArea = new Rect(panel.x + 10f, panel.y + 24f, mapPxW, mapPxH);
+        _fullMapCell = cell;
+    }
+
+    private void DrawMapPixels(Rect area, bool followPlayer, float cell)
+    {
+        var cols = Mathf.Max(1, Mathf.RoundToInt(area.width / cell));
+        var rows = Mathf.Max(1, Mathf.RoundToInt(area.height / cell));
+        var px = MapPathing.TileOf(_x);
+        var py = MapPathing.TileOf(_y);
+
+        for (var gy = 0; gy < rows; gy++)
+        {
+            for (var gx = 0; gx < cols; gx++)
+            {
+                int tx;
+                int ty;
+                if (followPlayer)
+                {
+                    tx = px + gx - cols / 2;
+                    ty = py + (rows / 2 - gy);
+                }
+                else
+                {
+                    tx = gx;
+                    ty = rows - 1 - gy;
+                }
+
+                var r = new Rect(area.x + gx * cell, area.y + gy * cell, cell - 0.4f, cell - 0.4f);
+                GUI.color = MinimapCellColor(tx, ty);
+                GUI.DrawTexture(r, Texture2D.whiteTexture);
+            }
+        }
+
+        DrawMinimapMarks(area, followPlayer, cell, cols, rows);
+        GUI.color = Color.white;
+    }
+
+    private void DrawMinimapMarks(Rect area, bool followPlayer, float cell, int cols, int rows)
+    {
+        if (_world == null)
+        {
+            return;
+        }
+
+        _minimapMarks.Clear();
+        _world.CopyMinimapMarks(_minimapMarks);
+        DrawMinimapMarksOf(area, followPlayer, cell, cols, rows, "npc");
+        DrawMinimapMarksOf(area, followPlayer, cell, cols, rows, "portal");
+        DrawMinimapMarksOf(area, followPlayer, cell, cols, rows, "monster");
+        DrawMinimapMarksOf(area, followPlayer, cell, cols, rows, "player");
+        DrawMinimapMarksOf(area, followPlayer, cell, cols, rows, "self");
+    }
+
+    private void DrawMinimapMarksOf(Rect area, bool followPlayer, float cell, int cols, int rows, string kind)
+    {
+        var size = Mathf.Max(3.2f, cell * (kind == "self" ? 1.15f : 0.85f));
+        for (var i = 0; i < _minimapMarks.Count; i++)
+        {
+            var m = _minimapMarks[i];
+            if (m.Kind != kind)
+            {
+                continue;
+            }
+
+            if (!TryWorldToMinimap(area, followPlayer, cell, cols, rows, m.X, m.Y, out var mx, out var my))
+            {
+                continue;
+            }
+
+            var mark = new Rect(mx - size * 0.5f, my - size * 0.5f, size, size);
+            GUI.color = Color.black;
+            GUI.DrawTexture(new Rect(mark.x - 1f, mark.y - 1f, mark.width + 2f, mark.height + 2f), Texture2D.whiteTexture);
+            GUI.color = MinimapMarkColor(kind);
+            GUI.DrawTexture(mark, Texture2D.whiteTexture);
+        }
+    }
+
+    private bool TryWorldToMinimap(Rect area, bool followPlayer, float cell, int cols, int rows,
+        float wx, float wy, out float mx, out float my)
+    {
+        if (followPlayer)
+        {
+            mx = area.x + (cols / 2 + 0.5f) * cell + (wx - _x) * cell;
+            my = area.y + (rows / 2 + 0.5f) * cell - (wy - _y) * cell;
+        }
+        else
+        {
+            mx = area.x + (wx + 0.5f) * cell;
+            my = area.y + (rows - 0.5f - wy) * cell;
+        }
+
+        return mx >= area.x - 2f && mx <= area.xMax + 2f && my >= area.y - 2f && my <= area.yMax + 2f;
+    }
+
+    private static Color MinimapMarkColor(string kind)
+    {
+        if (kind == "self")
+        {
+            return new Color(1f, 0.92f, 0.22f, 1f);
+        }
+
+        if (kind == "player")
+        {
+            return new Color(0.35f, 0.6f, 1f, 1f);
+        }
+
+        if (kind == "monster")
+        {
+            return new Color(1f, 0.22f, 0.16f, 1f);
+        }
+
+        if (kind == "portal")
+        {
+            return new Color(0.15f, 0.95f, 1f, 1f);
+        }
+
+        if (kind == "npc")
+        {
+            return new Color(0.82f, 0.42f, 1f, 1f);
+        }
+
+        return Color.white;
+    }
+
+    private Color MinimapCellColor(int tx, int ty)
+    {
+        if (_world == null || !_world.InMapBounds(tx, ty))
+        {
+            return new Color(0.04f, 0.04f, 0.06f, 1f);
+        }
+
+        if (_world.IsPropCell(tx, ty))
+        {
+            return new Color(0.52f, 0.34f, 0.16f, 1f);
+        }
+
+        if (_world.IsWallCell(tx, ty))
+        {
+            return new Color(0.06f, 0.07f, 0.09f, 1f);
+        }
+
+        if (_world.IsHazardCell(tx, ty))
+        {
+            return new Color(0.85f, 0.38f, 0.16f, 1f);
+        }
+
+        return MinimapFloorColor(_world.MapId, ((tx + ty) & 1) == 0);
+    }
+
+    private static Color MinimapFloorColor(string mapId, bool even)
+    {
+        var id = mapId ?? "";
+        Color a;
+        Color b;
+        if (id.IndexOf("marsh") >= 0)
+        {
+            a = new Color(0.28f, 0.32f, 0.18f);
+            b = new Color(0.22f, 0.26f, 0.14f);
+        }
+        else if (id.StartsWith("town"))
+        {
+            a = new Color(0.42f, 0.34f, 0.24f);
+            b = new Color(0.48f, 0.48f, 0.46f);
+        }
+        else if (id.StartsWith("dungeon") || id.StartsWith("tower"))
+        {
+            a = new Color(0.32f, 0.28f, 0.30f);
+            b = new Color(0.26f, 0.24f, 0.26f);
+        }
+        else if (id.StartsWith("field"))
+        {
+            a = new Color(0.28f, 0.48f, 0.22f);
+            b = new Color(0.24f, 0.40f, 0.18f);
+        }
+        else
+        {
+            a = new Color(0.36f, 0.32f, 0.22f);
+            b = new Color(0.32f, 0.28f, 0.18f);
+        }
+
+        return even ? a : b;
+    }
+
+    private static string MapPretty(string mapId)
+    {
+        return string.IsNullOrEmpty(mapId) ? "Map" : mapId.Replace('_', ' ');
+    }
+
+    private void DrawHelpPanel()
+    {
+        if (!_showHelp)
+        {
+            return;
+        }
+
+        var rect = new Rect(GuiW * 0.5f - 230f, GuiH * 0.18f, 460f, 340f);
+        UiChrome.Panel(rect, UiChrome.Gold);
+        GUI.color = Color.white;
+        GUI.Label(new Rect(rect.x + 12, rect.y + 8, 436, 24), "Controls  (F1 to close)");
+        GUI.Label(new Rect(rect.x + 12, rect.y + 36, 436, 280),
+            "WASD / RMB  path  ·  minimap wheel zoom  ·  minimap/M RMB  route\n" +
+            "Map: gold you  red foe  cyan gate  violet npc  blue player  dark wall\n" +
+            "Tab  cycle foes    Shift+Tab  clear lock    click player  ally\n" +
+            "Space  primary AA (sticky)    Z  offhand AA (sticky)    Rest sits + heals\n" +
+            "Shift+1–0  emotes    I  inventory (drag / paperdoll / RMB)\n" +
+            "Hotbar follows your class. Ground skills: click to aim.\n" +
+            "R  food    G banner    J quests    M map    P spirit    Esc settings\n" +
+            "Trainer spends skill points. Tomes grant +1 point.\n" +
+            "Class cards at level 10 (or inventory class toggle).\n" +
+            "F1 this help   F8 sprite audit   F9 log dump   F10 log verbosity");
     }
 
     private void DrawTutorialTips()
@@ -5643,19 +7587,24 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void DrawItemTooltip()
     {
-        if (string.IsNullOrEmpty(_itemTooltip))
+        var text = !string.IsNullOrEmpty(_hoverItemTip) ? _hoverItemTip : _itemTooltip;
+        if (string.IsNullOrEmpty(text))
         {
             return;
         }
 
-        var mouse = Mouse.current;
-        var pos = mouse != null ? mouse.position.ReadValue() : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
-        var gui = ScreenToGui(pos);
-        var rect = new Rect(gui.x + 12f, gui.y + 12f, 180f, 54f);
-        GUI.color = new Color(0.1f, 0.1f, 0.12f, 0.95f);
+        var gui = GuiPointer();
+        var w = 220f;
+        var h = 18f + 16f * Mathf.Max(2, text.Split('\n').Length);
+        var x = Mathf.Min(gui.x + 14f, GuiW - w - 8f);
+        var y = Mathf.Min(gui.y + 16f, GuiH - h - 8f);
+        var rect = new Rect(x, y, w, h);
+        GUI.color = new Color(0.08f, 0.08f, 0.1f, 0.94f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = new Color(0.85f, 0.72f, 0.35f, 1f);
+        GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, 2f), Texture2D.whiteTexture);
         GUI.color = Color.white;
-        GUI.Label(new Rect(rect.x + 6, rect.y + 4, rect.width - 12, rect.height - 8), _itemTooltip);
+        GUI.Label(new Rect(rect.x + 8, rect.y + 6, rect.width - 14, rect.height - 10), text);
     }
 
     private void DrawBuffRow()
@@ -5672,8 +7621,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
 
             var rect = new Rect(x + i * 44f, y, 40f, 40f);
-            GUI.color = BuffIconColor(b.Kind, b.Id);
-            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            UiChrome.Slot(rect, BuffIconColor(b.Kind, b.Id));
             GUI.color = Color.black;
             GUI.Label(new Rect(rect.x + 2, rect.y + 2, rect.width - 4, 22), BuffIconLabel(b.Kind, b.Id));
             GUI.color = Color.white;
@@ -5722,17 +7670,26 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void SeedDefaultSkillHud()
     {
-        SetSkillHud("auto_attack", "Auto Attack", 0, 1, 0.7f);
-        SetSkillHud("shot", "Shot", 8, 2, 0.4f);
-        SetSkillHud("shockwave", "Shockwave", 16, 1, 0.45f);
-        SetSkillHud("dash", "Dash", 10, 0, 0.25f);
-        SetSkillHud("rally", "Rally", 12, 0, 0.4f);
-        SetSkillHud("hook_shot", "Hook Shot", 12, 1, 0.45f);
-        SetSkillHud("mend", "Mend", 12, 0, 0.5f);
-        SetSkillHud("decoy", "Decoy", 14, 0, 0.35f);
+        SetSkillHud("auto_attack", "Auto Attack", 0, 1, 1.225f);
+        SetSkillHud("shot", "Shot", 8, 1, 0.7f);
+        SetSkillHud("shockwave", "Shockwave", 16, 1, 0.788f, "GROUND_CIRCLE", "hostile", "ground", 3.5f, 2.5f);
+        SetSkillHud("dash", "Dash", 10, 0, 0.438f);
+        SetSkillHud("rally", "Rally", 12, 0, 0.7f, "NO_TARGET", "friendly", "caster", 0f, 4f);
+        SetSkillHud("hook_shot", "Hook Shot", 12, 1, 0.788f);
+        SetSkillHud("mend", "Mend", 12, 0, 0.875f, "ALLY_TARGET", "friendly", "none", 5f, 0f);
+        SetSkillHud("decoy", "Decoy", 14, 0, 0.613f);
+        SetSkillHud("rest", "Rest", 0, 0, 0.7f);
+        SetSkillHud("powerup", "Powerup", 10, 0, 0.875f);
+        SetSkillHud("cleave", "Cleave", 12, 1, 0.788f, "GROUND_CIRCLE", "hostile", "ground", 2.2f, 2.4f);
+        SetSkillHud("arrow_rain", "Arrow Rain", 14, 1, 0.875f, "GROUND_CIRCLE", "hostile", "ground", 5f, 2.8f);
+        SetSkillHud("arcane_nova", "Arcane Nova", 16, 1, 0.875f, "GROUND_CIRCLE", "hostile", "ground", 4f, 2.6f);
+        SetSkillHud("thunderstorm", "Thunderstorm", 18, 1, 0.963f, "GROUND_CIRCLE", "hostile", "ground", 5f, 3.2f);
+        SetSkillHud("explosion", "Explosion", 20, 1, 1.05f, "GROUND_CIRCLE", "hostile", "ground", 4.5f, 3.4f);
+        SetSkillHud("knife_fan", "Knife Fan", 10, 1, 0.7f, "SKILLSHOT_CONE", "hostile", "none", 3.2f, 0f);
     }
 
-    private void SetSkillHud(string id, string name, int mana, int slot, float castSec)
+    private void SetSkillHud(string id, string name, int mana, int slot, float castSec,
+        string targeting = null, string affects = null, string aoeOrigin = null, float range = 0f, float aoeRadius = 0f)
     {
         _skillHud[id] = new SkillHudInfo
         {
@@ -5740,6 +7697,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
             ManaCost = mana,
             WeaponSlot = slot,
             CastSec = castSec,
+            TargetingType = targeting ?? "",
+            Affects = affects ?? "",
+            AoeOrigin = aoeOrigin ?? "",
+            Range = range,
+            AoeRadius = aoeRadius,
         };
         if (!_cooldownMs.ContainsKey(id))
         {
@@ -5749,7 +7711,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private void ParseSkillCatalog(string json)
     {
-        var slice = JsonUtil.SliceAround(json, "\"catalog\"", 0, 2800);
+        var slice = JsonUtil.SliceAround(json, "\"catalog\"", 0, 8000);
         if (string.IsNullOrEmpty(slice))
         {
             return;
@@ -5764,7 +7726,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 break;
             }
 
-            var obj = slice.Substring(idx, Mathf.Min(180, slice.Length - idx));
+            var obj = slice.Substring(idx, Mathf.Min(420, slice.Length - idx));
             var id = JsonUtil.ExtractString(obj, "id");
             cursor = idx + 6;
             if (string.IsNullOrEmpty(id))
@@ -5776,6 +7738,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
             JsonUtil.TryInt(obj, "manaCost", out var mana);
             JsonUtil.TryInt(obj, "weaponSlot", out var slot);
             JsonUtil.TryNumber(obj, "cooldownMs", out var cd);
+            JsonUtil.TryNumber(obj, "range", out var range);
+            JsonUtil.TryNumber(obj, "aoeRadius", out var aoeRadius);
+            var targeting = JsonUtil.ExtractString(obj, "targetingType");
+            var affects = JsonUtil.ExtractString(obj, "affects");
+            var aoeOrigin = JsonUtil.ExtractString(obj, "aoeOrigin");
             var prev = _skillHud.TryGetValue(id, out var existing) ? existing : default;
             _skillHud[id] = new SkillHudInfo
             {
@@ -5783,10 +7750,20 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 ManaCost = mana,
                 WeaponSlot = slot,
                 CastSec = prev.CastSec > 0.05f ? prev.CastSec : SkillCastSec(id),
+                TargetingType = string.IsNullOrEmpty(targeting) ? prev.TargetingType : targeting,
+                Affects = string.IsNullOrEmpty(affects) ? prev.Affects : affects,
+                AoeOrigin = string.IsNullOrEmpty(aoeOrigin) ? prev.AoeOrigin : aoeOrigin,
+                Range = range > 0f ? range : prev.Range,
+                AoeRadius = aoeRadius > 0f ? aoeRadius : prev.AoeRadius,
             };
             if (cd > 0f)
             {
                 _cooldownMs[id] = cd;
+            }
+
+            if (range > 0f)
+            {
+                SkillRanges[id] = range;
             }
         }
     }
@@ -5797,8 +7774,22 @@ public sealed class NetworkBootstrap : MonoBehaviour
         _castLabel = SkillDisplayName(skillId);
         _castDur = SkillCastSec(skillId);
         _castUntil = Time.time + _castDur;
+        _castCommitUntil = Time.time + (_castDur * CastHitFrac);
         // Cooldown sweep comes from sync_cooldowns. Predicting CD here blocked
         // Space/AA after a rejected (out_of_range) cast and broke the chase pipeline.
+    }
+
+    private void CancelLocalCast()
+    {
+        _castSkillId = "";
+        _castLabel = "";
+        _castUntil = 0f;
+        _castCommitUntil = 0f;
+        _queuedSkillId = "";
+        if (_world != null)
+        {
+            _world.InterruptStrike(_world.SelfId);
+        }
     }
 
     private string SkillDisplayName(string id)
@@ -5828,17 +7819,17 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return info.CastSec;
         }
 
-        if (id == "auto_attack")
+        if (id == "auto_attack" || id == "auto_attack_off")
         {
-            return 0.7f;
+            return 1.225f;
         }
 
         if (id == "dash")
         {
-            return 0.25f;
+            return 0.438f;
         }
 
-        return GrayBoxWorld.IsStrikeSkill(id) ? 0.45f : 0.35f;
+        return GrayBoxWorld.IsStrikeSkill(id) ? 0.788f : 0.613f;
     }
 
     private void DrawCastBar()
@@ -5850,11 +7841,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         }
 
         var ratio = _castDur <= 0.01f ? 1f : 1f - Mathf.Clamp01(rem / _castDur);
-        var w = 280f;
-        var rect = new Rect(GuiW * 0.5f - w * 0.5f, SkillBarY - 22f, w, 12f);
-        DrawResourceBar(rect, ratio, new Color(0.95f, 0.78f, 0.25f), "");
-        GUI.color = Color.white;
-        GUI.Label(new Rect(rect.x, rect.y - 16f, w, 16f), _castLabel);
+        var w = 320f;
+        var rect = new Rect(GuiW * 0.5f - w * 0.5f, SkillBarY - 26f, w, 16f);
+        UiChrome.Bar(rect, ratio, UiChrome.Xp, "", _castLabel);
     }
 
     private void DrawSkillBar()
@@ -5876,15 +7865,28 @@ public sealed class NetworkBootstrap : MonoBehaviour
             var slot = SkillWeaponSlot(id);
             var missingHand = unlocked && slot == 2 && !HasSecondaryWeapon();
 
-            GUI.color = !unlocked
-                ? new Color(0.18f, 0.18f, 0.2f, 0.9f)
-                : missingHand
-                    ? new Color(0.22f, 0.2f, 0.18f, 0.92f)
-                    : oom
-                    ? new Color(0.2f, 0.28f, 0.45f, 0.92f)
-                    : SkillColor(id);
-            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            UiChrome.Slot(rect, !unlocked
+                ? new Color(0.3f, 0.3f, 0.34f, 1f)
+                : Color.Lerp(UiChrome.Well, SkillColor(id), 0.55f));
+            var iconTint = !unlocked
+                ? new Color(0.45f, 0.45f, 0.48f, 1f)
+                : rem > 0.04f
+                    ? new Color(0.35f, 0.35f, 0.38f, 1f)
+                    : missingHand
+                        ? new Color(1f, 0.7f, 0.45f, 1f)
+                        : oom
+                            ? new Color(0.55f, 0.7f, 1f, 1f)
+                            : Color.white;
+            SpriteCatalog.DrawGui(
+                new Rect(rect.x + 10f, rect.y + 6f, rect.width - 20f, 32f),
+                SpriteCatalog.SkillIcon(id),
+                iconTint);
             DrawCdSweep(rect, unlocked ? fill : 0f);
+            if (unlocked && rem > 0.04f)
+            {
+                GUI.color = new Color(0.02f, 0.02f, 0.05f, 0.45f);
+                GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            }
             if (unlocked && slot == 1)
             {
                 DrawSlotEdge(rect, new Color(0.95f, 0.82f, 0.28f, 0.95f));
@@ -5898,20 +7900,26 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
             GUI.color = unlocked ? Color.white : new Color(0.7f, 0.7f, 0.72f);
             var key = i == 0 ? "Spc" : i.ToString();
-            var name = ShortName(id);
-            var body = key + "\n" + name;
+            var body = key;
             if (!unlocked)
             {
                 var need = 0;
                 _unlockLevels.TryGetValue(id, out need);
                 body = key + "\n" + (need > 0 ? "L" + need : "—");
             }
-            else if (rem > 0.04f)
-            {
-                body = key + "\n" + rem.ToString("0.0");
-            }
 
-            GUI.Label(new Rect(rect.x + 3, rect.y + 2, rect.width - 6, 36), body);
+            GUI.Label(new Rect(rect.x + 3, rect.y + 2, rect.width - 6, 20), body);
+            if (unlocked && rem > 0.04f)
+            {
+                var cdStyle = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 22,
+                    fontStyle = FontStyle.Bold,
+                };
+                GUI.color = Color.white;
+                GUI.Label(rect, Mathf.CeilToInt(rem).ToString(), cdStyle);
+            }
             var meta = "";
             if (mana > 0)
             {
@@ -5940,6 +7948,15 @@ public sealed class NetworkBootstrap : MonoBehaviour
             }
         }
 
+        var restRect = SkillSlotRect(Mathf.Min(_skillIds != null ? _skillIds.Length : 8, 8));
+        UiChrome.Slot(restRect, new Color(0.35f, 0.55f, 0.4f, 1f));
+        GUI.color = Color.white;
+        GUI.Label(new Rect(restRect.x + 3, restRect.y + 8, restRect.width - 6, 40), "Rest\nsit +2%");
+        if (restRect.Contains(mouse))
+        {
+            _hoverSkillId = "rest";
+        }
+
         DrawSkillTooltip();
         GUI.color = Color.white;
     }
@@ -5958,11 +7975,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
         var key = idx <= 0 ? "Space" : idx.ToString();
         var cd = _cooldownMs.TryGetValue(id, out var c) ? c / 1000f : 0f;
         var weapon = slot == 1
-            ? "Hauptwaffe (AA) — " + WeaponPretty(_weapon)
+            ? "Mainhand — " + WeaponPretty(_weapon)
             : slot == 2
-                ? (HasSecondaryWeapon()
-                    ? "Sekundärwaffe — " + WeaponPretty(_weapon2) + "  (N swaps)"
-                    : "Sekundärwaffe missing — equip a bow")
+                ? "Offhand — " + WeaponPretty(_weapon2)
                 : "No weapon slot";
         var unlocked = SkillUnlocked(id);
         var lockLine = "";
@@ -6004,11 +8019,11 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private static Color SkillColor(string id)
     {
-        if (id == "auto_attack")
+        if (id == "auto_attack" || id == "auto_attack_off")
         {
             return new Color(0.75f, 0.75f, 0.35f, 0.9f);
         }
-        if (NoTargetSkills.Contains(id))
+        if (NoTargetSkills.Contains(id) || id == "rally" || id == "mend" || id == "group_chant" || id == "ally_mend")
         {
             return new Color(0.35f, 0.55f, 0.85f, 0.9f);
         }
@@ -6029,6 +8044,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
         switch (id)
         {
             case "auto_attack": return "AA";
+            case "auto_attack_off": return "Off";
             case "shot": return "Shot";
             case "shockwave": return "Wave";
             case "dash": return "Dash";
@@ -6036,6 +8052,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
             case "hook_shot": return "Hook";
             case "mend": return "Mend";
             case "decoy": return "Decoy";
+            case "rest": return "Rest";
+            case "powerup": return "Power";
+            case "cleave": return "Cleave";
+            case "arrow_rain": return "Rain";
+            case "arcane_nova": return "Nova";
+            case "thunderstorm": return "Storm";
+            case "explosion": return "Boom";
+            case "knife_fan": return "Fan";
             default:
                 if (string.IsNullOrEmpty(id)) return "?";
                 return id.Length <= 6 ? id : id.Substring(0, 6);
@@ -6044,15 +8068,7 @@ public sealed class NetworkBootstrap : MonoBehaviour
 
     private static void DrawResourceBar(Rect rect, float ratio, Color fill, string label)
     {
-        GUI.color = new Color(0f, 0f, 0f, 0.7f);
-        GUI.DrawTexture(rect, Texture2D.whiteTexture);
-        GUI.color = fill;
-        GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width * Mathf.Clamp01(ratio), rect.height), Texture2D.whiteTexture);
-        GUI.color = Color.white;
-        if (!string.IsNullOrEmpty(label))
-        {
-            GUI.Label(new Rect(rect.x, rect.y - 16, rect.width, 16), label);
-        }
+        UiChrome.Bar(rect, ratio, fill, label, null);
     }
 
     private async void OnDestroy()

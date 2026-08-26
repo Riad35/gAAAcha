@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "test": "tsx --test src/gacha.test.ts src/combat.test.ts src/world.test.ts src/social.test.ts src/hub.test.ts src/tower.test.ts src/combat/sessionStore.test.ts src/combat/damage.test.ts src/log.test.ts src/loot.test.ts src/enemy-behavior.test.ts",
+    "test": "tsx --test src/gacha.test.ts src/combat.test.ts src/world.test.ts src/social.test.ts src/hub.test.ts src/tower.test.ts src/combat/sessionStore.test.ts src/combat/damage.test.ts src/log.test.ts src/loot.test.ts src/enemy-behavior.test.ts src/loop.test.ts src/interest.test.ts src/rateLimit.test.ts src/persist.test.ts src/equipRules.test.ts src/mapGrid.test.ts src/cond.test.ts src/mapRuntime.test.ts src/tileCollision.test.ts src/progression.test.ts src/npc-dialog.test.ts",
+    "maps:grid": "tsx scripts/blocked-to-grid.ts",
     "test:client": "tsx src/test-client.ts"
   },
   "dependencies": {

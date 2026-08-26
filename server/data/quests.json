@@ -14,6 +14,7 @@
     ],
     "rewards": {
       "gold": 30,
+      "xp": 80,
       "items": [
         {
           "itemId": "item_homestone",
@@ -39,6 +40,7 @@
     ],
     "rewards": {
       "gold": 50,
+      "xp": 180,
       "items": [
         {
           "itemId": "item_dust",
@@ -69,6 +71,7 @@
     ],
     "rewards": {
       "gold": 90,
+      "xp": 240,
       "items": [
         {
           "itemId": "item_ration",
@@ -92,6 +95,7 @@
     ],
     "rewards": {
       "gold": 40,
+      "xp": 50,
       "items": [
         {
           "itemId": "item_bread",
@@ -116,6 +120,7 @@
     ],
     "rewards": {
       "gold": 20,
+      "xp": 80,
       "items": [
         {
           "itemId": "item_ration",
@@ -140,6 +145,7 @@
     ],
     "rewards": {
       "gold": 60,
+      "xp": 160,
       "items": [
         {
           "itemId": "item_dust",
@@ -165,6 +171,7 @@
     ],
     "rewards": {
       "gold": 120,
+      "xp": 300,
       "items": [
         {
           "itemId": "item_stew",
@@ -189,6 +196,7 @@
     ],
     "rewards": {
       "gold": 100,
+      "xp": 180,
       "items": [
         {
           "itemId": "item_bread",
@@ -213,6 +221,7 @@
     ],
     "rewards": {
       "gold": 140,
+      "xp": 200,
       "items": [
         {
           "itemId": "item_ration",
@@ -238,6 +247,7 @@
     ],
     "rewards": {
       "gold": 300,
+      "xp": 400,
       "items": [
         {
           "itemId": "item_dust",
@@ -252,25 +262,155 @@
     "name": "Choose a Path",
     "chain": "main",
     "giverNpcId": "npc_trainer",
-    "turnInNpcId": "npc_card_vendor",
+    "turnInNpcId": "npc_class_master",
     "requiresQuestId": "q_tower_f5",
     "minLevel": 20,
     "steps": [
       {
         "kind": "talk",
-        "npcId": "npc_card_vendor",
+        "npcId": "npc_class_master",
         "count": 1
       }
     ],
     "rewards": {
       "gold": 80,
+      "xp": 250,
+      "items": []
+    },
+    "dialogue": "Lv20. Speak with the Class Master and choose Fighter, Archer, Mage, or Rogue. This cannot be undone."
+  },
+  {
+    "id": "q_spec_30",
+    "name": "First Specialization",
+    "chain": "side",
+    "giverNpcId": "npc_specialist",
+    "turnInNpcId": "npc_specialist",
+    "minLevel": 30,
+    "steps": [
+      {
+        "kind": "talk",
+        "npcId": "npc_specialist",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 100,
+      "xp": 120,
       "items": [
-        {
-          "itemId": "item_ticket",
-          "quantity": 2
-        }
+        { "itemId": "subclass_fighter_berserker", "quantity": 1 },
+        { "itemId": "subclass_mage_fire", "quantity": 1 },
+        { "itemId": "subclass_marksman_sniper", "quantity": 1 },
+        { "itemId": "subclass_rogue_assassin", "quantity": 1 }
       ]
     },
-    "dialogue": "Lv20. Talk to Card Broker Sil, then pull or buy a class card and use it."
+    "dialogue": "Lv30. Talk to the Specialist and claim your first subclass item."
+  },
+  {
+    "id": "q_spec_40",
+    "name": "Second Specialization",
+    "chain": "side",
+    "giverNpcId": "npc_specialist",
+    "turnInNpcId": "npc_specialist",
+    "requiresQuestId": "q_spec_30",
+    "minLevel": 40,
+    "steps": [
+      {
+        "kind": "talk",
+        "npcId": "npc_specialist",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 120,
+      "xp": 140,
+      "items": [
+        { "itemId": "subclass_fighter_paladin", "quantity": 1 },
+        { "itemId": "subclass_mage_water", "quantity": 1 },
+        { "itemId": "subclass_marksman_ranger", "quantity": 1 },
+        { "itemId": "subclass_rogue_shadow", "quantity": 1 }
+      ]
+    },
+    "dialogue": "Lv40. Return to the Specialist for another subclass item."
+  },
+  {
+    "id": "q_spec_50",
+    "name": "Third Specialization",
+    "chain": "side",
+    "giverNpcId": "npc_specialist",
+    "turnInNpcId": "npc_specialist",
+    "requiresQuestId": "q_spec_40",
+    "minLevel": 50,
+    "steps": [
+      {
+        "kind": "talk",
+        "npcId": "npc_specialist",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 140,
+      "xp": 160,
+      "items": [
+        { "itemId": "subclass_fighter_t3", "quantity": 1 },
+        { "itemId": "subclass_mage_t3", "quantity": 1 },
+        { "itemId": "subclass_marksman_t3", "quantity": 1 },
+        { "itemId": "subclass_rogue_t3", "quantity": 1 }
+      ]
+    },
+    "dialogue": "Lv50. Another specialist path opens."
+  },
+  {
+    "id": "q_spec_60",
+    "name": "Fourth Specialization",
+    "chain": "side",
+    "giverNpcId": "npc_specialist",
+    "turnInNpcId": "npc_specialist",
+    "requiresQuestId": "q_spec_50",
+    "minLevel": 60,
+    "steps": [
+      {
+        "kind": "talk",
+        "npcId": "npc_specialist",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 160,
+      "xp": 180,
+      "items": [
+        { "itemId": "subclass_fighter_t4", "quantity": 1 },
+        { "itemId": "subclass_mage_t4", "quantity": 1 },
+        { "itemId": "subclass_marksman_t4", "quantity": 1 },
+        { "itemId": "subclass_rogue_t4", "quantity": 1 }
+      ]
+    },
+    "dialogue": "Lv60. Claim another subclass item."
+  },
+  {
+    "id": "q_spec_70",
+    "name": "Fifth Specialization",
+    "chain": "side",
+    "giverNpcId": "npc_specialist",
+    "turnInNpcId": "npc_specialist",
+    "requiresQuestId": "q_spec_60",
+    "minLevel": 70,
+    "steps": [
+      {
+        "kind": "talk",
+        "npcId": "npc_specialist",
+        "count": 1
+      }
+    ],
+    "rewards": {
+      "gold": 180,
+      "xp": 200,
+      "items": [
+        { "itemId": "subclass_fighter_t5", "quantity": 1 },
+        { "itemId": "subclass_mage_t5", "quantity": 1 },
+        { "itemId": "subclass_marksman_t5", "quantity": 1 },
+        { "itemId": "subclass_rogue_t5", "quantity": 1 }
+      ]
+    },
+    "dialogue": "Lv70. The last specialist trial of this era."
   }
 ]

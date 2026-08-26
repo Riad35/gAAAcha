@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Rendering;
 
 /// <summary>
 /// Map + entities with soft tile lerp and edge-only camera.
@@ -8,11 +9,13 @@ using UnityEngine.InputSystem;
 public sealed class GrayBoxWorld : MonoBehaviour
 {
     private const float MoveDuration = 0.15f;
+    private const float MinMoveDur = 0.06f;
+    private const float MaxMoveDur = 0.85f;
     private const float LongRange = 999f;
-    private const float CamPitchFromVertical = 32f;
-    private const float CamDistance = 14f;
-    private const float CamYawSpeed = 90f;
-    private const float JustMovedSec = 0.4f;
+    private const float CamPitchFromHorizontal = WorldCoords.PitchFromHorizontal;
+    private const float CamDistance = WorldCoords.CamDistance;
+    private const float JustMovedSec = 0.12f;
+    private const float CastFxDedupSec = 1.14f;
 
     private readonly Dictionary<string, EntityView> _entities = new Dictionary<string, EntityView>();
     private Transform _root;
@@ -21,12 +24,18 @@ public sealed class GrayBoxWorld : MonoBehaviour
     private string _heldWeaponId = "";
     private Transform _lockRing;
     private SpriteRenderer _lockRingSr;
+    private Sprite[] _lockFrames;
+    private float _lockAnimT;
     private Camera _cam;
-    private float _camYaw;
+    private float _camYaw = WorldCoords.DefaultYaw;
+    private Light _isoSun;
+    private static readonly Dictionary<string, Material> _tileMats = new Dictionary<string, Material>();
     private float _rmbLastX;
     private bool _rmbDragging;
     private string _selfId = "local_you";
-    private string _lockTargetId = "monster_slime_1";
+    private string _lockTargetId = "";
+    private string _castFxKey = "";
+    private float _castFxUntil;
     private readonly List<FloatText> _floats = new List<FloatText>();
     private readonly Dictionary<string, BoltView> _projectiles = new Dictionary<string, BoltView>();
     private readonly Dictionary<string, List<Transform>> _statusMarkers = new Dictionary<string, List<Transform>>();
@@ -43,7 +52,10 @@ public sealed class GrayBoxWorld : MonoBehaviour
     private int _mapW = 20;
     private int _mapH = 12;
     private string _mapId = "town_ashen";
+    private string _classId = "adventurer";
     private readonly HashSet<Vector2Int> _blockedTiles = new HashSet<Vector2Int>();
+    private readonly HashSet<Vector2Int> _hazardTiles = new HashSet<Vector2Int>();
+    private readonly HashSet<Vector2Int> _propTiles = new HashSet<Vector2Int>();
 
     private struct EntityView
     {
@@ -65,18 +77,27 @@ public sealed class GrayBoxWorld : MonoBehaviour
         public Vector3 From;
         public Vector3 To;
         public float MoveT;
+        public float MoveDur;
+        public float MoveSpeed;
         public bool Moving;
         public SpriteCatalog.Clip AnimClip;
         public int AnimFrame;
         public float AnimTime;
         public bool UsesArt;
         public int Facing;
+        public float FaceX;
+        public float FaceZ;
         public float JustMovedUntil;
         public float AnimLockUntil;
         public bool AnimOneShot;
         public bool Dying;
         public float DeathRemoveAt;
         public int AnimFacingRow;
+        public float HurtTintUntil;
+        public string AnimVariant;
+        public bool Resting;
+        public SpriteRenderer Shadow;
+        public int BlankTicks;
     }
 
     private struct FloatText
@@ -85,12 +106,26 @@ public sealed class GrayBoxWorld : MonoBehaviour
         public string Text;
         public float Until;
         public Color Color;
+        public int Size;
     }
 
     private struct TempFx
     {
         public GameObject Go;
+        public SpriteRenderer Sr;
+        public float Born;
         public float Until;
+        public Vector3 Scale0;
+        public Vector3 Scale1;
+        public Color Color0;
+        public Color Color1;
+        public float SpinDeg;
+        public float FaceZ;
+        public string FollowId;
+        public Vector3 FollowOff;
+        public Sprite[] Frames;
+        public float Fps;
+        public bool Loop;
     }
 
     private struct BoltView
@@ -103,6 +138,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
         public string TargetId;
         public string CasterId;
         public Color Color;
+        public Sprite[] Frames;
+        public float AnimT;
     }
 
     public struct TargetInfo
@@ -128,6 +165,12 @@ public sealed class GrayBoxWorld : MonoBehaviour
     {
         _mapW = mapW;
         _mapH = mapH;
+        var auditN = SpriteCatalog.Warmup();
+        if (auditN > 0)
+        {
+            GameLog.Warn(GameLog.Channel.Gfx, "sprite-audit boot issues=" + auditN);
+        }
+
         _root = new GameObject("GrayBoxWorld").transform;
         _cam = Camera.main ?? Object.FindAnyObjectByType<Camera>();
         SetupCamera();
@@ -154,27 +197,140 @@ public sealed class GrayBoxWorld : MonoBehaviour
     public int MapWidth => _mapW;
     public int MapHeight => _mapH;
 
-    /// <summary>True if integer tile under (x,y) is a wall (mirrors server isBlocked).</summary>
-    public bool IsTileBlocked(float x, float y)
+    public bool InMapBounds(int tx, int ty)
     {
-        var tx = Mathf.RoundToInt(x);
-        var ty = Mathf.RoundToInt(y);
-        if (tx < 0 || ty < 0 || tx >= _mapW || ty >= _mapH)
-        {
-            return true;
-        }
+        return tx >= 0 && ty >= 0 && tx < _mapW && ty < _mapH;
+    }
 
+    public bool IsWallCell(int tx, int ty)
+    {
         return _blockedTiles.Contains(new Vector2Int(tx, ty));
     }
 
-    /// <summary>True if moving to (x,y) is blocked by wall or living combatant.</summary>
+    public bool IsHazardCell(int tx, int ty)
+    {
+        return _hazardTiles.Contains(new Vector2Int(tx, ty));
+    }
+
+    public bool IsPropCell(int tx, int ty)
+    {
+        return _propTiles.Contains(new Vector2Int(tx, ty));
+    }
+
+    public struct MinimapMark
+    {
+        public float X;
+        public float Y;
+        public string Kind;
+    }
+
+    public void CopyMinimapMarks(List<MinimapMark> into)
+    {
+        if (into == null)
+        {
+            return;
+        }
+
+        into.Clear();
+        foreach (var pair in _entities)
+        {
+            var view = pair.Value;
+            if (view.Transform == null)
+            {
+                continue;
+            }
+
+            var kind = view.Kind ?? "";
+            if (pair.Key == _selfId)
+            {
+                kind = "self";
+            }
+            else if (kind == "monster" || pair.Key.StartsWith("monster_"))
+            {
+                if (view.Hp <= 0)
+                {
+                    continue;
+                }
+
+                kind = "monster";
+            }
+            else if (kind == "portal" || pair.Key.StartsWith("portal_"))
+            {
+                kind = "portal";
+            }
+            else if (kind == "npc" || pair.Key.StartsWith("npc_"))
+            {
+                kind = "npc";
+            }
+            else if (kind == "player" || pair.Key.StartsWith("player_"))
+            {
+                kind = "player";
+            }
+            else
+            {
+                continue;
+            }
+
+            var p = WorldCoords.MapXZ(view.Transform.position);
+            into.Add(new MinimapMark { X = p.x, Y = p.y, Kind = kind });
+        }
+    }
+
+    /// <summary>True if (x,y) is strictly inside a wall cube (same as server isSolidAt).</summary>
+    public bool IsTileBlocked(float x, float y)
+    {
+        return MapPathing.OverlapsSolid(x, y, _mapW, _mapH, IsWallCell);
+    }
+
+    public void Depenetrate(ref float x, ref float y)
+    {
+        MapPathing.Depenetrate(ref x, ref y, _mapW, _mapH, IsWallCell);
+    }
+
+    public bool IsWalkableCell(int tx, int ty)
+    {
+        return InMapBounds(tx, ty) && !_blockedTiles.Contains(new Vector2Int(tx, ty));
+    }
+
+    /// <summary>A* tile path. Dest snaps to the nearest walkable cell. Start may be a wall (already standing there).</summary>
+    public bool TryFindPath(float sx, float sy, float tx, float ty, List<Vector2> path)
+    {
+        if (path == null || _mapW <= 0 || _mapH <= 0)
+        {
+            return false;
+        }
+
+        var ox = MapPathing.TileOf(sx);
+        var oy = MapPathing.TileOf(sy);
+        return MapPathing.Find(
+            ox, oy,
+            MapPathing.TileOf(tx), MapPathing.TileOf(ty),
+            _mapW, _mapH,
+            (x, y) =>
+            {
+                if (!IsWalkableCell(x, y))
+                {
+                    return false;
+                }
+
+                if (x == ox && y == oy)
+                {
+                    return true;
+                }
+
+                return !WouldOverlapCombatant(x, y);
+            },
+            path);
+    }
+
+    /// <summary>True if moving to (x,y) is blocked by a wall, another player, or an NPC.</summary>
     public bool WouldBlockLocalMove(float x, float y)
     {
         return IsTileBlocked(x, y) || WouldOverlapCombatant(x, y);
     }
 
     public void RebuildMap(int mapW, int mapH, HashSet<Vector2Int> blocked, string mapId = null,
-        HashSet<Vector2Int> hazards = null)
+        HashSet<Vector2Int> hazards = null, List<JsonUtil.MapProp> props = null)
     {
         _mapW = mapW;
         _mapH = mapH;
@@ -197,13 +353,31 @@ public sealed class GrayBoxWorld : MonoBehaviour
             }
         }
 
+        _hazardTiles.Clear();
+        if (hazards != null)
+        {
+            foreach (var cell in hazards)
+            {
+                _hazardTiles.Add(cell);
+            }
+        }
+
+        _propTiles.Clear();
+        if (props != null)
+        {
+            for (var i = 0; i < props.Count; i++)
+            {
+                _propTiles.Add(new Vector2Int(props[i].X, props[i].Y));
+            }
+        }
+
         // Destroy old tiles under root named tile/wall/hazard
         if (_root != null)
         {
             for (var i = _root.childCount - 1; i >= 0; i--)
             {
                 var c = _root.GetChild(i);
-                if (c.name == "tile" || c.name == "wall" || c.name == "hazard")
+                if (c.name == "tile" || c.name == "wall" || c.name == "hazard" || c.name == "prop")
                 {
                     Destroy(c.gameObject);
                 }
@@ -211,11 +385,14 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         SpawnTileHints(blocked, hazards);
+        SpawnMapProps(props);
+        SoundCatalog.PlayMap(_mapId);
         var wallN = blocked?.Count ?? 0;
         var hazN = hazards?.Count ?? 0;
+        var propN = props?.Count ?? 0;
         GameLog.Info(GameLog.Channel.World,
             "rebuild  map=" + _mapId + "  size=" + _mapW + "x" + _mapH +
-            "  walls=" + wallN + "  hazards=" + hazN);
+            "  walls=" + wallN + "  hazards=" + hazN + "  props=" + propN);
     }
 
     public void HandleMessage(string json)
@@ -252,7 +429,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         if (json.Contains("\"type\":\"sync_despawn\""))
         {
-            Despawn(JsonUtil.ExtractString(json, "entityId"));
+            var reason = JsonUtil.ExtractString(json, "reason");
+            Despawn(JsonUtil.ExtractString(json, "entityId"), reason != "leave");
             return;
         }
 
@@ -317,10 +495,10 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
-        if (!hard)
+        // Predicted hits pass hp >= 1. Server 0 must apply or corpses freeze at 1 HP.
+        if (!hard && hp > 0)
         {
-            // Predicted hits must never fake-kill: 0 HP greys the target and blocks Shot.
-            view.Hp = Mathf.Max(1, hp);
+            view.Hp = hp;
             _entities[entityId] = view;
             return;
         }
@@ -344,8 +522,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var pos = pair.Value.Transform.position;
-            var d = Vector2.Distance(new Vector2(worldX, worldY), new Vector2(pos.x, pos.y));
+            var d = WorldCoords.MapDistance(new Vector2(worldX, worldY), pair.Value.Transform.position);
             var reach = pair.Value.HitRadius + tolerance;
             if (d <= reach && d < bestDist)
             {
@@ -374,8 +551,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var pos = pair.Value.Transform.position;
-            var d = Vector2.Distance(new Vector2(worldX, worldY), new Vector2(pos.x, pos.y));
+            var d = WorldCoords.MapDistance(new Vector2(worldX, worldY), pair.Value.Transform.position);
             var reach = Mathf.Max(0.7f, pair.Value.HitRadius) + tolerance;
             if (d <= reach && d < bestDist)
             {
@@ -385,6 +561,45 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         return best;
+    }
+
+    /// <summary>Nearest NPC under the cursor (not combatants / portals).</summary>
+    public string PickNpcNear(float worldX, float worldY, float tolerance)
+    {
+        string best = "";
+        var bestDist = float.MaxValue;
+        foreach (var pair in _entities)
+        {
+            if (pair.Value.Transform == null)
+            {
+                continue;
+            }
+
+            if (!IsNpcEntity(pair.Value.Kind, pair.Key))
+            {
+                continue;
+            }
+
+            var d = WorldCoords.MapDistance(new Vector2(worldX, worldY), pair.Value.Transform.position);
+            var reach = Mathf.Max(0.7f, pair.Value.HitRadius) + tolerance;
+            if (d <= reach && d < bestDist)
+            {
+                bestDist = d;
+                best = pair.Key;
+            }
+        }
+
+        return best;
+    }
+
+    private static bool IsNpcEntity(string kind, string id)
+    {
+        if (kind == "npc")
+        {
+            return true;
+        }
+
+        return !string.IsNullOrEmpty(id) && id.StartsWith("npc_");
     }
 
     public string PickPortalNear(float worldX, float worldY, float tolerance)
@@ -404,8 +619,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var pos = pair.Value.Transform.position;
-            var d = Vector2.Distance(new Vector2(worldX, worldY), new Vector2(pos.x, pos.y));
+            var d = WorldCoords.MapDistance(new Vector2(worldX, worldY), pair.Value.Transform.position);
             if (d <= 0.9f + tolerance && d < bestDist)
             {
                 bestDist = d;
@@ -454,7 +668,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var selfR = 0.4f;
         if (_entities.TryGetValue(_selfId, out var self) && self.Transform != null)
         {
-            origin = new Vector2(self.Transform.position.x, self.Transform.position.y);
+            origin = WorldCoords.MapXZ(self.Transform.position);
             selfR = self.HitRadius > 0f ? self.HitRadius : 0.4f;
         }
         else
@@ -476,10 +690,13 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
+            if (pair.Value.Kind == "player" || pair.Key.StartsWith("player_"))
+            {
+                continue;
+            }
+
             var otherR = pair.Value.HitRadius > 0f ? pair.Value.HitRadius : 0.4f;
-            var center = Vector2.Distance(
-                origin,
-                new Vector2(pair.Value.Transform.position.x, pair.Value.Transform.position.y));
+            var center = Vector2.Distance(origin, WorldCoords.MapXZ(pair.Value.Transform.position));
             var gap = Mathf.Max(0f, center - selfR - otherR);
             if (gap <= attackRange + 0.05f && gap < bestGap)
             {
@@ -498,11 +715,72 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
     public string FindClosestCombatTarget(float maxRange = LongRange)
     {
+        var monster = FindClosestOfKind("monster", maxRange);
+        if (!string.IsNullOrEmpty(monster))
+        {
+            return monster;
+        }
+
+        return FindClosestOfKind("player", maxRange);
+    }
+
+    public string FindClosestPlayer(float maxRange = LongRange)
+    {
+        return FindClosestOfKind("player", maxRange);
+    }
+
+    public bool IsPlayerEntity(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+        {
+            return false;
+        }
+
+        if (id == _selfId)
+        {
+            return true;
+        }
+
+        if (!_entities.TryGetValue(id, out var view))
+        {
+            return id.StartsWith("player_");
+        }
+
+        if (view.Kind == "player")
+        {
+            return true;
+        }
+
+        return !string.IsNullOrEmpty(id) && id.StartsWith("player_");
+    }
+
+    public bool IsMonsterEntity(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+        {
+            return false;
+        }
+
+        if (!_entities.TryGetValue(id, out var view))
+        {
+            return id.StartsWith("monster") || id.StartsWith("lab_");
+        }
+
+        if (view.Kind == "monster")
+        {
+            return true;
+        }
+
+        return id.StartsWith("monster") || id.StartsWith("lab_");
+    }
+
+    private string FindClosestOfKind(string kind, float maxRange)
+    {
         Vector2 origin = Vector2.zero;
         var hasOrigin = false;
         if (_entities.TryGetValue(_selfId, out var self) && self.Transform != null)
         {
-            origin = new Vector2(self.Transform.position.x, self.Transform.position.y);
+            origin = WorldCoords.MapXZ(self.Transform.position);
             hasOrigin = true;
         }
 
@@ -521,7 +799,18 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var pos = new Vector2(pair.Value.Transform.position.x, pair.Value.Transform.position.y);
+            var isPlayer = pair.Value.Kind == "player" || pair.Key.StartsWith("player_");
+            if (kind == "monster" && isPlayer)
+            {
+                continue;
+            }
+
+            if (kind == "player" && !isPlayer)
+            {
+                continue;
+            }
+
+            var pos = WorldCoords.MapXZ(pair.Value.Transform.position);
             var d = hasOrigin ? Vector2.Distance(origin, pos) : pos.sqrMagnitude;
             if (d <= maxRange && d < bestDist)
             {
@@ -598,9 +887,20 @@ public sealed class GrayBoxWorld : MonoBehaviour
         return LockClosestEnemy(maxRange);
     }
 
+    /// <summary>Tab cycle: next living foe by distance (wraps). Empty lock acquires closest.</summary>
     public string CycleLockTarget()
     {
-        return LockClosestEnemy(LongRange);
+        var foes = BuildLivingFoesSortedByDist();
+        if (foes.Count == 0)
+        {
+            ClearLockTarget();
+            return "";
+        }
+
+        var idx = foes.IndexOf(_lockTargetId);
+        var next = idx < 0 ? 0 : (idx + 1) % foes.Count;
+        SetLockTarget(foes[next]);
+        return foes[next];
     }
 
     public float DistanceSelfTo(string id)
@@ -614,7 +914,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         var a = self.Transform.position;
         var b = other.Transform.position;
-        return Vector2.Distance(new Vector2(a.x, a.y), new Vector2(b.x, b.y));
+        return WorldCoords.MapDistance(a, b);
     }
 
     /// <summary>Edge-to-edge gap (mirrors server rangeGap).</summary>
@@ -632,9 +932,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         var otherR = other.HitRadius > 0f ? other.HitRadius : 0.4f;
-        var center = Vector2.Distance(
-            new Vector2(fromX, fromY),
-            new Vector2(other.Transform.position.x, other.Transform.position.y));
+        var center = WorldCoords.MapDistance(new Vector2(fromX, fromY), other.Transform.position);
         return Mathf.Max(0f, center - selfR - otherR);
     }
 
@@ -645,7 +943,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return float.MaxValue;
         }
 
-        return RangeGapTo(id, self.Transform.position.x, self.Transform.position.y);
+        return RangeGapTo(id, self.Transform.position.x, self.Transform.position.z);
     }
 
     public float SelfHitRadius()
@@ -674,11 +972,23 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            // Monster–monster ignored on server; player vs monster/player/npc blocked.
+            // NPCs sit on floor pads — walking through them is allowed (same as server).
+            if (pair.Value.Kind == "npc"
+                || (!string.IsNullOrEmpty(pair.Key) && pair.Key.StartsWith("npc_")))
+            {
+                continue;
+            }
+
+            // Monster–monster ignored on server; player may stand on monsters.
+            if (pair.Value.Kind == "monster"
+                || (!string.IsNullOrEmpty(pair.Key) && pair.Key.StartsWith("monster_")))
+            {
+                continue;
+            }
             var otherR = pair.Value.HitRadius > 0f ? pair.Value.HitRadius : 0.4f;
             var d = Vector2.Distance(
                 new Vector2(x, y),
-                new Vector2(pair.Value.Transform.position.x, pair.Value.Transform.position.y));
+                WorldCoords.MapXZ(pair.Value.Transform.position));
             if (d < selfR + otherR - 0.02f)
             {
                 return true;
@@ -703,7 +1013,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         x = view.Transform.position.x;
-        y = view.Transform.position.y;
+        y = view.Transform.position.z;
         return true;
     }
 
@@ -731,9 +1041,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var d = Vector2.Distance(
-                new Vector2(selfPos.x, selfPos.y),
-                new Vector2(pair.Value.Transform.position.x, pair.Value.Transform.position.y));
+            var d = WorldCoords.MapDistance(selfPos, pair.Value.Transform.position);
             if (d < bestDist)
             {
                 bestDist = d;
@@ -787,20 +1095,13 @@ public sealed class GrayBoxWorld : MonoBehaviour
     }
 
     /// <summary>
-    /// Place FX exactly on the enemy sprite (XY), slightly toward camera so it draws in front of the body.
+    /// Place FX on the entity, lifted off the ground so it draws in front of the body.
     /// </summary>
     private Vector3 FxAtEntity(string id, float headLift = 0f)
     {
         if (!string.IsNullOrEmpty(id) && _entities.TryGetValue(id, out var view) && view.Transform != null)
         {
-            var p = view.Transform.position;
-            p.z = -0.55f;
-            if (_cam != null && Mathf.Abs(headLift) > 0.001f)
-            {
-                p += _cam.transform.up * headLift;
-            }
-
-            return p;
+            return FxAtWorld(view.Transform.position, headLift);
         }
 
         var pos = GetEntityWorldPos(id) ?? Vector3.zero;
@@ -809,12 +1110,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
     private Vector3 FxAtWorld(Vector3 entityPos, float headLift = 0f)
     {
-        var p = new Vector3(entityPos.x, entityPos.y, -0.55f);
-        if (_cam != null && Mathf.Abs(headLift) > 0.001f)
-        {
-            p += _cam.transform.up * headLift;
-        }
-
+        var p = WorldCoords.Lift(entityPos, 0.55f + headLift);
         return p;
     }
 
@@ -884,27 +1180,27 @@ public sealed class GrayBoxWorld : MonoBehaviour
         _aimCastRange = Mathf.Max(0.1f, castRange);
         _aimAoeRadius = Mathf.Max(0.1f, aoeRadius);
 
-        var flat = new Vector2(point.x - caster.x, point.y - caster.y);
+        var flat = WorldCoords.MapXZ(point) - WorldCoords.MapXZ(caster);
         if (flat.magnitude > _aimCastRange)
         {
             flat = flat.normalized * _aimCastRange;
         }
 
-        _aimPoint = new Vector3(caster.x + flat.x, caster.y + flat.y, caster.z);
+        _aimPoint = new Vector3(caster.x + flat.x, 0.04f, caster.z + flat.y);
         EnsureAimPartCount(2);
 
         var reticle = _aimParts[0];
         var d = _aimAoeRadius * 2f;
-        reticle.position = new Vector3(_aimPoint.x, _aimPoint.y, -0.08f);
+        reticle.position = _aimPoint;
         reticle.localScale = new Vector3(d, 0.025f, d);
-        reticle.rotation = Quaternion.FromToRotation(Vector3.up, Vector3.forward);
+        reticle.rotation = Quaternion.identity;
         SetAimPartColor(reticle, new Color(0.4f, 1f, 0.55f, 0.4f));
 
         var ring = _aimParts[1];
         var rd = _aimCastRange * 2f;
-        ring.position = new Vector3(caster.x, caster.y, -0.06f);
+        ring.position = new Vector3(caster.x, 0.03f, caster.z);
         ring.localScale = new Vector3(rd, 0.02f, rd);
-        ring.rotation = Quaternion.FromToRotation(Vector3.up, Vector3.forward);
+        ring.rotation = Quaternion.identity;
         SetAimPartColor(ring, new Color(0.5f, 0.9f, 1f, 0.18f));
     }
 
@@ -929,16 +1225,17 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var gui = new Vector2(screen.x, Screen.height - screen.y);
+            var gui = UiChrome.ScreenToGui(screen);
             var ratio = view.MaxHp <= 0 ? 0f : (float)view.Hp / view.MaxHp;
             if (!IsBossEntity(pair.Key, view.Kind, view.Label))
             {
                 DrawBar(gui, ratio, pair.Key == _selfId ? Color.cyan : Color.green);
-                GUI.Label(new Rect(gui.x - 40, gui.y - 28, 80, 20), view.Hp + "/" + view.MaxHp);
+                UiChrome.DrawFloat(new Rect(gui.x - 40, gui.y - 28, 80, 18),
+                    view.Hp + "/" + view.MaxHp, Color.white, 12);
             }
             else
             {
-                GUI.Label(new Rect(gui.x - 50, gui.y - 28, 100, 20), view.Label);
+                UiChrome.DrawFloat(new Rect(gui.x - 60, gui.y - 28, 120, 18), view.Label, Color.white, 13);
             }
         }
 
@@ -956,7 +1253,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var gui = new Vector2(screen.x, Screen.height - screen.y);
+            var gui = UiChrome.ScreenToGui(screen);
             GUI.color = bolt.Color;
             GUI.DrawTexture(new Rect(gui.x - 10f, gui.y - 6f, 20f, 12f), Texture2D.whiteTexture);
             GUI.color = Color.white;
@@ -978,15 +1275,11 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var gui = new Vector2(screen.x, Screen.height - screen.y);
-            var style = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 22,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter,
-            };
-            style.normal.textColor = ft.Color;
-            GUI.Label(new Rect(gui.x - 40, gui.y - 20, 80, 30), ft.Text, style);
+            var gui = UiChrome.ScreenToGui(screen);
+            var age = 1f - Mathf.Clamp01((ft.Until - Time.time) / 0.9f);
+            var pop = 1f + Mathf.Sin(Mathf.Clamp01(age * 4f) * Mathf.PI) * 0.18f;
+            var size = Mathf.RoundToInt(Mathf.Max(14, ft.Size) * pop);
+            UiChrome.DrawFloat(new Rect(gui.x - 48, gui.y - 22, 96, 32), ft.Text, ft.Color, size);
         }
     }
 
@@ -1012,7 +1305,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
             var wasMoving = view.Moving;
             if (view.Moving && view.Transform != null && !view.Dying)
             {
-                view.MoveT += Time.deltaTime / MoveDuration;
+                var dur = view.MoveDur > 0.001f ? view.MoveDur : MoveDuration;
+                view.MoveT += Time.deltaTime / dur;
                 if (view.MoveT >= 1f)
                 {
                     view.MoveT = 1f;
@@ -1032,8 +1326,17 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 view.JustMovedUntil = Time.time + JustMovedSec;
             }
 
-            TickEntityAnim(key, ref view);
-            BillboardEntity(ref view);
+            try
+            {
+                TickEntityAnim(key, ref view);
+                BillboardEntity(ref view);
+            }
+            catch (System.Exception ex)
+            {
+                GameLog.WarnOnce(GameLog.Channel.Gfx, "anim:" + key,
+                    "reason=entity_anim_throw  entity=" + key + "  err=" + ex.Message);
+            }
+
             _entities[key] = view;
         }
 
@@ -1043,39 +1346,74 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         TickBolts();
+        TickTempFx();
+    }
 
+    private void TickTempFx()
+    {
         for (var i = _tempFx.Count - 1; i >= 0; i--)
         {
-            if (Time.time <= _tempFx[i].Until)
+            var fx = _tempFx[i];
+            if (fx.Go == null)
+            {
+                _tempFx.RemoveAt(i);
+                continue;
+            }
+
+            var life = Mathf.Max(0.01f, fx.Until - fx.Born);
+            var t = Mathf.Clamp01((Time.time - fx.Born) / life);
+            var ease = 1f - (1f - t) * (1f - t);
+            fx.Go.transform.localScale = Vector3.Lerp(fx.Scale0, fx.Scale1, ease);
+            if (fx.Sr != null)
+            {
+                if (fx.Frames != null && fx.Frames.Length > 0)
+                {
+                    var fps = fx.Fps > 0.1f ? fx.Fps : 12f;
+                    var idx = Mathf.FloorToInt((Time.time - fx.Born) * fps);
+                    if (fx.Loop)
+                    {
+                        idx %= fx.Frames.Length;
+                    }
+                    else
+                    {
+                        idx = Mathf.Min(idx, fx.Frames.Length - 1);
+                    }
+
+                    fx.Sr.sprite = fx.Frames[idx];
+                    fx.Sr.color = fx.Color0;
+                }
+                else
+                {
+                    fx.Sr.color = Color.Lerp(fx.Color0, fx.Color1, t);
+                }
+            }
+
+            if (Mathf.Abs(fx.SpinDeg) > 0.01f || Mathf.Abs(fx.FaceZ) > 0.01f || _cam != null)
+            {
+                var billboard = _cam != null ? _cam.transform.rotation : Quaternion.identity;
+                var z = fx.FaceZ + fx.SpinDeg * (Time.time - fx.Born);
+                fx.Go.transform.rotation = billboard * Quaternion.Euler(0f, 0f, z);
+            }
+
+            if (!string.IsNullOrEmpty(fx.FollowId) &&
+                _entities.TryGetValue(fx.FollowId, out var follow) &&
+                follow.Transform != null)
+            {
+                fx.Go.transform.position = follow.Transform.position + fx.FollowOff;
+            }
+
+            if (Time.time <= fx.Until)
             {
                 continue;
             }
 
-            if (_tempFx[i].Go != null)
-            {
-                Destroy(_tempFx[i].Go);
-            }
-
+            Destroy(fx.Go);
             _tempFx.RemoveAt(i);
         }
     }
 
     private void HandleCameraInput()
     {
-        var kb = Keyboard.current;
-        if (kb != null)
-        {
-            if (kb.qKey.isPressed || kb.zKey.isPressed)
-            {
-                _camYaw -= CamYawSpeed * Time.deltaTime;
-            }
-
-            if (kb.eKey.isPressed || kb.cKey.isPressed)
-            {
-                _camYaw += CamYawSpeed * Time.deltaTime;
-            }
-        }
-
         var mouse = Mouse.current;
         if (mouse == null)
         {
@@ -1120,88 +1458,147 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
     }
 
-    private static void TickEntityAnim(string entityId, ref EntityView view)
+    private void TickEntityAnim(string entityId, ref EntityView view)
     {
-        if (!view.UsesArt || view.Renderer == null)
+        if (view.Renderer == null)
         {
             return;
         }
 
-        var showAngled = view.Moving || Time.time < view.JustMovedUntil
-            || view.AnimClip == SpriteCatalog.Clip.Attack
-            || view.AnimClip == SpriteCatalog.Clip.WalkAttack
-            || view.AnimClip == SpriteCatalog.Clip.RunAttack
-            || view.AnimClip == SpriteCatalog.Clip.Hurt
-            || view.AnimClip == SpriteCatalog.Clip.Death
-            || view.Dying;
-        var facingRow = showAngled ? Mathf.Clamp(view.Facing, 0, 3) : 0;
+        ApplyUnlit(view.Renderer);
+        EnsureGroundShadow(ref view);
+
+        if (!view.UsesArt)
+        {
+            if (view.Renderer.sprite == null || !SpriteCatalog.SpriteIsVisible(view.Renderer.sprite))
+            {
+                view.Renderer.sprite = SpriteCatalog.ForEntity(
+                    view.Kind == "player" ? "player_local" : entityId, view.Kind);
+                BindSpriteTexture(view.Renderer);
+            }
+
+            view.Renderer.enabled = true;
+            return;
+        }
+
+        if (SpriteCatalog.IsPortalKind(entityId, view.Kind))
+        {
+            var near = false;
+            if (_entities.TryGetValue(_selfId, out var me) && me.Transform != null && view.Transform != null)
+            {
+                var dx = me.Transform.position.x - view.Transform.position.x;
+                var dy = me.Transform.position.z - view.Transform.position.z;
+                near = (dx * dx) + (dy * dy) <= 2.4f * 2.4f;
+            }
+
+            view.Renderer.sprite = SpriteCatalog.ForProp(near ? "portal_active" : "portal");
+            view.Renderer.color = Color.white;
+            view.Renderer.flipX = false;
+            BindSpriteTexture(view.Renderer);
+            return;
+        }
+
+        var idHint = view.Kind == "player" ? "player_local" : entityId;
+        var eight = SpriteCatalog.UsesEightDir(idHint, view.Kind);
+        RefreshViewFacing(ref view);
+
+        int facingRow;
+        if (eight)
+        {
+            facingRow = Mathf.Clamp(view.Facing, 0, 7);
+        }
+        else
+        {
+            // Craftpix enemies are 4-dir (down/left/right/up). Map 8-dir look onto those rows.
+            facingRow = SpriteCatalog.ToFourDirRow(view.Facing);
+        }
 
         SpriteCatalog.Clip want;
         if (view.Dying || view.AnimClip == SpriteCatalog.Clip.Death)
         {
             want = SpriteCatalog.Clip.Death;
         }
-        else if (view.AnimOneShot && Time.time < view.AnimLockUntil)
-        {
-            want = view.AnimClip;
-        }
         else
         {
-            view.AnimOneShot = false;
-            if (view.Moving)
+            var locomoting = view.Moving || Time.time < view.JustMovedUntil;
+            var sitRestLocked = view.AnimOneShot && Time.time < view.AnimLockUntil && IsSitRestAnim(view);
+            if (locomoting && (view.Resting || sitRestLocked))
             {
-                // Fast lerp / continuous move → run clip when available.
-                want = view.MoveT < 0.85f ? SpriteCatalog.Clip.Run : SpriteCatalog.Clip.Walk;
+                BreakSitRest(ref view);
+            }
+
+            if (view.AnimOneShot && Time.time < view.AnimLockUntil)
+            {
+                want = view.AnimClip;
             }
             else
             {
-                want = SpriteCatalog.Clip.Idle;
+                view.AnimOneShot = false;
+                view.AnimVariant = null;
+                if (locomoting)
+                {
+                    want = SpriteCatalog.Clip.Run;
+                }
+                else if (view.Resting)
+                {
+                    want = SpriteCatalog.Clip.Emote;
+                    view.AnimVariant = "idle_sitting";
+                }
+                else
+                {
+                    want = SpriteCatalog.Clip.Idle;
+                }
             }
         }
 
         if (want != view.AnimClip || facingRow != view.AnimFacingRow)
         {
+            var keepFrame = (IsLocoClip(want) && IsLocoClip(view.AnimClip))
+                || (want == SpriteCatalog.Clip.Idle && view.AnimClip == SpriteCatalog.Clip.Idle)
+                || (view.Resting && want == view.AnimClip && IsSitRestAnim(view));
             view.AnimClip = want;
             view.AnimFacingRow = facingRow;
-            view.AnimFrame = 0;
-            view.AnimTime = 0f;
+            if (!keepFrame)
+            {
+                view.AnimFrame = 0;
+                view.AnimTime = 0f;
+            }
         }
 
-        var idHint = view.Kind == "player" ? "player_local" : entityId;
-        var frames = ResolveAnimFrames(idHint, view.Kind, view.AnimClip, facingRow);
-        // Idle sheets often pad with empty cells — never leave the renderer blank while alive.
-        if ((frames == null || frames.Length == 0) && view.AnimClip == SpriteCatalog.Clip.Idle)
+        var inCombat = IsInCombat(entityId);
+        var frames = EnsureVisibleFrames(
+            idHint, view.Kind, view.AnimClip, facingRow, inCombat, view.AnimVariant, out var flipX, out var resolved);
+        if (resolved != view.AnimClip)
         {
-            frames = ResolveAnimFrames(idHint, view.Kind, SpriteCatalog.Clip.Walk, facingRow);
-            if (frames != null && frames.Length > 0)
+            if (view.AnimClip == SpriteCatalog.Clip.Idle)
             {
-                view.AnimClip = SpriteCatalog.Clip.Walk;
                 GameLog.WarnOnce(GameLog.Channel.Gfx, "idle-empty:" + idHint + ":" + facingRow,
                     "reason=empty_idle_facing  entity=" + idHint + "  facing=" + facingRow +
-                    "  fallback=walk");
+                    "  fallback=" + resolved);
             }
+
+            view.AnimClip = resolved;
         }
 
-        if (frames == null || frames.Length == 0)
+        var bodyTint = entityId == _selfId ? SpriteCatalog.ClassTint(_classId) : Color.white;
+        if (Time.time < view.HurtTintUntil)
         {
-            if (view.Renderer.sprite == null)
-            {
-                view.Renderer.sprite = SpriteCatalog.ForEntity(idHint, view.Kind);
-            }
-
-            view.Renderer.color = Color.white;
-            return;
+            var pulse = 0.4f + 0.6f * Mathf.Abs(Mathf.Sin(Time.time * 28f));
+            bodyTint = Color.Lerp(bodyTint, new Color(1f, 0.22f, 0.18f, 1f), pulse);
         }
 
         var fps = view.AnimClip switch
         {
-            SpriteCatalog.Clip.Walk => 8f,
-            SpriteCatalog.Clip.Run => 10f,
+            SpriteCatalog.Clip.Walk => 12f,
+            SpriteCatalog.Clip.Run => 12f,
             SpriteCatalog.Clip.Attack => 12f,
             SpriteCatalog.Clip.WalkAttack => 12f,
             SpriteCatalog.Clip.RunAttack => 14f,
+            SpriteCatalog.Clip.Pickup => 10f,
+            SpriteCatalog.Clip.Skill => 12f,
             SpriteCatalog.Clip.Hurt => 10f,
             SpriteCatalog.Clip.Death => 8f,
+            SpriteCatalog.Clip.Emote => 8f,
             _ => 6f,
         };
         view.AnimTime += Time.deltaTime;
@@ -1212,15 +1609,22 @@ public sealed class GrayBoxWorld : MonoBehaviour
             {
                 view.AnimFrame = Mathf.Min(view.AnimFrame + 1, frames.Length - 1);
             }
+            else if (view.Resting || IsSitRestAnim(view))
+            {
+                AdvanceSitRestLoop(ref view, frames);
+            }
             else if (view.AnimOneShot)
             {
                 if (view.AnimFrame + 1 >= frames.Length)
                 {
                     view.AnimOneShot = false;
                     view.AnimLockUntil = 0f;
+                    view.AnimVariant = null;
                     view.AnimClip = SpriteCatalog.Clip.Idle;
                     view.AnimFrame = 0;
-                    frames = ResolveAnimFrames(idHint, view.Kind, SpriteCatalog.Clip.Idle, facingRow);
+                    frames = EnsureVisibleFrames(
+                        idHint, view.Kind, SpriteCatalog.Clip.Idle, facingRow, inCombat, null, out flipX, out resolved);
+                    view.AnimClip = resolved;
                 }
                 else
                 {
@@ -1233,28 +1637,53 @@ public sealed class GrayBoxWorld : MonoBehaviour
             }
         }
 
-        if (frames == null || frames.Length == 0)
-        {
-            if (view.Renderer.sprite == null)
-            {
-                view.Renderer.sprite = SpriteCatalog.ForEntity(idHint, view.Kind);
-            }
-
-            return;
-        }
-
         if (view.AnimFrame >= frames.Length)
         {
             view.AnimFrame = 0;
         }
 
         view.Renderer.sprite = frames[view.AnimFrame];
-        view.Renderer.color = Color.white;
+        view.Renderer.color = bodyTint;
+        view.Renderer.flipX = flipX;
+        view.Renderer.enabled = true;
+        BindSpriteTexture(view.Renderer);
+        BindVisibleOrShape(ref view, idHint);
     }
 
-    private static Sprite[] ResolveAnimFrames(string idHint, string kind, SpriteCatalog.Clip clip, int facingRow)
+    private static bool IsLocoClip(SpriteCatalog.Clip clip)
     {
-        var frames = SpriteCatalog.GetClip(idHint, kind, clip, facingRow);
+        return clip == SpriteCatalog.Clip.Walk || clip == SpriteCatalog.Clip.Run;
+    }
+
+    /// <summary>Play sit-down once, then loop the last two seated frames.</summary>
+    private static void AdvanceSitRestLoop(ref EntityView view, Sprite[] frames)
+    {
+        if (frames == null || frames.Length == 0)
+        {
+            return;
+        }
+
+        if (frames.Length <= 2)
+        {
+            view.AnimFrame = (view.AnimFrame + 1) % frames.Length;
+            return;
+        }
+
+        var loopStart = frames.Length - 2;
+        if (view.AnimFrame < loopStart)
+        {
+            view.AnimFrame += 1;
+            return;
+        }
+
+        view.AnimFrame = loopStart + ((view.AnimFrame + 1 - loopStart) % 2);
+    }
+
+    private static Sprite[] ResolveAnimFrames(
+        string idHint, string kind, SpriteCatalog.Clip clip, int facingRow, bool inCombat, string variant, out bool flipX)
+    {
+        var frames = SpriteCatalog.GetClip(idHint, kind, clip, facingRow, inCombat, variant);
+        flipX = SpriteCatalog.LastClipFlipX;
         if (frames != null && frames.Length > 0)
         {
             return frames;
@@ -1263,23 +1692,191 @@ public sealed class GrayBoxWorld : MonoBehaviour
         if (clip == SpriteCatalog.Clip.Run || clip == SpriteCatalog.Clip.WalkAttack || clip == SpriteCatalog.Clip.RunAttack)
         {
             var alt = clip == SpriteCatalog.Clip.Run ? SpriteCatalog.Clip.Walk : SpriteCatalog.Clip.Attack;
-            frames = SpriteCatalog.GetClip(idHint, kind, alt, facingRow);
+            frames = SpriteCatalog.GetClip(idHint, kind, alt, facingRow, inCombat, variant);
+            flipX = SpriteCatalog.LastClipFlipX;
             if (frames != null && frames.Length > 0)
             {
                 return frames;
             }
         }
 
-        if (clip == SpriteCatalog.Clip.Idle || clip == SpriteCatalog.Clip.Hurt || clip == SpriteCatalog.Clip.Death)
+        if (clip == SpriteCatalog.Clip.Idle || clip == SpriteCatalog.Clip.Hurt || clip == SpriteCatalog.Clip.Death
+            || clip == SpriteCatalog.Clip.Pickup || clip == SpriteCatalog.Clip.Skill
+            || clip == SpriteCatalog.Clip.Emote)
         {
-            frames = SpriteCatalog.GetClip(idHint, kind, SpriteCatalog.Clip.Walk, facingRow);
+            frames = SpriteCatalog.GetClip(idHint, kind, SpriteCatalog.Clip.Walk, facingRow, inCombat, variant);
+            flipX = SpriteCatalog.LastClipFlipX;
             if (frames != null && frames.Length > 0)
             {
                 return frames;
             }
         }
 
-        return SpriteCatalog.GetClip(idHint, kind, SpriteCatalog.Clip.Walk, 0);
+        frames = SpriteCatalog.GetClip(idHint, kind, SpriteCatalog.Clip.Walk, 0, inCombat, variant);
+        flipX = SpriteCatalog.LastClipFlipX;
+        return frames;
+    }
+
+    /// <summary>
+    /// last-good clip → walk → run → idle → any facing → shape. Never returns empty.
+    /// </summary>
+    private static Sprite[] EnsureVisibleFrames(
+        string idHint,
+        string kind,
+        SpriteCatalog.Clip clip,
+        int facingRow,
+        bool inCombat,
+        string variant,
+        out bool flipX,
+        out SpriteCatalog.Clip used)
+    {
+        used = clip;
+        var frames = ResolveAnimFrames(idHint, kind, clip, facingRow, inCombat, variant, out flipX);
+        if (SpriteCatalog.FramesAreVisible(frames))
+        {
+            return frames;
+        }
+
+        var alts = new[]
+        {
+            SpriteCatalog.Clip.Walk,
+            SpriteCatalog.Clip.Run,
+            SpriteCatalog.Clip.Idle,
+        };
+        for (var i = 0; i < alts.Length; i++)
+        {
+            if (alts[i] == clip)
+            {
+                continue;
+            }
+
+            frames = ResolveAnimFrames(idHint, kind, alts[i], facingRow, inCombat, null, out flipX);
+            if (SpriteCatalog.FramesAreVisible(frames))
+            {
+                used = alts[i];
+                return frames;
+            }
+        }
+
+        var maxDir = SpriteCatalog.UsesEightDir(idHint, kind) ? 8 : 4;
+        for (var d = 0; d < maxDir; d++)
+        {
+            if (d == facingRow)
+            {
+                continue;
+            }
+
+            frames = ResolveAnimFrames(idHint, kind, SpriteCatalog.Clip.Walk, d, inCombat, null, out flipX);
+            if (SpriteCatalog.FramesAreVisible(frames))
+            {
+                used = SpriteCatalog.Clip.Walk;
+                return frames;
+            }
+
+            frames = ResolveAnimFrames(idHint, kind, SpriteCatalog.Clip.Idle, d, inCombat, null, out flipX);
+            if (SpriteCatalog.FramesAreVisible(frames))
+            {
+                used = SpriteCatalog.Clip.Idle;
+                return frames;
+            }
+        }
+
+        flipX = false;
+        GameLog.WarnOnce(GameLog.Channel.Gfx, "fallback-shape-anim:" + idHint,
+            "reason=spawn_invisible  entity=" + idHint + "  kind=" + kind + "  fallback=shape");
+        var shape = SpriteCatalog.ForEntity(idHint, kind);
+        return new[] { shape };
+    }
+
+    private static void BindVisibleOrShape(ref EntityView view, string idHint)
+    {
+        if (view.Renderer == null)
+        {
+            return;
+        }
+
+        view.Renderer.enabled = true;
+        if (SpriteCatalog.SpriteIsVisible(view.Renderer.sprite))
+        {
+            view.BlankTicks = 0;
+            return;
+        }
+
+        view.BlankTicks += 1;
+        view.Renderer.sprite = SpriteCatalog.ForEntity(idHint, view.Kind);
+        BindSpriteTexture(view.Renderer);
+        GameLog.WarnOnce(GameLog.Channel.Gfx, "bind-shape:" + idHint,
+            "reason=spawn_invisible  entity=" + idHint + "  fallback=shape  ticks=" + view.BlankTicks);
+    }
+
+    private static void EnsureGroundShadow(ref EntityView view)
+    {
+        if (view.Transform == null || SpriteCatalog.IsPortalKind(null, view.Kind))
+        {
+            return;
+        }
+
+        if (view.Shadow != null)
+        {
+            return;
+        }
+
+        var existing = view.Transform.Find("ground_shadow");
+        if (existing != null)
+        {
+            view.Shadow = existing.GetComponent<SpriteRenderer>();
+            if (view.Shadow != null)
+            {
+                return;
+            }
+        }
+
+        var go = new GameObject("ground_shadow");
+        go.transform.SetParent(view.Transform, false);
+        go.transform.localPosition = new Vector3(0f, 0.02f, 0.04f);
+        go.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+        go.transform.localScale = new Vector3(0.9f, 0.5f, 1f);
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = GroundShadowSprite();
+        sr.color = new Color(0f, 0f, 0f, 0.38f);
+        sr.sortingOrder = 15;
+        ApplyUnlit(sr);
+        view.Shadow = sr;
+    }
+
+    private static Sprite _groundShadowSprite;
+
+    private static Sprite GroundShadowSprite()
+    {
+        if (_groundShadowSprite != null)
+        {
+            return _groundShadowSprite;
+        }
+
+        const int s = 64;
+        var tex = new Texture2D(s, s, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        tex.wrapMode = TextureWrapMode.Clamp;
+        var pixels = new Color[s * s];
+        var cx = (s - 1) * 0.5f;
+        var cy = (s - 1) * 0.5f;
+        for (var y = 0; y < s; y++)
+        {
+            for (var x = 0; x < s; x++)
+            {
+                var nx = (x - cx) / (cx * 0.92f);
+                var ny = (y - cy) / (cy * 0.55f);
+                var d = (nx * nx) + (ny * ny);
+                var a = d >= 1f ? 0f : Mathf.Clamp01(1f - d);
+                a *= a;
+                pixels[y * s + x] = new Color(0f, 0f, 0f, a);
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        _groundShadowSprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), 48f);
+        return _groundShadowSprite;
     }
 
     public void PlayAttackAnim(string entityId)
@@ -1292,23 +1889,151 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var clip = view.Moving
             ? (view.MoveT < 0.85f ? SpriteCatalog.Clip.RunAttack : SpriteCatalog.Clip.WalkAttack)
             : SpriteCatalog.Clip.Attack;
-        var lockSec = clip == SpriteCatalog.Clip.RunAttack ? 0.5f
-            : clip == SpriteCatalog.Clip.WalkAttack ? 0.6f
-            : 0.7f;
+        var lockSec = clip == SpriteCatalog.Clip.RunAttack ? 0.875f
+            : clip == SpriteCatalog.Clip.WalkAttack ? 1.05f
+            : 1.225f;
         PlayOneShot(entityId, clip, lockSec);
     }
 
-    /// <summary>Face the target and play the weapon swing (local predict + server confirm).</summary>
+    public void PlayPickupAnim(string entityId = null)
+    {
+        var id = string.IsNullOrEmpty(entityId) ? _selfId : entityId;
+        PlayOneShot(id, SpriteCatalog.Clip.Pickup, 0.6f);
+    }
+
+    /// <summary>Face the target, play the weapon swing, and spawn skill VFX (local predict + server confirm).</summary>
     public void PlayCastAttack(string casterId, string targetId, string skillId)
     {
-        if (!IsStrikeSkill(skillId))
+        var id = MapCasterId(casterId);
+        var fxKey = id + ":" + (skillId ?? "");
+        if (fxKey == _castFxKey && Time.time < _castFxUntil)
         {
             return;
         }
 
-        var id = MapCasterId(casterId);
+        _castFxKey = fxKey;
+        _castFxUntil = Time.time + CastFxDedupSec;
+        PlaySkillFx(id, targetId, skillId);
+        if (skillId == "shove")
+        {
+            FaceEntityToward(id, targetId);
+            PlayOneShot(id, SpriteCatalog.Clip.Skill, 0.96f, skillId);
+            return;
+        }
+
+        if (!IsStrikeSkill(skillId))
+        {
+            if (skillId == "war_cry" || skillId == "iron_stance" || skillId == "rally"
+                || skillId == "decoy" || skillId == "power_chant" || skillId == "mend"
+                || skillId == "group_chant" || skillId == "rest" || skillId == "powerup"
+                || skillId == "cleave" || skillId == "arrow_rain" || skillId == "arcane_nova"
+                || skillId == "knife_fan" || skillId == "dash" || skillId == "ward"
+                || skillId == "haste" || skillId == "blind_dust"
+                || skillId == "thunderstorm" || skillId == "explosion")
+            {
+                PlayOneShot(id, SpriteCatalog.Clip.Skill, 1.225f, skillId);
+            }
+
+            return;
+        }
+
         FaceEntityToward(id, targetId);
+        if (skillId == "shockwave" || skillId == "hook_shot" || skillId == "cleave"
+            || skillId == "arrow_rain" || skillId == "arcane_nova" || skillId == "knife_fan"
+            || skillId == "slash" || skillId == "thunderstorm" || skillId == "explosion")
+        {
+            PlayOneShot(id, SpriteCatalog.Clip.Skill, 1.225f, skillId);
+            return;
+        }
+
         PlayAttackAnim(id);
+    }
+
+    public string PlayEmoteSlot(int digit)
+    {
+        if (!SpriteCatalog.TryEmote(digit, out var emoteId, out var blocked))
+        {
+            return blocked ?? "";
+        }
+
+        PlayOneShot(_selfId, SpriteCatalog.Clip.Emote, 1.25f, emoteId);
+        return "emote " + emoteId;
+    }
+
+    public void PlayLevelUpFx(string entityId = null)
+    {
+        var id = string.IsNullOrEmpty(entityId) ? _selfId : entityId;
+        if (!_entities.TryGetValue(id, out var view) || view.Transform == null)
+        {
+            return;
+        }
+
+        var pos = view.Transform.position;
+        SpawnRingFx(pos, 0.35f, 3.2f, new Color(1f, 0.9f, 0.35f, 0.9f),
+            new Color(1f, 0.75f, 0.1f, 0f), 0.7f, 90f);
+        SpawnBurstFx(pos + Vector3.up * 0.45f, new Color(1f, 0.95f, 0.55f, 0.95f), 1.6f, 0.55f);
+        SpawnGlowFx(id, new Color(1f, 0.88f, 0.3f, 0.85f), 0.7f);
+        PlayOneShot(id, SpriteCatalog.Clip.Emote, 1.2f, "south_powerup");
+    }
+
+    public void PlayTeleportFx(string entityId = null)
+    {
+        var id = string.IsNullOrEmpty(entityId) ? _selfId : entityId;
+        Vector3 pos;
+        if (_entities.TryGetValue(id, out var view) && view.Transform != null)
+        {
+            pos = view.Transform.position;
+        }
+        else
+        {
+            pos = Vector3.zero;
+        }
+
+        SpawnRingFx(pos, 0.2f, 1.4f, new Color(0.45f, 0.85f, 1f, 0.9f),
+            new Color(0.2f, 0.5f, 1f, 0f), 0.45f, 120f);
+        SpawnBurstFx(pos + Vector3.up * 0.8f, new Color(0.7f, 0.95f, 1f, 0.95f), 1.35f, 0.4f);
+        SpawnFx(MakeGlowSprite(), pos + Vector3.up * 0.15f,
+            new Vector3(0.25f, 0.4f, 1f), new Vector3(0.15f, 2.4f, 1f),
+            new Color(0.65f, 0.95f, 1f, 0.9f), new Color(0.4f, 0.7f, 1f, 0f),
+            0.5f, 0f, 0f, "", Vector3.zero, 48);
+    }
+
+    public void PlayGachaRevealFx()
+    {
+        Vector3 pos = Vector3.zero;
+        if (_entities.TryGetValue(_selfId, out var view) && view.Transform != null)
+        {
+            pos = view.Transform.position;
+        }
+
+        SpawnRingFx(pos, 0.5f, 2.8f, new Color(1f, 0.75f, 0.2f, 0.85f),
+            new Color(1f, 0.45f, 0.05f, 0f), 0.65f, 70f);
+        SpawnBurstFx(pos + Vector3.up * 0.35f, new Color(1f, 0.9f, 0.4f, 0.95f), 1.5f, 0.5f);
+        SpawnBurstFx(pos + new Vector3(0.4f, 0.55f, 0f), new Color(0.95f, 0.55f, 1f, 0.9f), 0.85f, 0.4f);
+        SpawnBurstFx(pos + new Vector3(-0.35f, 0.5f, 0f), new Color(0.45f, 0.85f, 1f, 0.9f), 0.8f, 0.4f);
+    }
+
+    public void PlayPortalRipple(Vector3? at = null)
+    {
+        Vector3 pos;
+        if (at.HasValue)
+        {
+            pos = at.Value;
+        }
+        else if (_entities.TryGetValue(_selfId, out var view) && view.Transform != null)
+        {
+            pos = view.Transform.position;
+        }
+        else
+        {
+            pos = Vector3.zero;
+        }
+
+        SpawnRingFx(pos, 0.3f, 3.6f, new Color(0.65f, 0.4f, 1f, 0.85f),
+            new Color(0.4f, 0.2f, 0.9f, 0f), 0.55f, 40f);
+        SpawnRingFx(pos, 0.15f, 2.2f, new Color(0.9f, 0.7f, 1f, 0.7f),
+            new Color(0.55f, 0.3f, 1f, 0f), 0.4f, -60f);
+        SpawnBurstFx(pos + Vector3.up * 0.2f, new Color(0.8f, 0.6f, 1f, 0.9f), 1.1f, 0.35f);
     }
 
     public static bool IsStrikeSkill(string skillId)
@@ -1318,9 +2043,11 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return false;
         }
 
-        if (skillId == "auto_attack" || skillId == "slash" || skillId == "shot" || skillId == "hook_shot"
+        if (skillId == "auto_attack" || skillId == "auto_attack_off" || skillId == "slash" || skillId == "shot" || skillId == "hook_shot"
             || skillId == "shockwave" || skillId == "shove" || skillId == "pull" || skillId == "stun_bolt"
-            || skillId == "cannon_flame")
+            || skillId == "cannon_flame" || skillId == "cleave" || skillId == "arrow_rain"
+            || skillId == "arcane_nova" || skillId == "knife_fan"
+            || skillId == "thunderstorm" || skillId == "explosion")
         {
             return true;
         }
@@ -1328,9 +2055,103 @@ public sealed class GrayBoxWorld : MonoBehaviour
         return skillId.EndsWith("_hit");
     }
 
+    private void PlaySkillFx(string casterId, string targetId, string skillId)
+    {
+        if (string.IsNullOrEmpty(skillId))
+        {
+            return;
+        }
+
+        SoundCatalog.PlaySkill(skillId);
+
+        var from = GetEntityWorldPos(casterId);
+        if (!from.HasValue)
+        {
+            return;
+        }
+
+        var to = GetEntityWorldPos(targetId);
+        var dir = to.HasValue
+            ? WorldCoords.MapXZ(to.Value) - WorldCoords.MapXZ(from.Value)
+            : FacingVector(casterId);
+        if (dir.sqrMagnitude < 1e-6f)
+        {
+            dir = FacingVector(casterId);
+        }
+
+        dir.Normalize();
+        var faceZ = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
+        var origin = from.Value + Vector3.up * 0.55f;
+
+        switch (skillId)
+        {
+            case "auto_attack":
+            case "auto_attack_off":
+            case "slash":
+            case "shove":
+                SpawnSlashFx(WorldCoords.AlongMap(origin, dir, 0.45f), faceZ,
+                    new Color(1f, 0.95f, 0.75f, 0.95f));
+                break;
+            case "shot":
+            case "stun_bolt":
+            case "cannon_flame":
+                SpawnBurstFx(WorldCoords.AlongMap(origin, dir, 0.3f),
+                    new Color(1f, 0.8f, 0.35f, 0.9f), 0.45f, 0.14f);
+                break;
+            case "thunderstorm":
+                SpawnThunderstormFx(to ?? from.Value);
+                break;
+            case "explosion":
+                SpawnNuclearRingFx(to ?? from.Value);
+                break;
+            case "shockwave":
+                SpawnRingFx(from.Value, 0.45f, 5.2f, new Color(1f, 0.78f, 0.2f, 0.75f),
+                    new Color(1f, 0.45f, 0.05f, 0f), 0.38f, 0f);
+                break;
+            case "dash":
+                SpawnDashTrail(casterId, dir);
+                break;
+            case "rally":
+                SpawnRingFx(from.Value, 0.4f, 2.4f, new Color(1f, 0.55f, 0.12f, 0.8f),
+                    new Color(1f, 0.35f, 0.05f, 0f), 0.42f, 80f);
+                SpawnGlowFx(casterId, new Color(1f, 0.6f, 0.15f, 0.75f), 0.5f);
+                break;
+            case "hook_shot":
+            case "pull":
+                SpawnHookLine(from.Value, to ?? WorldCoords.AlongMap(from.Value, dir, 3f));
+                break;
+            case "mend":
+                SpawnGlowFx(string.IsNullOrEmpty(targetId) ? casterId : targetId,
+                    new Color(0.35f, 1f, 0.55f, 0.9f), 0.55f);
+                break;
+            case "decoy":
+                SpawnRingFx(from.Value, 0.55f, 1.65f, new Color(0.35f, 0.85f, 1f, 0.85f),
+                    new Color(0.2f, 0.55f, 1f, 0f), 0.55f, -50f);
+                SpawnGlowFx(casterId, new Color(0.4f, 0.8f, 1f, 0.7f), 0.5f);
+                break;
+        }
+    }
+
+    private Vector2 FacingVector(string id)
+    {
+        if (!_entities.TryGetValue(id, out var view))
+        {
+            return Vector2.right;
+        }
+
+        if (view.FaceX * view.FaceX + view.FaceZ * view.FaceZ > 1e-8f)
+        {
+            return new Vector2(view.FaceX, view.FaceZ);
+        }
+
+        var rad = view.Facing * 45f * Mathf.Deg2Rad;
+        return new Vector2(Mathf.Sin(rad), -Mathf.Cos(rad));
+    }
+
     public void SetHeldWeapon(string weaponId)
     {
         _heldWeaponId = weaponId ?? "";
+        SpriteCatalog.SetHeldWeapon(_heldWeaponId);
         EnsureHeldMark();
         if (_heldMarkSr == null)
         {
@@ -1338,8 +2159,60 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         _heldMarkSr.sprite = SpriteCatalog.WeaponMark(_heldWeaponId);
-        _heldMark.gameObject.SetActive(!string.IsNullOrEmpty(_heldWeaponId) && _heldWeaponId != "none");
         PlaceHeldMark();
+    }
+
+    public void SetResting(bool resting)
+    {
+        if (!_entities.TryGetValue(_selfId, out var view))
+        {
+            return;
+        }
+
+        view.Resting = resting;
+        if (!resting)
+        {
+            BreakSitRest(ref view);
+        }
+
+        _entities[_selfId] = view;
+    }
+
+    /// <summary>Leave sit/rest as soon as the local player actually moves.</summary>
+    public void BreakRestFromMove()
+    {
+        if (!_entities.TryGetValue(_selfId, out var view))
+        {
+            return;
+        }
+
+        BreakSitRest(ref view);
+        _entities[_selfId] = view;
+    }
+
+    private static void BreakSitRest(ref EntityView view)
+    {
+        view.Resting = false;
+        if (!IsSitRestAnim(view))
+        {
+            return;
+        }
+
+        view.AnimOneShot = false;
+        view.AnimLockUntil = 0f;
+        view.AnimVariant = null;
+        if (view.AnimClip == SpriteCatalog.Clip.Emote || view.AnimClip == SpriteCatalog.Clip.Skill)
+        {
+            view.AnimClip = SpriteCatalog.Clip.Idle;
+            view.AnimFrame = 0;
+            view.AnimTime = 0f;
+        }
+    }
+
+    private static bool IsSitRestAnim(EntityView view)
+    {
+        var variant = view.AnimVariant ?? "";
+        return variant == "idle_sitting" || variant == "rest";
     }
 
     private void EnsureHeldMark()
@@ -1361,10 +2234,28 @@ public sealed class GrayBoxWorld : MonoBehaviour
     {
         if (_heldMark == null || string.IsNullOrEmpty(_heldWeaponId) || _heldWeaponId == "none")
         {
+            if (_heldMark != null)
+            {
+                _heldMark.gameObject.SetActive(false);
+            }
+
             return;
         }
 
         if (!_entities.TryGetValue(_selfId, out var self) || self.Transform == null)
+        {
+            return;
+        }
+
+        var drawnBody = SpriteCatalog.HasDrawnWeaponBodyArt();
+        var combat = IsInCombat(_selfId);
+        var emoting = self.AnimClip == SpriteCatalog.Clip.Emote
+            || self.AnimClip == SpriteCatalog.Clip.Pickup
+            || self.AnimClip == SpriteCatalog.Clip.Death;
+        var hideMark = !combat || drawnBody || emoting;
+        _heldMark.gameObject.SetActive(!hideMark);
+
+        if (hideMark)
         {
             return;
         }
@@ -1375,23 +2266,30 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         var facing = self.Facing;
-        var handX = facing == 1 ? -0.18f : 0.18f;
-        _heldMark.localPosition = new Vector3(handX, -0.08f, -0.06f);
+        var left = SpriteCatalog.FacingLooksLeft(facing, SpriteCatalog.UsesEightDir(_selfId, "player"));
+        var handX = left ? -0.18f : 0.18f;
+        _heldMark.localPosition = new Vector3(handX, 0.42f, -0.05f);
         _heldMark.localRotation = Quaternion.identity;
         var parentS = Mathf.Max(0.01f, self.Transform.localScale.x);
         _heldMark.localScale = Vector3.one * (0.62f / parentS);
         if (_heldMarkSr != null)
         {
-            _heldMarkSr.flipX = facing == 1;
+            _heldMarkSr.flipX = left;
         }
     }
 
     public void PlayHurtAnim(string entityId)
     {
+        if (!string.IsNullOrEmpty(entityId) && _entities.TryGetValue(entityId, out var hurt))
+        {
+            hurt.HurtTintUntil = Time.time + 0.28f;
+            _entities[entityId] = hurt;
+        }
+
         PlayOneShot(entityId, SpriteCatalog.Clip.Hurt, 0.35f);
     }
 
-    private void PlayOneShot(string entityId, SpriteCatalog.Clip clip, float lockSec)
+    private void PlayOneShot(string entityId, SpriteCatalog.Clip clip, float lockSec, string variant = null)
     {
         if (string.IsNullOrEmpty(entityId) || !_entities.TryGetValue(entityId, out var view))
         {
@@ -1415,17 +2313,134 @@ public sealed class GrayBoxWorld : MonoBehaviour
         view.AnimFrame = 0;
         view.AnimTime = 0f;
         view.AnimFacingRow = -1;
+        view.AnimVariant = variant;
         _entities[entityId] = view;
     }
 
-    private void BillboardEntity(ref EntityView view)
+    /// <summary>Drop attack/skill recovery so locomotion can play immediately.</summary>
+    public void InterruptStrike(string entityId)
     {
-        if (!view.UsesArt || view.Transform == null || _cam == null)
+        if (string.IsNullOrEmpty(entityId) || !_entities.TryGetValue(entityId, out var view))
         {
             return;
         }
 
-        view.Transform.rotation = _cam.transform.rotation;
+        if (view.Dying || view.AnimClip == SpriteCatalog.Clip.Death)
+        {
+            return;
+        }
+
+        if (!view.AnimOneShot)
+        {
+            return;
+        }
+
+        var clip = view.AnimClip;
+        if (clip != SpriteCatalog.Clip.Attack
+            && clip != SpriteCatalog.Clip.WalkAttack
+            && clip != SpriteCatalog.Clip.RunAttack
+            && clip != SpriteCatalog.Clip.Skill)
+        {
+            return;
+        }
+
+        view.AnimOneShot = false;
+        view.AnimLockUntil = 0f;
+        view.AnimVariant = null;
+        view.AnimClip = SpriteCatalog.Clip.Idle;
+        view.AnimFrame = 0;
+        view.AnimTime = 0f;
+        _entities[entityId] = view;
+    }
+
+    private bool IsInCombat(string entityId)
+    {
+        if (string.IsNullOrEmpty(entityId))
+        {
+            return false;
+        }
+
+        if (entityId == _selfId)
+        {
+            if (!string.IsNullOrEmpty(_lockTargetId) && IsLivingFoe(_lockTargetId))
+            {
+                return true;
+            }
+
+            foreach (var pair in _entities)
+            {
+                if (pair.Value.Kind == "monster" && pair.Value.Hp > 0
+                    && pair.Value.ThreatTopId == _selfId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (!_entities.TryGetValue(entityId, out var view))
+        {
+            return false;
+        }
+
+        return view.AnimOneShot && (view.AnimClip == SpriteCatalog.Clip.Attack
+            || view.AnimClip == SpriteCatalog.Clip.WalkAttack
+            || view.AnimClip == SpriteCatalog.Clip.RunAttack
+            || view.AnimClip == SpriteCatalog.Clip.Skill
+            || view.AnimClip == SpriteCatalog.Clip.Hurt);
+    }
+
+    public bool IsLivingFoe(string id)
+    {
+        if (!_entities.TryGetValue(id, out var view) || view.Hp <= 0 || view.Dying)
+        {
+            return false;
+        }
+
+        return view.Kind == "monster" || view.Kind == "player";
+    }
+
+    private void BillboardEntity(ref EntityView view)
+    {
+        if (view.Transform == null || _cam == null)
+        {
+            return;
+        }
+
+        YBillboard(view.Transform);
+        SortSprite(view.Renderer, view.Transform.position);
+        if (view.Shadow != null && view.Renderer != null)
+        {
+            view.Shadow.sortingOrder = view.Renderer.sortingOrder - 2;
+        }
+    }
+
+    private void YBillboard(Transform t)
+    {
+        if (t == null || _cam == null)
+        {
+            return;
+        }
+
+        var toCam = _cam.transform.position - t.position;
+        toCam.y = 0f;
+        if (toCam.sqrMagnitude < 1e-8f)
+        {
+            return;
+        }
+
+        t.rotation = Quaternion.LookRotation(toCam.normalized, Vector3.up);
+    }
+
+    private static void SortSprite(SpriteRenderer sr, Vector3 worldPos)
+    {
+        if (sr == null)
+        {
+            return;
+        }
+
+        sr.sortingOrder = 20 + Mathf.RoundToInt(-(worldPos.x + worldPos.z) * 10f);
     }
 
     private void LateUpdate()
@@ -1433,6 +2448,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         UpdateLockRing();
         PlaceHeldMark();
         RefreshAimFromSelf();
+        BillboardProps();
         foreach (var key in new List<string>(_entities.Keys))
         {
             var view = _entities[key];
@@ -1446,6 +2462,26 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 view.Renderer.color = view.BaseColor;
                 _entities[key] = view;
             }
+        }
+    }
+
+    private void BillboardProps()
+    {
+        if (_root == null)
+        {
+            return;
+        }
+
+        for (var i = 0; i < _root.childCount; i++)
+        {
+            var c = _root.GetChild(i);
+            if (c.name != "prop")
+            {
+                continue;
+            }
+
+            YBillboard(c);
+            SortSprite(c.GetComponent<SpriteRenderer>(), c.position);
         }
     }
 
@@ -1525,8 +2561,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
-        var d3 = new Vector3(dir.x, dir.y, 0f);
-        t.position = caster + d3 * (range * 0.5f) + Vector3.forward * -0.15f;
+        var d3 = WorldCoords.MapDir3(dir);
+        t.position = WorldCoords.OnGround(caster) + d3 * (range * 0.5f) + Vector3.up * 0.08f;
         t.localScale = new Vector3(range, 0.08f, width);
         if (d3.sqrMagnitude > 0.0001f)
         {
@@ -1631,16 +2667,6 @@ public sealed class GrayBoxWorld : MonoBehaviour
     {
         Upsert(id, x, y, new Color(1f, 0.55f, 0.12f), "GATE", 1, 1, 0.55f, true);
         SetEntityMeta(id, "portal", 0, 0);
-        if (_entities.TryGetValue(id, out var view) && view.Transform != null)
-        {
-            view.Transform.localScale = Vector3.one * 1.6f;
-            if (view.Renderer != null)
-            {
-                view.Renderer.color = new Color(1f, 0.55f, 0.12f, 1f);
-            }
-
-            _entities[id] = view;
-        }
     }
 
     private void ApplyMapFromState(string json)
@@ -1673,8 +2699,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         var blocked = JsonUtil.ParseBlockedTiles(mapSlice);
         var hazards = JsonUtil.ParseHazardTiles(mapSlice);
+        var props = JsonUtil.ParseMapProps(mapSlice);
         var mapId = JsonUtil.ExtractString(mapSlice, "id");
-        RebuildMap(w, h, blocked, mapId, hazards);
+        RebuildMap(w, h, blocked, mapId, hazards, props);
     }
 
     private void ApplyEntitiesByIdPrefix(string json, string prefix, bool allowSpacedColon = false)
@@ -1717,7 +2744,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            JsonUtil.TryInt(slice, "hp", out var hp);
+            var hasHp = JsonUtil.TryInt(slice, "hp", out var hp);
             JsonUtil.TryInt(slice, "maxHp", out var maxHp);
             JsonUtil.TryInt(slice, "mp", out var mp);
             JsonUtil.TryInt(slice, "maxMp", out var maxMp);
@@ -1735,7 +2762,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
             var color = ColorForEntity(id, inferredKind);
             var fallbackHp = inferredKind == "npc" ? 1 : 40;
             Upsert(id, mx, my, color, label,
-                hp > 0 ? hp : fallbackHp,
+                hasHp ? hp : fallbackHp,
                 maxHp > 0 ? maxHp : fallbackHp,
                 hr > 0 ? hr : 0.4f, true);
             SetEntityMeta(id, inferredKind, mp, maxMp);
@@ -1813,15 +2840,18 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         var isSelf = id == _selfId;
-        var label = GetLabel(id, isSelf ? "You" : id);
-        var tint = isSelf
-            ? new Color(0.15f, 0.85f, 1f)
-            : ColorForEntity(id, _entities.TryGetValue(id, out var existing) ? existing.Kind : "monster");
-        MoveTo(id, x, y, tint,
-            label,
-            GetHp(id, isSelf ? 100 : 40),
-            GetMaxHp(id, isSelf ? 100 : 40),
-            GetHitRadius(id, 0.4f));
+        if (isSelf)
+        {
+            // Local prediction owns the player sprite; sync_move only acks last-good in NetworkBootstrap.
+            return;
+        }
+
+        var label = GetLabel(id, id);
+        var tint = ColorForEntity(id, _entities.TryGetValue(id, out var existing) ? existing.Kind : "monster");
+        var hasSpeed = JsonUtil.TryNumber(json, "speed", out var speed);
+        var snap = hasSpeed && speed <= 0.001f;
+        MoveTo(id, x, y, tint, label, GetHp(id, 40), GetMaxHp(id, 40), GetHitRadius(id, 0.4f),
+            snap, hasSpeed ? speed : -1f);
     }
 
     private void ApplyVitals(string json)
@@ -2030,6 +3060,11 @@ public sealed class GrayBoxWorld : MonoBehaviour
             radius = r;
         }
 
+        if (skillId != "thunderstorm" && skillId != "explosion")
+        {
+            SpawnAoeRing(centerId, radius, 0.35f);
+        }
+
         var cursor = 0;
         while (true)
         {
@@ -2058,7 +3093,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         var d = Mathf.Max(0.8f, radius * 2f);
-        SpawnGroundDisc(pos.Value, d, new Color(1f, 0.75f, 0.2f, 0.45f), life);
+        SpawnRingFx(pos.Value, d * 0.35f, d, new Color(1f, 0.82f, 0.25f, 0.7f),
+            new Color(1f, 0.55f, 0.1f, 0f), Mathf.Max(0.18f, life), 0f);
     }
 
     private void ApplyHitFx(string targetId, int damage, int hpAfter, string skillId, string json = null, bool hpKnown = true)
@@ -2074,7 +3110,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
         if (view.Renderer != null)
         {
-            view.Renderer.color = Color.white;
+            view.Renderer.color = targetId == _selfId
+                ? SpriteCatalog.ClassTint(_classId)
+                : (view.UsesArt ? SpriteCatalog.MonsterTint(targetId) : view.BaseColor);
         }
 
         _entities[targetId] = view;
@@ -2090,8 +3128,34 @@ public sealed class GrayBoxWorld : MonoBehaviour
             PlayHurtAnim(targetId);
         }
 
+        if (!healish && !missed && damage > 0 && view.Transform != null)
+        {
+            var spark = ElementFloatColor(json, false);
+            SpawnImpactSpark(FxAtEntity(targetId, 0.12f), spark);
+            SoundCatalog.Play(SoundCatalog.Id.Hit);
+            if (skillId == "stun_bolt")
+            {
+                SpawnClipFx(VfxCatalog.LightningBurst(), FxAtEntity(targetId, 0.2f), 1.4f, VfxCatalog.DefaultClipFps);
+            }
+            if (json != null && json.Contains("\"crit\":true"))
+            {
+                SpawnBurstFx(FxAtEntity(targetId, 0.2f), new Color(1f, 0.85f, 0.25f, 0.95f), 0.9f, 0.22f);
+                SoundCatalog.Play(SoundCatalog.Id.Crit);
+            }
+        }
+        else if (healish && view.Transform != null)
+        {
+            SpawnGlowFx(targetId, new Color(0.35f, 1f, 0.55f, 0.85f), 0.55f);
+        }
+
         var text = missed ? "MISS" : (healish ? "+" + Mathf.Max(1, damage > 0 ? damage : 20) : "-" + damage);
         var color = healish ? new Color(0.4f, 1f, 0.5f) : ElementFloatColor(json, missed);
+        var crit = json != null && json.Contains("\"crit\":true");
+        if (crit)
+        {
+            color = Color.Lerp(color, new Color(1f, 0.9f, 0.3f), 0.45f);
+        }
+
         if ((damage > 0 || healish || missed) && view.Transform != null)
         {
             _floats.Add(new FloatText
@@ -2100,6 +3164,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 Text = text,
                 Until = Time.time + 0.9f,
                 Color = color,
+                Size = missed ? 16 : (crit ? 30 : 22),
             });
         }
     }
@@ -2205,10 +3270,11 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
     private void SpawnGroundDisc(Vector3 centerXy, float diameter, Color color, float life)
     {
-        // Placeholder ground FX removed (was cylinder discs).
+        SpawnRingFx(centerXy, diameter * 0.35f, diameter, color,
+            new Color(color.r, color.g, color.b, 0f), Mathf.Max(0.12f, life), 0f);
     }
 
-    public void Despawn(string id)
+    public void Despawn(string id, bool playDeath = true)
     {
         if (string.IsNullOrEmpty(id) || !_entities.TryGetValue(id, out var view))
         {
@@ -2220,7 +3286,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
-        if (view.UsesArt)
+        if (playDeath && view.UsesArt)
         {
             BeginDeath(id);
             return;
@@ -2247,6 +3313,13 @@ public sealed class GrayBoxWorld : MonoBehaviour
         view.AnimFacingRow = -1;
         view.DeathRemoveAt = Time.time + 1.1f;
         _entities[id] = view;
+        if (view.Transform != null)
+        {
+            SpawnBurstFx(view.Transform.position + Vector3.up * 0.35f,
+                new Color(0.85f, 0.9f, 1f, 0.8f), 1.15f, 0.45f);
+        }
+
+        SoundCatalog.Play(SoundCatalog.Id.Death);
     }
 
     private void FinishDespawn(string id)
@@ -2284,7 +3357,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         var id = "local_" + skillId;
-        UpsertBolt(id, from.x, from.y, dx, dy, speed > 0.1f ? speed : 16f, skillId, "", _selfId);
+        UpsertBolt(id, from.x, from.z, dx, dy, speed > 0.1f ? speed : 16f, skillId, "", _selfId);
     }
 
     private void TickBolts()
@@ -2309,7 +3382,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 tgt.Transform != null && tgt.Hp > 0)
             {
                 var to = tgt.Transform.position - bolt.Transform.position;
-                var d = new Vector2(to.x, to.y);
+                var d = WorldCoords.MapXZ(to);
                 if (d.sqrMagnitude > 0.0001f)
                 {
                     vel = d.normalized;
@@ -2325,10 +3398,17 @@ public sealed class GrayBoxWorld : MonoBehaviour
             var step = vel.normalized * (bolt.Speed * Time.deltaTime);
             var p = bolt.Transform.position;
             p.x += step.x;
-            p.y += step.y;
-            p.z = 0f;
+            p.z += step.y;
+            p.y = 0.45f;
             bolt.Transform.position = p;
             FaceBolt(bolt.Transform, vel);
+            if (bolt.Frames != null && bolt.Frames.Length > 0 && bolt.Renderer != null)
+            {
+                bolt.AnimT += Time.deltaTime * VfxCatalog.DefaultSheetFps;
+                var idx = Mathf.FloorToInt(bolt.AnimT) % bolt.Frames.Length;
+                bolt.Renderer.sprite = bolt.Frames[idx];
+            }
+
             _projectiles[id] = bolt;
             if (TryStopBoltOnSprite(id, ref bolt))
             {
@@ -2377,7 +3457,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 reach = Mathf.Max(view.HitRadius, 0.45f) + 0.35f * scale;
             }
 
-            var d = Vector2.Distance(new Vector2(p.x, p.y), new Vector2(center.x, center.y));
+            var d = WorldCoords.MapDistance(p, center);
             if (d > reach || d >= best)
             {
                 continue;
@@ -2388,7 +3468,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
             if (view.Renderer != null)
             {
                 var closest = view.Renderer.bounds.ClosestPoint(p);
-                snap = new Vector3(closest.x, closest.y, 0f);
+                snap = WorldCoords.Lift(closest, 0.45f);
             }
             else
             {
@@ -2397,7 +3477,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 {
                     dir.Normalize();
                     snap = center - dir * Mathf.Max(0.05f, view.HitRadius);
-                    snap.z = 0f;
+                    snap.y = 0.45f;
                 }
             }
         }
@@ -2472,16 +3552,16 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         var cur = bolt.Transform.position;
         var nx = Mathf.Lerp(cur.x, x, 0.45f);
-        var ny = Mathf.Lerp(cur.y, y, 0.45f);
+        var nz = Mathf.Lerp(cur.z, y, 0.45f);
         var dx = x - cur.x;
-        var dy = y - cur.y;
+        var dy = y - cur.z;
         if (dx * dx + dy * dy > 0.0004f)
         {
             bolt.Vel = new Vector2(dx, dy).normalized;
             FaceBolt(bolt.Transform, bolt.Vel);
         }
 
-        bolt.Transform.position = new Vector3(nx, ny, 0f);
+        bolt.Transform.position = WorldCoords.TileToWorld(nx, nz, 0.45f);
         _projectiles[id] = bolt;
         TryStopBoltOnSprite(id, ref bolt);
     }
@@ -2522,7 +3602,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         if (vel.sqrMagnitude < 0.0001f && !string.IsNullOrEmpty(targetId) &&
             _entities.TryGetValue(targetId, out var tgt) && tgt.Transform != null)
         {
-            vel = new Vector2(tgt.Transform.position.x - x, tgt.Transform.position.y - y);
+            vel = WorldCoords.MapXZ(tgt.Transform.position) - new Vector2(x, y);
         }
 
         if (vel.sqrMagnitude < 0.0001f)
@@ -2532,9 +3612,10 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         vel.Normalize();
         var color = BoltColor(skillId);
-        var go = CreateBoltObject(id, color);
+        var frames = BoltFrames(skillId);
+        var go = CreateBoltObject(id, color, frames);
         go.transform.SetParent(_root, false);
-        go.transform.position = new Vector3(x, y, 0f);
+        go.transform.position = WorldCoords.TileToWorld(x, y, 0.45f);
         FaceBolt(go.transform, vel);
         _projectiles[id] = new BoltView
         {
@@ -2546,6 +3627,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
             TargetId = targetId ?? "",
             CasterId = casterId ?? "",
             Color = color,
+            Frames = frames,
+            AnimT = 0f,
         };
         GameLog.Info(GameLog.Channel.Gfx, "bolt spawn " + skillId + " @" + x.ToString("0.0") + "," + y.ToString("0.0"));
     }
@@ -2562,7 +3645,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
             var look = _cam.transform.rotation;
             if (vel.sqrMagnitude > 0.0001f)
             {
-                var worldVel = new Vector3(vel.x, vel.y, 0f);
+                var worldVel = WorldCoords.MapDir3(vel);
                 var local = Quaternion.Inverse(look) * worldVel;
                 var ang = Mathf.Atan2(local.y, local.x) * Mathf.Rad2Deg;
                 t.rotation = look * Quaternion.Euler(0f, 0f, ang);
@@ -2604,19 +3687,43 @@ public sealed class GrayBoxWorld : MonoBehaviour
         return new Color(1f, 0.92f, 0.45f, 1f);
     }
 
-    private static GameObject CreateBoltObject(string id, Color color)
+    private static Sprite[] BoltFrames(string skillId)
+    {
+        if (skillId != null && skillId.Contains("ember"))
+        {
+            return VfxCatalog.EmberBolt();
+        }
+
+        return VfxCatalog.MagicBolt();
+    }
+
+    private static GameObject CreateBoltObject(string id, Color color, Sprite[] frames)
     {
         var go = new GameObject("bolt_" + id);
         var sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = MakeBoltSprite();
-        sr.color = color;
+        if (frames != null && frames.Length > 0 && frames[0] != null)
+        {
+            sr.sprite = frames[0];
+            sr.color = Color.white;
+            go.transform.localScale = new Vector3(1.15f, 1.15f, 1f);
+        }
+        else
+        {
+            sr.sprite = MakeBoltSprite();
+            sr.color = color;
+            go.transform.localScale = new Vector3(1.65f, 0.7f, 1f);
+        }
+
         sr.sortingOrder = 40;
         ApplyUnlit(sr);
-        go.transform.localScale = new Vector3(1.65f, 0.7f, 1f);
         return go;
     }
 
     private static Sprite _boltSprite;
+    private static Sprite _fxRingSprite;
+    private static Sprite _glowSprite;
+    private static Sprite _slashSprite;
+    private static Sprite _sparkSprite;
 
     private static Sprite MakeBoltSprite()
     {
@@ -2651,18 +3758,319 @@ public sealed class GrayBoxWorld : MonoBehaviour
         return _boltSprite;
     }
 
+    private static Sprite MakeFxRingSprite()
+    {
+        if (_fxRingSprite != null)
+        {
+            return _fxRingSprite;
+        }
+
+        const int s = 64;
+        var tex = new Texture2D(s, s, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        var pixels = new Color[s * s];
+        var c = (s - 1) * 0.5f;
+        for (var y = 0; y < s; y++)
+        {
+            for (var x = 0; x < s; x++)
+            {
+                var nx = (x - c) / c;
+                var ny = (y - c) / c;
+                var d = Mathf.Sqrt(nx * nx + ny * ny);
+                var a = 1f - Mathf.Abs(d - 0.78f) / 0.22f;
+                pixels[y * s + x] = a > 0f ? new Color(1f, 1f, 1f, a * a) : Color.clear;
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        _fxRingSprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), s);
+        return _fxRingSprite;
+    }
+
+    private static Sprite MakeGlowSprite()
+    {
+        if (_glowSprite != null)
+        {
+            return _glowSprite;
+        }
+
+        const int s = 48;
+        var tex = new Texture2D(s, s, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        var pixels = new Color[s * s];
+        var c = (s - 1) * 0.5f;
+        for (var y = 0; y < s; y++)
+        {
+            for (var x = 0; x < s; x++)
+            {
+                var nx = (x - c) / c;
+                var ny = (y - c) / c;
+                var d = Mathf.Sqrt(nx * nx + ny * ny);
+                var a = Mathf.Clamp01(1f - d);
+                pixels[y * s + x] = a > 0.02f ? new Color(1f, 1f, 1f, a * a) : Color.clear;
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        _glowSprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), s);
+        return _glowSprite;
+    }
+
+    private static Sprite MakeSlashSprite()
+    {
+        if (_slashSprite != null)
+        {
+            return _slashSprite;
+        }
+
+        const int w = 48;
+        const int h = 32;
+        var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        var pixels = new Color[w * h];
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var nx = x / (float)(w - 1);
+                var ny = (y - (h - 1) * 0.5f) / ((h - 1) * 0.5f);
+                var arc = ny - (nx * nx * 1.4f - 0.7f);
+                var a = 1f - Mathf.Abs(arc) / 0.28f;
+                a *= 1f - Mathf.Abs(nx - 0.55f) * 1.1f;
+                pixels[y * w + x] = a > 0f ? new Color(1f, 1f, 1f, Mathf.Clamp01(a)) : Color.clear;
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        _slashSprite = Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.2f, 0.5f), 28f);
+        return _slashSprite;
+    }
+
+    private static Sprite MakeSparkSprite()
+    {
+        if (_sparkSprite != null)
+        {
+            return _sparkSprite;
+        }
+
+        const int s = 24;
+        var tex = new Texture2D(s, s, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        var pixels = new Color[s * s];
+        var c = (s - 1) * 0.5f;
+        for (var y = 0; y < s; y++)
+        {
+            for (var x = 0; x < s; x++)
+            {
+                var nx = Mathf.Abs(x - c) / c;
+                var ny = Mathf.Abs(y - c) / c;
+                var cross = Mathf.Min(nx, ny);
+                var a = 1f - cross / 0.22f;
+                a *= 1f - Mathf.Max(nx, ny) * 0.35f;
+                pixels[y * s + x] = a > 0f ? new Color(1f, 1f, 1f, Mathf.Clamp01(a)) : Color.clear;
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        _sparkSprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), s);
+        return _sparkSprite;
+    }
+
+    private void SpawnFx(Sprite sprite, Vector3 pos, Vector3 scale0, Vector3 scale1,
+        Color color0, Color color1, float life, float spinDeg, float faceZ,
+        string followId, Vector3 followOff, int order)
+    {
+        var go = new GameObject("fx");
+        if (_root != null)
+        {
+            go.transform.SetParent(_root, false);
+        }
+
+        go.transform.position = pos;
+        go.transform.localScale = scale0;
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = sprite;
+        sr.color = color0;
+        sr.sortingOrder = order;
+        ApplyUnlit(sr);
+        var born = Time.time;
+        _tempFx.Add(new TempFx
+        {
+            Go = go,
+            Sr = sr,
+            Born = born,
+            Until = born + Mathf.Max(0.05f, life),
+            Scale0 = scale0,
+            Scale1 = scale1,
+            Color0 = color0,
+            Color1 = color1,
+            SpinDeg = spinDeg,
+            FaceZ = faceZ,
+            FollowId = followId ?? "",
+            FollowOff = followOff,
+            Frames = null,
+            Fps = 0f,
+            Loop = false,
+        });
+    }
+
+    private void SpawnClipFx(Sprite[] frames, Vector3 pos, float worldSize, float fps)
+    {
+        if (frames == null || frames.Length == 0)
+        {
+            return;
+        }
+
+        var life = frames.Length / Mathf.Max(8f, fps);
+        var p = WorldCoords.Lift(pos, 0.55f);
+        var scale = Vector3.one * worldSize;
+        var go = new GameObject("fx_clip");
+        if (_root != null)
+        {
+            go.transform.SetParent(_root, false);
+        }
+
+        go.transform.position = p;
+        go.transform.localScale = scale;
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = frames[0];
+        sr.color = Color.white;
+        sr.sortingOrder = 48;
+        ApplyUnlit(sr);
+        var born = Time.time;
+        _tempFx.Add(new TempFx
+        {
+            Go = go,
+            Sr = sr,
+            Born = born,
+            Until = born + life,
+            Scale0 = scale,
+            Scale1 = scale,
+            Color0 = Color.white,
+            Color1 = Color.white,
+            SpinDeg = 0f,
+            FaceZ = 0f,
+            FollowId = "",
+            FollowOff = Vector3.zero,
+            Frames = frames,
+            Fps = fps,
+            Loop = false,
+        });
+    }
+
+    private void SpawnThunderstormFx(Vector3 center)
+    {
+        var bolt = VfxCatalog.LightningBurst();
+        if (bolt == null || bolt.Length == 0)
+        {
+            SpawnBurstFx(center, new Color(0.7f, 0.85f, 1f, 0.9f), 1.2f, 0.4f);
+            return;
+        }
+
+        var right = _cam != null ? WorldCoords.MapXZ(_cam.transform.right) : Vector2.right;
+        if (right.sqrMagnitude < 1e-6f)
+        {
+            right = Vector2.right;
+        }
+
+        right.Normalize();
+        for (var i = 0; i < 5; i++)
+        {
+            var along = (i - 2) * 0.85f;
+            var p = center + new Vector3(right.x * along, 0f, right.y * along);
+            SpawnClipFx(bolt, p, 1.55f, VfxCatalog.DefaultClipFps);
+        }
+    }
+
+    private void SpawnNuclearRingFx(Vector3 center)
+    {
+        var boom = VfxCatalog.NuclearBurst();
+        if (boom == null || boom.Length == 0)
+        {
+            SpawnBurstFx(center, new Color(1f, 0.55f, 0.15f, 0.9f), 1.4f, 0.45f);
+            return;
+        }
+
+        for (var i = 0; i < 5; i++)
+        {
+            var rad = i * (Mathf.PI * 2f / 5f) - Mathf.PI * 0.5f;
+            var p = center + new Vector3(Mathf.Cos(rad) * 1.35f, 0f, Mathf.Sin(rad) * 1.35f);
+            SpawnClipFx(boom, p, 1.7f, 14f);
+        }
+    }
+
+    private void SpawnRingFx(Vector3 pos, float from, float to, Color c0, Color c1, float life, float spin)
+    {
+        var p = WorldCoords.Lift(pos, 0.05f);
+        SpawnFx(MakeFxRingSprite(), p, Vector3.one * from, Vector3.one * to, c0, c1, life, spin, 0f, "", Vector3.zero, 42);
+    }
+
+    private void SpawnGlowFx(string entityId, Color color, float life)
+    {
+        SpawnFx(MakeGlowSprite(), Vector3.zero, Vector3.one * 0.7f, Vector3.one * 1.65f,
+            color, new Color(color.r, color.g, color.b, 0f), life, 40f, 0f,
+            entityId, new Vector3(0f, 0.45f, 0f), 44);
+    }
+
+    private void SpawnBurstFx(Vector3 pos, Color color, float size, float life)
+    {
+        SpawnFx(MakeGlowSprite(), WorldCoords.Lift(pos, 0.4f),
+            Vector3.one * (size * 0.35f), Vector3.one * size,
+            color, new Color(color.r, color.g, color.b, 0f), life, 0f, 0f, "", Vector3.zero, 46);
+    }
+
+    private void SpawnSlashFx(Vector3 pos, float faceZ, Color color)
+    {
+        SpawnFx(MakeSlashSprite(), WorldCoords.Lift(pos, 0.5f),
+            new Vector3(0.55f, 0.55f, 1f), new Vector3(1.15f, 0.85f, 1f),
+            color, new Color(color.r, color.g, color.b, 0f), 0.2f, 0f, faceZ, "", Vector3.zero, 47);
+    }
+
+    private void SpawnDashTrail(string casterId, Vector2 dir)
+    {
+        var origin = GetEntityWorldPos(casterId);
+        if (!origin.HasValue)
+        {
+            return;
+        }
+
+        var c0 = new Color(0.55f, 0.9f, 1f, 0.7f);
+        var c1 = new Color(0.35f, 0.7f, 1f, 0f);
+        for (var i = 0; i < 3; i++)
+        {
+            var along = WorldCoords.AlongMap(origin.Value, -dir, 0.28f * (i + 1));
+            along.y = 0.35f;
+            var delayScale = 0.55f - i * 0.1f;
+            SpawnFx(MakeGlowSprite(), along, Vector3.one * delayScale, Vector3.one * (delayScale + 0.45f),
+                c0, c1, 0.22f + i * 0.05f, 0f, 0f, "", Vector3.zero, 41);
+        }
+
+        SpawnBurstFx(origin.Value, new Color(0.65f, 0.95f, 1f, 0.85f), 0.85f, 0.2f);
+    }
+
+    private void SpawnHookLine(Vector3 from, Vector3 to)
+    {
+        var mid = (from + to) * 0.5f;
+        mid.y = 0.45f;
+        var delta = to - from;
+        var map = WorldCoords.MapXZ(delta);
+        var len = map.magnitude;
+        var faceZ = Mathf.Atan2(map.y, map.x) * Mathf.Rad2Deg;
+        var scale0 = new Vector3(Mathf.Max(0.4f, len), 0.18f, 1f);
+        SpawnFx(MakeBoltSprite(), mid, scale0, scale0 * 1.05f,
+            new Color(0.95f, 0.85f, 0.45f, 0.95f), new Color(1f, 0.7f, 0.2f, 0f),
+            0.22f, 0f, faceZ, "", Vector3.zero, 48);
+    }
+
     private void SpawnImpactSpark(Vector3 pos, Color color)
     {
-        var go = new GameObject("impact");
-        go.transform.SetParent(_root, false);
-        go.transform.position = new Vector3(pos.x, pos.y, -0.5f);
-        var sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = MakeBoltSprite();
-        sr.color = color;
-        sr.sortingOrder = 45;
-        ApplyUnlit(sr);
-        go.transform.localScale = new Vector3(0.55f, 0.55f, 1f);
-        _tempFx.Add(new TempFx { Go = go, Until = Time.time + 0.18f });
+        SpawnFx(MakeSparkSprite(), WorldCoords.Lift(pos, 0.55f),
+            Vector3.one * 0.35f, Vector3.one * 0.85f,
+            color, new Color(color.r, color.g, color.b, 0f), 0.16f, 180f, 0f, "", Vector3.zero, 49);
     }
 
     private void ApplySpawn(string json)
@@ -2680,7 +4088,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
-        JsonUtil.TryInt(src, "hp", out var hp);
+        var hasHp = JsonUtil.TryInt(src, "hp", out var hp);
         JsonUtil.TryInt(src, "maxHp", out var maxHp);
         JsonUtil.TryInt(src, "mp", out var mp);
         JsonUtil.TryInt(src, "maxMp", out var maxMp);
@@ -2700,9 +4108,10 @@ public sealed class GrayBoxWorld : MonoBehaviour
             ? new Color(0.35f, 0.75f, 1f)
             : ColorForEntity(id, inferredKind);
         var fallbackHp = inferredKind == "npc" ? 1 : 40;
-        Upsert(id, x, y, color, label, hp > 0 ? hp : fallbackHp, maxHp > 0 ? maxHp : fallbackHp, hr > 0 ? hr : 0.4f, true);
+        Upsert(id, x, y, color, label, hasHp ? hp : fallbackHp, maxHp > 0 ? maxHp : fallbackHp, hr > 0 ? hr : 0.4f, true);
         SetEntityMeta(id, inferredKind, mp, maxMp);
-        if (string.IsNullOrEmpty(_lockTargetId) || !_entities.ContainsKey(_lockTargetId))
+        if (inferredKind != "player" &&
+            (string.IsNullOrEmpty(_lockTargetId) || !_entities.ContainsKey(_lockTargetId)))
         {
             SetLockTarget(id);
         }
@@ -2734,12 +4143,14 @@ public sealed class GrayBoxWorld : MonoBehaviour
         _selfId = newId;
     }
 
-    private void MoveTo(string id, float x, float y, Color color, string label, int hp, int maxHp, float hitRadius)
+    private void MoveTo(string id, float x, float y, Color color, string label, int hp, int maxHp, float hitRadius,
+        bool instant = false, float moveSpeed = -1f)
     {
-        Upsert(id, x, y, color, label, hp, maxHp, hitRadius, false);
+        Upsert(id, x, y, color, label, hp, maxHp, hitRadius, instant, moveSpeed);
     }
 
-    private void Upsert(string id, float x, float y, Color color, string label, int hp, int maxHp, float hitRadius, bool instant)
+    private void Upsert(string id, float x, float y, Color color, string label, int hp, int maxHp, float hitRadius,
+        bool instant, float moveSpeed = -1f)
     {
         if (!_entities.TryGetValue(id, out var view))
         {
@@ -2748,7 +4159,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 : (!string.IsNullOrEmpty(id) && id.StartsWith("npc_"))
                     ? "npc"
                     : (!string.IsNullOrEmpty(id) && id.StartsWith("portal_"))
-                        ? "npc"
+                        ? "portal"
                         : "monster";
             var go = CreateMarker(color, label, id, kindGuess);
             go.transform.SetParent(_root, false);
@@ -2766,14 +4177,15 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 StatusKinds = new List<string>(),
                 StatusUntil = new List<float>(),
                 HitRadius = hitRadius,
-                From = new Vector3(x, y, 0f),
-                To = new Vector3(x, y, 0f),
+                From = WorldCoords.TileToWorld(x, y),
+                To = WorldCoords.TileToWorld(x, y),
                 UsesArt = SpriteCatalog.HasArtSprite(id, kindGuess),
                 AnimClip = SpriteCatalog.Clip.Idle,
                 AnimFrame = 0,
                 AnimTime = 0f,
             };
             view.Transform.position = view.To;
+            EnsureGroundShadow(ref view);
         }
 
         EnsureStatusLists(ref view);
@@ -2804,7 +4216,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
         else if (view.Renderer != null)
         {
-            view.Renderer.color = Color.white;
+            view.Renderer.color = id == _selfId
+                ? SpriteCatalog.ClassTint(_classId)
+                : SpriteCatalog.MonsterTint(id);
             view.UsesArt = true;
         }
         view.HitRadius = hitRadius > 0 ? hitRadius : 0.4f;
@@ -2812,18 +4226,25 @@ public sealed class GrayBoxWorld : MonoBehaviour
         {
             var d = view.HitRadius * 2f;
             view.HitRing.localScale = new Vector3(d, d, 1f);
-            view.HitRing.localPosition = new Vector3(0f, 0f, 0.1f);
+            view.HitRing.localPosition = new Vector3(0f, 0.02f, 0f);
+            view.HitRing.localRotation = Quaternion.Euler(90f, 0f, 0f);
             // Only show rings for procedural markers (no sheet art).
             view.HitRing.gameObject.SetActive(!view.UsesArt);
         }
 
-        var target = new Vector3(x, y, 0f);
+        var target = WorldCoords.TileToWorld(x, y);
+        if (moveSpeed > 0f)
+        {
+            view.MoveSpeed = moveSpeed;
+        }
+
         if (instant || view.Transform == null)
         {
             view.From = target;
             view.To = target;
             view.Moving = false;
             view.MoveT = 1f;
+            view.MoveDur = MoveDuration;
             if (view.Transform != null)
             {
                 view.Transform.position = target;
@@ -2835,7 +4256,15 @@ public sealed class GrayBoxWorld : MonoBehaviour
             view.To = target;
             view.MoveT = 0f;
             view.Moving = true;
-            UpdateFacingFromDelta(ref view, view.To - view.From);
+            var dist = WorldCoords.MapDistance(view.From, view.To);
+            var speed = view.MoveSpeed > 0.01f ? view.MoveSpeed : 0f;
+            view.MoveDur = speed > 0.01f
+                ? Mathf.Clamp(dist / speed, MinMoveDur, MaxMoveDur)
+                : MoveDuration;
+            if (id != _selfId)
+            {
+                UpdateFacingFromDelta(ref view, view.To - view.From);
+            }
         }
 
         _entities[id] = view;
@@ -2846,6 +4275,19 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
     }
 
+    public void SetClassLook(string classId)
+    {
+        _classId = string.IsNullOrEmpty(classId) ? "adventurer" : classId;
+        SpriteCatalog.SetPlayerSheet(_classId);
+        if (!_entities.TryGetValue(_selfId, out var view) || view.Renderer == null || !view.UsesArt)
+        {
+            return;
+        }
+
+        view.Renderer.color = SpriteCatalog.ClassTint(_classId);
+        _entities[_selfId] = view;
+    }
+
     public void SetLocalFacing(int facing)
     {
         if (!_entities.TryGetValue(_selfId, out var view))
@@ -2853,12 +4295,70 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
-        view.Facing = Mathf.Clamp(facing, 0, 3);
-        view.JustMovedUntil = Time.time + JustMovedSec;
+        view.Facing = ((facing % 8) + 8) % 8;
+        GetCameraBasisXY(out var right, out var up);
+        var rad = view.Facing * 45f * Mathf.Deg2Rad;
+        var sx = Mathf.Sin(rad);
+        var sy = -Mathf.Cos(rad);
+        // Display flips screen-X; stored world facing is the true map direction.
+        view.FaceX = -sx * right.x + sy * up.x;
+        view.FaceZ = -sx * right.y + sy * up.y;
         _entities[_selfId] = view;
     }
 
-    /// <summary>Camera right/up projected onto the XY ground plane (normalized).</summary>
+    public void SetLocalFacingFromWorld(float dx, float dz)
+    {
+        if (!_entities.TryGetValue(_selfId, out var view))
+        {
+            return;
+        }
+
+        if (dx * dx + dz * dz < 1e-8f)
+        {
+            return;
+        }
+
+        view.FaceX = dx;
+        view.FaceZ = dz;
+        RefreshViewFacing(ref view);
+        _entities[_selfId] = view;
+    }
+
+    public void SetLocalFacingFromStick(float sx, float sy)
+    {
+        if (sx * sx + sy * sy < 1e-8f)
+        {
+            return;
+        }
+
+        GetCameraBasisXY(out var right, out var up);
+        SetLocalFacingFromWorld(sx * right.x + sy * up.x, sx * right.y + sy * up.y);
+    }
+
+    /// <summary>
+    /// Project stored world facing into the current camera view (8-dir).
+    /// Screen X is negated so left/right clips match the viewpoint (pack vs camera).
+    /// </summary>
+    private void RefreshViewFacing(ref EntityView view)
+    {
+        GetCameraBasisXY(out var right, out var up);
+        var fx = view.FaceX;
+        var fz = view.FaceZ;
+        if (fx * fx + fz * fz < 1e-8f)
+        {
+            fx = -up.x;
+            fz = -up.y;
+            view.FaceX = fx;
+            view.FaceZ = fz;
+        }
+
+        var sx = -(fx * right.x + fz * right.y);
+        var sy = fx * up.x + fz * up.y;
+        var sticky = view.Moving || Time.time < view.JustMovedUntil;
+        view.Facing = SpriteCatalog.FacingFromScreen(sx, sy, true, sticky ? view.Facing : -1);
+    }
+
+    /// <summary>Camera right/forward projected onto the XZ ground plane (normalized).</summary>
     public void GetCameraBasisXY(out Vector2 right, out Vector2 up)
     {
         right = Vector2.right;
@@ -2870,8 +4370,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         var r = _cam.transform.right;
         var u = _cam.transform.up;
-        right = new Vector2(r.x, r.y);
-        up = new Vector2(u.x, u.y);
+        right = new Vector2(r.x, r.z);
+        up = new Vector2(u.x, u.z);
         if (right.sqrMagnitude > 1e-6f)
         {
             right.Normalize();
@@ -2880,6 +4380,15 @@ public sealed class GrayBoxWorld : MonoBehaviour
         if (up.sqrMagnitude > 1e-6f)
         {
             up.Normalize();
+        }
+        else
+        {
+            var f = _cam.transform.forward;
+            up = new Vector2(-f.x, -f.z);
+            if (up.sqrMagnitude > 1e-6f)
+            {
+                up.Normalize();
+            }
         }
     }
 
@@ -2890,18 +4399,8 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
-        // Map world delta into camera screen space (same basis as movement).
-        GetCameraBasisXY(out var scrRight, out var scrUp);
-        var rdx = delta.x * scrRight.x + delta.y * scrRight.y;
-        var rdy = delta.x * scrUp.x + delta.y * scrUp.y;
-        if (Mathf.Abs(rdx) > Mathf.Abs(rdy))
-        {
-            view.Facing = rdx < 0f ? 1 : 2;
-        }
-        else
-        {
-            view.Facing = rdy < 0f ? 0 : 3;
-        }
+        view.FaceX = delta.x;
+        view.FaceZ = delta.z;
     }
 
     private void SetEntityMeta(string id, string kind, int mp, int maxMp)
@@ -2958,6 +4457,32 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
     }
 
+    private List<string> BuildLivingFoesSortedByDist()
+    {
+        var ids = new List<string>();
+        var dists = new List<float>();
+        if (!_entities.TryGetValue(_selfId, out var self) || self.Transform == null)
+        {
+            return ids;
+        }
+
+        var selfPos = self.Transform.position;
+        foreach (var pair in _entities)
+        {
+            if (pair.Key == _selfId || !IsLivingFoe(pair.Key))
+            {
+                continue;
+            }
+
+            var d = WorldCoords.MapDistance(selfPos, pair.Value.Transform.position);
+            ids.Add(pair.Key);
+            dists.Add(d);
+        }
+
+        SortIdsByDist(ids, dists);
+        return ids;
+    }
+
     private List<string> BuildLivingNonSelfSortedByDist()
     {
         var ids = new List<string>();
@@ -2975,13 +4500,17 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            var d = Vector2.Distance(
-                new Vector2(selfPos.x, selfPos.y),
-                new Vector2(pair.Value.Transform.position.x, pair.Value.Transform.position.y));
+            var d = WorldCoords.MapDistance(selfPos, pair.Value.Transform.position);
             ids.Add(pair.Key);
             dists.Add(d);
         }
 
+        SortIdsByDist(ids, dists);
+        return ids;
+    }
+
+    private static void SortIdsByDist(List<string> ids, List<float> dists)
+    {
         for (var i = 1; i < ids.Count; i++)
         {
             var id = ids[i];
@@ -2997,8 +4526,6 @@ public sealed class GrayBoxWorld : MonoBehaviour
             ids[j + 1] = id;
             dists[j + 1] = dist;
         }
-
-        return ids;
     }
 
     private bool IsLiving(string id)
@@ -3051,7 +4578,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 continue;
             }
 
-            list[i].position = basePos + new Vector3((i - (list.Count - 1) * 0.5f) * 0.28f, 0f, -0.2f);
+            list[i].position = basePos + new Vector3((i - (list.Count - 1) * 0.5f) * 0.28f, 0.15f, 0f);
         }
     }
 
@@ -3083,24 +4610,39 @@ public sealed class GrayBoxWorld : MonoBehaviour
         {
             var p = self.Transform.position;
             x = p.x;
-            y = p.y;
+            y = p.z;
         }
 
-        var pos = new Vector3(x, y, -0.2f);
-        if (kind == "homestone")
+        var pos = WorldCoords.TileToWorld(x, y, 0.2f);
+        if (kind == "homestone" || kind == "teleport")
         {
-            SpawnTempPrimitive(PrimitiveType.Cylinder, pos + Vector3.forward * -0.05f,
-                new Vector3(1.1f, 0.08f, 1.1f), new Color(0.45f, 0.85f, 1f, 0.55f), 0.45f);
-            SpawnTempPrimitive(PrimitiveType.Sphere, pos + Vector3.up * 0.35f,
-                Vector3.one * 0.35f, new Color(0.7f, 0.95f, 1f, 0.7f), 0.35f);
-            SpawnImpactSpark(pos, new Color(0.55f, 0.9f, 1f));
+            PlayTeleportFx();
+            SpawnRingFx(pos, 0.4f, 2.1f, new Color(0.45f, 0.9f, 1f, 0.8f),
+                new Color(0.3f, 0.7f, 1f, 0f), 0.5f, 40f);
+            return;
+        }
+
+        if (kind == "levelup")
+        {
+            PlayLevelUpFx();
+            return;
+        }
+
+        if (kind == "gacha")
+        {
+            PlayGachaRevealFx();
+            return;
+        }
+
+        if (kind == "portal")
+        {
+            PlayPortalRipple(pos);
             return;
         }
 
         if (kind == "food")
         {
-            SpawnTempPrimitive(PrimitiveType.Sphere, pos + Vector3.up * 0.25f,
-                Vector3.one * 0.28f, new Color(1f, 0.55f, 0.15f, 0.7f), 0.28f);
+            SpawnBurstFx(pos + Vector3.up * 0.2f, new Color(1f, 0.55f, 0.15f, 0.85f), 0.7f, 0.32f);
             return;
         }
 
@@ -3159,50 +4701,23 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
     private void SpawnTelegraphDisc(Vector3 pos, float radius, float life)
     {
-        var go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-        go.name = "fx_telegraph";
-        if (_root != null)
-        {
-            go.transform.SetParent(_root, false);
-        }
-
-        StripCollider(go);
-        go.transform.position = new Vector3(pos.x, pos.y, -0.05f);
-        go.transform.localScale = new Vector3(radius * 2f, 0.035f, radius * 2f);
-        go.transform.rotation = Quaternion.FromToRotation(Vector3.up, Vector3.forward);
-        var r = go.GetComponent<Renderer>();
-        if (r != null)
-        {
-            r.material.color = new Color(1f, 0.15f, 0.1f, 0.45f);
-        }
-
-        _tempFx.Add(new TempFx { Go = go, Until = Time.time + Mathf.Max(0.2f, life) });
+        var d = Mathf.Max(1.2f, radius * 2f);
+        SpawnRingFx(pos, d * 0.55f, d, new Color(1f, 0.18f, 0.12f, 0.85f),
+            new Color(1f, 0.08f, 0.05f, 0.15f), Mathf.Max(0.25f, life), 25f);
+        SpawnFx(MakeGlowSprite(), WorldCoords.Lift(pos, 0.08f),
+            Vector3.one * (d * 0.2f), Vector3.one * (d * 0.45f),
+            new Color(1f, 0.2f, 0.1f, 0.35f), new Color(1f, 0.1f, 0.05f, 0f),
+            Mathf.Max(0.25f, life), 0f, 0f, "", Vector3.zero, 40);
     }
 
     private void SpawnPopSphere(Vector3 pos, Color color, float life)
     {
-        SpawnTempPrimitive(PrimitiveType.Sphere, pos, Vector3.one * 0.4f, color, life);
+        SpawnBurstFx(pos, color, 0.7f, Mathf.Max(0.08f, life));
     }
 
     private void SpawnTempPrimitive(PrimitiveType type, Vector3 pos, Vector3 scale, Color color, float life)
     {
-        var go = GameObject.CreatePrimitive(type);
-        go.name = "fx_temp";
-        if (_root != null)
-        {
-            go.transform.SetParent(_root, false);
-        }
-
-        StripCollider(go);
-        go.transform.position = pos;
-        go.transform.localScale = scale;
-        if (_cam != null)
-        {
-            go.transform.rotation = _cam.transform.rotation;
-        }
-
-        ApplyUnlitColor(go, color);
-        _tempFx.Add(new TempFx { Go = go, Until = Time.time + Mathf.Max(0.05f, life) });
+        SpawnBurstFx(pos, color, Mathf.Max(0.35f, scale.x), Mathf.Max(0.08f, life));
     }
 
     private static void StripCollider(GameObject go)
@@ -3322,8 +4837,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var go = new GameObject("LockOutline");
         go.transform.SetParent(_root, false);
         var sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = MakeRedOutlineSprite();
-        sr.color = new Color(1f, 0.12f, 0.1f, 1f);
+        _lockFrames = VfxCatalog.LockIcon();
+        sr.sprite = _lockFrames != null && _lockFrames.Length > 0 ? _lockFrames[0] : MakeRedOutlineSprite();
+        sr.color = Color.white;
         sr.sortingOrder = 25;
         ApplyUnlit(sr);
         go.transform.localScale = Vector3.one * 1.4f;
@@ -3371,11 +4887,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
             worldW = worldH = scale * 1.05f;
         }
 
-        _lockRing.position = new Vector3(view.Transform.position.x, view.Transform.position.y, -0.45f);
-        if (_cam != null)
-        {
-            _lockRing.rotation = _cam.transform.rotation;
-        }
+        var ringH = worldH * 0.5f;
+        _lockRing.position = view.Transform.position + Vector3.up * ringH;
+        YBillboard(_lockRing);
 
         // Outline sprite is authored as ~1×1 world unit.
         _lockRing.localScale = new Vector3(worldW, worldH, 1f);
@@ -3387,8 +4901,18 @@ public sealed class GrayBoxWorld : MonoBehaviour
 
         if (_lockRingSr != null)
         {
+            if (_lockFrames != null && _lockFrames.Length > 0)
+            {
+                _lockAnimT += Time.deltaTime * VfxCatalog.DefaultSheetFps;
+                var idx = Mathf.FloorToInt(_lockAnimT) % _lockFrames.Length;
+                _lockRingSr.sprite = _lockFrames[idx];
+            }
+
             var a = view.ThreatSelfPct >= 35f ? 1f : 0.92f;
-            _lockRingSr.color = new Color(1f, 0.12f, 0.08f, a);
+            var friendly = IsPlayerEntity(_lockTargetId);
+            _lockRingSr.color = friendly
+                ? new Color(0.55f, 0.75f, 1f, a)
+                : new Color(1f, 0.85f, 0.95f, a);
         }
     }
 
@@ -3424,16 +4948,56 @@ public sealed class GrayBoxWorld : MonoBehaviour
         }
 
         _cam.orthographic = true;
-        _cam.orthographicSize = 7f;
+        ApplyIsoOrthoSize();
         _cam.clearFlags = CameraClearFlags.SolidColor;
         _cam.backgroundColor = new Color(0.08f, 0.09f, 0.12f);
         _cam.nearClipPlane = 0.1f;
-        _cam.farClipPlane = 80f;
+        _cam.farClipPlane = 120f;
+        _cam.transparencySortMode = TransparencySortMode.Perspective;
+        RenderSettings.ambientMode = AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.42f, 0.45f, 0.52f);
+        EnsureSun();
+    }
+
+    private void ApplyIsoOrthoSize()
+    {
+        if (_cam == null)
+        {
+            return;
+        }
+
+        _cam.orthographicSize = WorldCoords.OrthoSizeForTilePixels(Screen.height);
+    }
+
+    private void EnsureSun()
+    {
+        if (_isoSun != null)
+        {
+            return;
+        }
+
+        var go = GameObject.Find("IsoSun");
+        if (go == null)
+        {
+            go = new GameObject("IsoSun");
+        }
+
+        _isoSun = go.GetComponent<Light>();
+        if (_isoSun == null)
+        {
+            _isoSun = go.AddComponent<Light>();
+        }
+
+        _isoSun.type = LightType.Directional;
+        _isoSun.intensity = 1.15f;
+        _isoSun.color = new Color(1f, 0.97f, 0.9f);
+        _isoSun.shadows = LightShadows.Soft;
+        go.transform.rotation = Quaternion.Euler(50f, 45f, 0f);
     }
 
     private void CenterCamera(float x, float y)
     {
-        UpdateOrbitCamera(new Vector3(x, y, 0f));
+        UpdateOrbitCamera(WorldCoords.TileToWorld(x, y));
     }
 
     private void UpdateOrbitCamera(Vector3 playerPos)
@@ -3443,14 +5007,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
             return;
         }
 
-        var pitch = CamPitchFromVertical * Mathf.Deg2Rad;
-        var yaw = _camYaw * Mathf.Deg2Rad;
-        var offset = new Vector3(
-            Mathf.Sin(yaw) * Mathf.Sin(pitch),
-            -Mathf.Cos(yaw) * Mathf.Sin(pitch),
-            -Mathf.Cos(pitch)) * CamDistance;
-        _cam.transform.position = playerPos + offset;
-        _cam.transform.LookAt(playerPos, Vector3.forward);
+        ApplyIsoOrthoSize();
+        _cam.transform.rotation = Quaternion.Euler(CamPitchFromHorizontal, _camYaw, 0f);
+        _cam.transform.position = playerPos - _cam.transform.forward * CamDistance;
     }
 
     public void ClearSessionEntities()
@@ -3458,7 +5017,7 @@ public sealed class GrayBoxWorld : MonoBehaviour
         ClearForeignEntities();
         if (_entities.TryGetValue(_selfId, out var self) && self.Transform != null)
         {
-            self.Transform.position = new Vector3(3f, 6f, 0f);
+            self.Transform.position = WorldCoords.TileToWorld(3f, 6f);
             self.Moving = false;
             _entities[_selfId] = self;
         }
@@ -3485,7 +5044,9 @@ public sealed class GrayBoxWorld : MonoBehaviour
         var useKind = kind ?? "monster";
         var useId = id ?? label;
         sr.sprite = SpriteCatalog.ForEntity(useId, useKind);
-        sr.color = SpriteCatalog.HasArtSprite(useId, useKind) ? Color.white : color;
+        sr.color = SpriteCatalog.HasArtSprite(useId, useKind)
+            ? (SpriteCatalog.IsPlayerKind(useId, useKind) ? Color.white : SpriteCatalog.MonsterTint(useId))
+            : color;
         sr.sortingOrder = 20;
         ApplyUnlit(sr);
         go.transform.localScale = Vector3.one * SpriteCatalog.EntityScale(useId, useKind);
@@ -3493,38 +5054,129 @@ public sealed class GrayBoxWorld : MonoBehaviour
     }
 
     private static Material _sharedSpriteMat;
-    private static Material _sharedSpriteMatUrp;
-    private static Material _sharedSpriteMatBuiltin;
+    private static MaterialPropertyBlock _spriteTexBlock;
+
+    private static MaterialPropertyBlock SpriteTexBlock
+    {
+        get
+        {
+            if (_spriteTexBlock == null)
+            {
+                _spriteTexBlock = new MaterialPropertyBlock();
+            }
+
+            return _spriteTexBlock;
+        }
+    }
+
+    private static void BindSpriteTexture(SpriteRenderer sr)
+    {
+        if (sr == null || sr.sprite == null)
+        {
+            return;
+        }
+
+        var tex = sr.sprite.texture;
+        if (tex == null)
+        {
+            return;
+        }
+
+        var block = SpriteTexBlock;
+        sr.GetPropertyBlock(block);
+        block.SetTexture("_MainTex", tex);
+        block.SetTexture("_BaseMap", tex);
+        block.SetColor("_BaseColor", Color.white);
+        block.SetColor("_Color", Color.white);
+        sr.SetPropertyBlock(block);
+    }
+
+    private static void MakeMaterialTransparent(Material mat)
+    {
+        if (mat == null)
+        {
+            return;
+        }
+
+        mat.SetFloat("_Surface", 1f);
+        mat.SetFloat("_Blend", 0f);
+        mat.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+        mat.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+        mat.SetFloat("_ZWrite", 0f);
+        mat.SetFloat("_ZTest", (float)CompareFunction.LessEqual);
+        mat.SetFloat("_Cull", 0f);
+        if (mat.HasProperty("_BaseColor"))
+        {
+            mat.SetColor("_BaseColor", Color.white);
+        }
+
+        if (mat.HasProperty("_Color"))
+        {
+            mat.SetColor("_Color", Color.white);
+        }
+
+        if (mat.HasProperty("_UnlitColor"))
+        {
+            mat.SetColor("_UnlitColor", Color.white);
+        }
+        mat.SetOverrideTag("RenderType", "Transparent");
+        mat.renderQueue = 3000;
+        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        mat.EnableKeyword("_ALPHABLEND_ON");
+        mat.DisableKeyword("_ALPHATEST_ON");
+        mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        if (mat.HasProperty("_Cutoff"))
+        {
+            mat.SetFloat("_Cutoff", 0.1f);
+        }
+    }
 
     private static void ApplyUnlit(SpriteRenderer sr)
     {
-        // Under URP 2D, Built-in Sprites/Default often draws NOTHING (invisible units).
-        // Prefer URP Sprite-Unlit; keep Built-in only as last resort.
-        if (_sharedSpriteMatUrp == null)
+        // Billboarded units need a 3D-capable unlit shader. Force alpha blending so
+        // PNG transparency is not drawn as a black halo around characters/enemies.
+        if (sr == null)
         {
-            var urp = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
-            if (urp != null)
+            return;
+        }
+
+        if (_sharedSpriteMat == null)
+        {
+            string[] names =
             {
-                _sharedSpriteMatUrp = new Material(urp);
+                "Universal Render Pipeline/Unlit",
+                "Unlit/Transparent",
+                "Universal Render Pipeline/2D/Sprite-Unlit-Default",
+                "Sprites/Default",
+                "Unlit/Texture",
+            };
+            for (var i = 0; i < names.Length; i++)
+            {
+                var shader = Shader.Find(names[i]);
+                if (shader == null)
+                {
+                    continue;
+                }
+
+                _sharedSpriteMat = new Material(shader);
+                MakeMaterialTransparent(_sharedSpriteMat);
+                GameLog.Info(GameLog.Channel.Gfx, "sprite shader=" + names[i] + "  alpha=blend");
+                break;
+            }
+
+            if (_sharedSpriteMat == null)
+            {
+                GameLog.WarnOnce(GameLog.Channel.Gfx, "sprite-shader",
+                    "reason=no_sprite_shader  fallback=renderer_default");
             }
         }
 
-        if (_sharedSpriteMatBuiltin == null)
+        if (_sharedSpriteMat != null)
         {
-            var builtin = Shader.Find("Sprites/Default")
-                ?? Shader.Find("Unlit/Transparent");
-            if (builtin != null)
-            {
-                _sharedSpriteMatBuiltin = new Material(builtin);
-            }
+            sr.sharedMaterial = _sharedSpriteMat;
         }
 
-        var mat = _sharedSpriteMatUrp ?? _sharedSpriteMatBuiltin;
-        _sharedSpriteMat = mat;
-        if (mat != null)
-        {
-            sr.sharedMaterial = mat;
-        }
+        BindSpriteTexture(sr);
     }
 
     private static Sprite MakeSprite(Color color)
@@ -3543,6 +5195,29 @@ public sealed class GrayBoxWorld : MonoBehaviour
         return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size);
     }
 
+    private void SpawnMapProps(List<JsonUtil.MapProp> props)
+    {
+        if (props == null || props.Count == 0 || _root == null)
+        {
+            return;
+        }
+
+        for (var i = 0; i < props.Count; i++)
+        {
+            var p = props[i];
+            var go = new GameObject("prop");
+            go.transform.SetParent(_root, false);
+            go.transform.position = WorldCoords.TileToWorld(p.X, p.Y, 0.4f);
+            var scale = SpriteCatalog.PropScale(p.Kind);
+            go.transform.localScale = new Vector3(scale, scale, 1f);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = SpriteCatalog.ForProp(p.Kind);
+            sr.color = Color.white;
+            sr.sortingOrder = 1;
+            ApplyUnlit(sr);
+        }
+    }
+
     private void SpawnTileHints(HashSet<Vector2Int> blocked = null, HashSet<Vector2Int> hazards = null)
     {
         blocked ??= new HashSet<Vector2Int>
@@ -3558,28 +5233,111 @@ public sealed class GrayBoxWorld : MonoBehaviour
                 var cell = new Vector2Int(x, y);
                 var isWall = blocked.Contains(cell);
                 var isHazard = !isWall && hazards.Contains(cell);
-                var go = new GameObject(isWall ? "wall" : isHazard ? "hazard" : "tile");
-                go.transform.SetParent(_root, false);
-                go.transform.position = new Vector3(x, y, 1f);
-                var sr = go.AddComponent<SpriteRenderer>();
                 var even = (x + y) % 2 == 0;
                 if (isWall)
                 {
-                    sr.sprite = SpriteCatalog.ForWall(_mapId);
-                    sr.color = Color.white;
-                }
-                else
-                {
-                    sr.sprite = SpriteCatalog.ForFloor(_mapId, even);
-                    sr.color = isHazard
-                        ? new Color(1f, 0.35f, 0.18f, 1f)
-                        : even ? Color.white : new Color(0.88f, 0.88f, 0.88f, 1f);
+                    SpawnWallCube(x, y);
+                    continue;
                 }
 
-                go.transform.localScale = Vector3.one;
-                sr.sortingOrder = 0;
-                ApplyUnlit(sr);
+                SpawnFloorTile(x, y, even, isHazard);
             }
         }
+
+        SpawnMapBorderWalls();
+    }
+
+    /// <summary>Visible cubes for the out-of-bounds ring (server already rejects those coords).</summary>
+    private void SpawnMapBorderWalls()
+    {
+        for (var x = -1; x <= _mapW; x++)
+        {
+            SpawnWallCube(x, -1);
+            SpawnWallCube(x, _mapH);
+        }
+
+        for (var y = 0; y < _mapH; y++)
+        {
+            SpawnWallCube(-1, y);
+            SpawnWallCube(_mapW, y);
+        }
+    }
+
+    private void SpawnFloorTile(int x, int y, bool even, bool hazard)
+    {
+        var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        go.name = hazard ? "hazard" : "tile";
+        go.transform.SetParent(_root, false);
+        go.transform.position = WorldCoords.TileToWorld(x, y, -0.02f);
+        go.transform.localScale = new Vector3(1f, 0.04f, 1f);
+        StripCollider(go);
+        var tint = hazard
+            ? new Color(1f, 0.35f, 0.18f, 1f)
+            : even ? Color.white : new Color(0.88f, 0.88f, 0.88f, 1f);
+        ApplyTileMaterial(go, SpriteCatalog.ForFloor(_mapId, even), tint, false);
+    }
+
+    private void SpawnWallCube(int x, int y)
+    {
+        var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        go.name = "wall";
+        go.transform.SetParent(_root, false);
+        const float h = 2f;
+        go.transform.position = WorldCoords.TileToWorld(x, y, h * 0.5f);
+        go.transform.localScale = new Vector3(1f, h, 1f);
+        StripCollider(go);
+        // Solid cube — biome wall textures read as floor from dimetric pitch.
+        ApplyTileMaterial(go, null, new Color(0.28f, 0.30f, 0.36f, 1f), true);
+    }
+
+    private void ApplyTileMaterial(GameObject go, Sprite sprite, Color tint, bool castShadows)
+    {
+        var rend = go.GetComponent<MeshRenderer>();
+        if (rend == null)
+        {
+            return;
+        }
+
+        var key = (sprite != null ? sprite.name : "flat") + tint.ToString() + (castShadows ? "_w" : "_f");
+        if (!_tileMats.TryGetValue(key, out var mat) || mat == null)
+        {
+            var shader = sprite == null
+                ? Shader.Find("Universal Render Pipeline/Unlit")
+                    ?? Shader.Find("Unlit/Color")
+                    ?? Shader.Find("Universal Render Pipeline/Lit")
+                    ?? Shader.Find("Standard")
+                : Shader.Find("Universal Render Pipeline/Lit")
+                    ?? Shader.Find("Universal Render Pipeline/Unlit")
+                    ?? Shader.Find("Unlit/Texture")
+                    ?? Shader.Find("Standard");
+            mat = shader != null ? new Material(shader) : new Material(rend.sharedMaterial);
+            if (sprite != null && sprite.texture != null)
+            {
+                if (mat.HasProperty("_BaseMap"))
+                {
+                    mat.SetTexture("_BaseMap", sprite.texture);
+                }
+
+                mat.mainTexture = sprite.texture;
+            }
+
+            if (mat.HasProperty("_BaseColor"))
+            {
+                mat.SetColor("_BaseColor", tint);
+            }
+
+            if (mat.HasProperty("_Color"))
+            {
+                mat.SetColor("_Color", tint);
+            }
+
+            _tileMats[key] = mat;
+        }
+
+        rend.sharedMaterial = mat;
+        rend.shadowCastingMode = castShadows
+            ? UnityEngine.Rendering.ShadowCastingMode.On
+            : UnityEngine.Rendering.ShadowCastingMode.Off;
+        rend.receiveShadows = true;
     }
 }

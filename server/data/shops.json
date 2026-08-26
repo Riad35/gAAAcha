@@ -163,24 +163,19 @@
     "npcId": "npc_card_vendor",
     "entries": [
       {
-        "itemId": "card_fighter",
-        "buyPrice": 500,
-        "sellPrice": 100
+        "itemId": "item_ticket",
+        "buyPrice": 80,
+        "sellPrice": 20
       },
       {
-        "itemId": "card_mage",
-        "buyPrice": 500,
-        "sellPrice": 100
+        "itemId": "item_skill_tome",
+        "buyPrice": 80,
+        "sellPrice": 30
       },
       {
-        "itemId": "card_marksman",
-        "buyPrice": 500,
-        "sellPrice": 100
-      },
-      {
-        "itemId": "card_rogue",
-        "buyPrice": 500,
-        "sellPrice": 100
+        "itemId": "item_dust",
+        "buyPrice": 2,
+        "sellPrice": 1
       }
     ]
   },
@@ -202,6 +197,16 @@
         "itemId": "item_homestone",
         "buyPrice": 25,
         "sellPrice": 10
+      },
+      {
+        "itemId": "item_stew",
+        "buyPrice": 16,
+        "sellPrice": 5
+      },
+      {
+        "itemId": "item_ticket",
+        "buyPrice": 70,
+        "sellPrice": 18
       },
       {
         "itemId": "armor_iron",
@@ -238,6 +243,16 @@
         "itemId": "item_homestone",
         "buyPrice": 25,
         "sellPrice": 10
+      },
+      {
+        "itemId": "item_ticket",
+        "buyPrice": 75,
+        "sellPrice": 18
+      },
+      {
+        "itemId": "item_skill_tome",
+        "buyPrice": 90,
+        "sellPrice": 30
       },
       {
         "itemId": "armor_ash",

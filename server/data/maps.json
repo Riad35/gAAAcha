@@ -41,7 +41,55 @@
                 "x": 17,
                 "y": 12
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 4,
+                "y": 3,
+                "kind": "stall"
+            },
+            {
+                "x": 4,
+                "y": 6,
+                "kind": "stall"
+            },
+            {
+                "x": 8,
+                "y": 6,
+                "kind": "stall"
+            },
+            {
+                "x": 4,
+                "y": 12,
+                "kind": "stall"
+            },
+            {
+                "x": 8,
+                "y": 12,
+                "kind": "stall"
+            },
+            {
+                "x": 9,
+                "y": 9,
+                "kind": "fountain"
+            },
+            {
+                "x": 16,
+                "y": 12,
+                "kind": "crate"
+            },
+            {
+                "x": 21,
+                "y": 8,
+                "kind": "gate"
+            },
+            {
+                "x": 21,
+                "y": 10,
+                "kind": "gate"
+            }
+        ],
+        "grid": "maps/town_ashen.map.txt"
     },
     {
         "id": "field_ridge",
@@ -105,7 +153,50 @@
                 "x": 28,
                 "y": 11
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 10,
+                "y": 8,
+                "kind": "rock"
+            },
+            {
+                "x": 10,
+                "y": 11,
+                "kind": "rock"
+            },
+            {
+                "x": 18,
+                "y": 5,
+                "kind": "rock"
+            },
+            {
+                "x": 22,
+                "y": 14,
+                "kind": "rock"
+            },
+            {
+                "x": 3,
+                "y": 9,
+                "kind": "gate"
+            },
+            {
+                "x": 3,
+                "y": 11,
+                "kind": "gate"
+            },
+            {
+                "x": 33,
+                "y": 9,
+                "kind": "gate"
+            },
+            {
+                "x": 33,
+                "y": 11,
+                "kind": "gate"
+            }
+        ],
+        "grid": "maps/field_ridge.map.txt"
     },
     {
         "id": "field_marsh",
@@ -149,7 +240,25 @@
                 "x": 23,
                 "y": 6
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 8,
+                "y": 8,
+                "kind": "rock"
+            },
+            {
+                "x": 16,
+                "y": 12,
+                "kind": "rock"
+            },
+            {
+                "x": 22,
+                "y": 6,
+                "kind": "rock"
+            }
+        ],
+        "grid": "maps/field_marsh.map.txt"
     },
     {
         "id": "dungeon_crypt",
@@ -181,7 +290,30 @@
                 "x": 13,
                 "y": 10
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 8,
+                "y": 4,
+                "kind": "pillar"
+            },
+            {
+                "x": 8,
+                "y": 6,
+                "kind": "brazier"
+            },
+            {
+                "x": 12,
+                "y": 10,
+                "kind": "bones"
+            },
+            {
+                "x": 13,
+                "y": 10,
+                "kind": "chest"
+            }
+        ],
+        "grid": "maps/dungeon_crypt.map.txt"
     },
     {
         "id": "dungeon_ruins",
@@ -213,7 +345,25 @@
                 "x": 15,
                 "y": 11
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 7,
+                "y": 7,
+                "kind": "pillar"
+            },
+            {
+                "x": 8,
+                "y": 8,
+                "kind": "brazier"
+            },
+            {
+                "x": 14,
+                "y": 11,
+                "kind": "bones"
+            }
+        ],
+        "grid": "maps/dungeon_ruins.map.txt"
     },
     {
         "id": "tower_f1",
@@ -253,7 +403,51 @@
                 "x": 22,
                 "y": 11
             }
-        ]
+        ],
+        "wallRects": [
+            {
+                "x": 4,
+                "y": 3,
+                "w": 22,
+                "h": 1
+            },
+            {
+                "x": 4,
+                "y": 16,
+                "w": 22,
+                "h": 1
+            },
+            {
+                "x": 15,
+                "y": 4,
+                "w": 1,
+                "h": 4
+            },
+            {
+                "x": 15,
+                "y": 12,
+                "w": 1,
+                "h": 4
+            }
+        ],
+        "props": [
+            {
+                "x": 14,
+                "y": 8,
+                "kind": "brazier"
+            },
+            {
+                "x": 14,
+                "y": 11,
+                "kind": "pillar"
+            },
+            {
+                "x": 22,
+                "y": 9,
+                "kind": "brazier"
+            }
+        ],
+        "grid": "maps/tower_f1.map.txt"
     },
     {
         "id": "tower_f2",
@@ -289,7 +483,51 @@
                 "x": 24,
                 "y": 10
             }
-        ]
+        ],
+        "wallRects": [
+            {
+                "x": 4,
+                "y": 3,
+                "w": 22,
+                "h": 1
+            },
+            {
+                "x": 4,
+                "y": 16,
+                "w": 22,
+                "h": 1
+            },
+            {
+                "x": 14,
+                "y": 4,
+                "w": 1,
+                "h": 4
+            },
+            {
+                "x": 14,
+                "y": 12,
+                "w": 1,
+                "h": 4
+            }
+        ],
+        "props": [
+            {
+                "x": 12,
+                "y": 7,
+                "kind": "brazier"
+            },
+            {
+                "x": 18,
+                "y": 12,
+                "kind": "pillar"
+            },
+            {
+                "x": 24,
+                "y": 9,
+                "kind": "brazier"
+            }
+        ],
+        "grid": "maps/tower_f2.map.txt"
     },
     {
         "id": "tower_f3",
@@ -329,7 +567,51 @@
                 "x": 25,
                 "y": 10
             }
-        ]
+        ],
+        "wallRects": [
+            {
+                "x": 4,
+                "y": 3,
+                "w": 24,
+                "h": 1
+            },
+            {
+                "x": 4,
+                "y": 16,
+                "w": 24,
+                "h": 1
+            },
+            {
+                "x": 18,
+                "y": 4,
+                "w": 1,
+                "h": 5
+            },
+            {
+                "x": 18,
+                "y": 12,
+                "w": 1,
+                "h": 4
+            }
+        ],
+        "props": [
+            {
+                "x": 10,
+                "y": 6,
+                "kind": "pillar"
+            },
+            {
+                "x": 16,
+                "y": 10,
+                "kind": "brazier"
+            },
+            {
+                "x": 25,
+                "y": 9,
+                "kind": "chest"
+            }
+        ],
+        "grid": "maps/tower_f3.map.txt"
     },
     {
         "id": "tower_f4",
@@ -369,7 +651,51 @@
                 "x": 26,
                 "y": 11
             }
-        ]
+        ],
+        "wallRects": [
+            {
+                "x": 4,
+                "y": 3,
+                "w": 24,
+                "h": 1
+            },
+            {
+                "x": 4,
+                "y": 18,
+                "w": 24,
+                "h": 1
+            },
+            {
+                "x": 17,
+                "y": 4,
+                "w": 1,
+                "h": 6
+            },
+            {
+                "x": 17,
+                "y": 13,
+                "w": 1,
+                "h": 5
+            }
+        ],
+        "props": [
+            {
+                "x": 9,
+                "y": 9,
+                "kind": "bones"
+            },
+            {
+                "x": 15,
+                "y": 5,
+                "kind": "brazier"
+            },
+            {
+                "x": 26,
+                "y": 10,
+                "kind": "pillar"
+            }
+        ],
+        "grid": "maps/tower_f4.map.txt"
     },
     {
         "id": "tower_f5",
@@ -405,7 +731,51 @@
                 "x": 28,
                 "y": 11
             }
-        ]
+        ],
+        "wallRects": [
+            {
+                "x": 4,
+                "y": 3,
+                "w": 26,
+                "h": 1
+            },
+            {
+                "x": 4,
+                "y": 18,
+                "w": 26,
+                "h": 1
+            },
+            {
+                "x": 19,
+                "y": 4,
+                "w": 1,
+                "h": 6
+            },
+            {
+                "x": 19,
+                "y": 13,
+                "w": 1,
+                "h": 5
+            }
+        ],
+        "props": [
+            {
+                "x": 12,
+                "y": 8,
+                "kind": "brazier"
+            },
+            {
+                "x": 20,
+                "y": 12,
+                "kind": "chest"
+            },
+            {
+                "x": 28,
+                "y": 10,
+                "kind": "pillar"
+            }
+        ],
+        "grid": "maps/tower_f5.map.txt"
     },
     {
         "id": "tower_town_2",
@@ -429,7 +799,20 @@
                 "x": 16,
                 "y": 12
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 10,
+                "y": 4,
+                "kind": "stall"
+            },
+            {
+                "x": 16,
+                "y": 12,
+                "kind": "fountain"
+            }
+        ],
+        "grid": "maps/tower_town_2.map.txt"
     },
     {
         "id": "tower_town_3",
@@ -449,7 +832,20 @@
                 "x": 14,
                 "y": 11
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 8,
+                "y": 5,
+                "kind": "stall"
+            },
+            {
+                "x": 14,
+                "y": 11,
+                "kind": "brazier"
+            }
+        ],
+        "grid": "maps/tower_town_3.map.txt"
     },
     {
         "id": "tower_boss_f2",
@@ -469,7 +865,20 @@
                 "x": 8,
                 "y": 4
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 8,
+                "y": 3,
+                "kind": "pillar"
+            },
+            {
+                "x": 8,
+                "y": 4,
+                "kind": "brazier"
+            }
+        ],
+        "grid": "maps/tower_boss_f2.map.txt"
     },
     {
         "id": "tower_boss_f5",
@@ -489,7 +898,20 @@
                 "x": 10,
                 "y": 4
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 9,
+                "y": 4,
+                "kind": "pillar"
+            },
+            {
+                "x": 10,
+                "y": 4,
+                "kind": "brazier"
+            }
+        ],
+        "grid": "maps/tower_boss_f5.map.txt"
     },
     {
         "id": "test_arena",
@@ -808,7 +1230,20 @@
                 "y": 15,
                 "damage": 4
             }
-        ]
+        ],
+        "props": [
+            {
+                "x": 8,
+                "y": 2,
+                "kind": "crate"
+            },
+            {
+                "x": 8,
+                "y": 5,
+                "kind": "pillar"
+            }
+        ],
+        "grid": "maps/test_arena.map.txt"
     },
     {
         "id": "slime_yard",
@@ -836,6 +1271,7 @@
                 "x": 15,
                 "y": 11
             }
-        ]
+        ],
+        "grid": "maps/slime_yard.map.txt"
     }
 ]

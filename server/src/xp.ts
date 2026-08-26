@@ -26,7 +26,7 @@ export function grantXp(
   const out: ServerMessage[] = [];
   let guard = 0;
   let leveled = false;
-  while (session.xp >= xpToNextLevel(session.level) && guard < 20) {
+  while (session.xp >= xpToNextLevel(session.level) && guard < 80) {
     session.xp -= xpToNextLevel(session.level);
     session.level += 1;
     session.skillPoints += 1;

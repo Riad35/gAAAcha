@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "defaultPpu": 180,
+  "defaultPivot": "feet",
+  "notes": "Pose presets only. Per-frame origin Y for sit/death is a later asset pass — runtime still scans opaque feet.",
+  "poses": [
+    {
+      "id": "stand",
+      "pivot": "feet",
+      "ppu": 180,
+      "originYLater": false
+    },
+    {
+      "id": "sit",
+      "pivot": "feet",
+      "ppu": 180,
+      "originYLater": true,
+      "task": "Per-frame origin Y so sit does not change world height."
+    },
+    {
+      "id": "fall",
+      "pivot": "feet",
+      "ppu": 180,
+      "originYLater": true,
+      "task": "Per-frame origin Y so death does not change world height."
+    }
+  ]
+}

@@ -4,33 +4,38 @@
     "name": "Aurel Portrait",
     "rarity": "ssr",
     "kind": "skin",
-    "use": "skin"
+    "use": "skin",
+    "description": "SSR portrait skin. Use to equip."
   },
   {
     "id": "char_nyla",
     "name": "Nyla Portrait",
     "rarity": "sr",
     "kind": "skin",
-    "use": "skin"
+    "use": "skin",
+    "description": "SR portrait skin. Use to equip."
   },
   {
     "id": "item_dust",
     "name": "Star Dust",
     "rarity": "r",
-    "kind": "material"
+    "kind": "material",
+    "description": "Pull currency. 10 dust = 1 banner pull."
   },
   {
     "id": "item_ticket",
     "name": "Banner Ticket",
     "rarity": "sr",
-    "kind": "material"
+    "kind": "material",
+    "description": "Pays for one banner pull before dust."
   },
   {
     "id": "item_homestone",
     "name": "Homestone Scroll",
     "rarity": "sr",
     "kind": "consumable",
-    "use": "homestone"
+    "use": "homestone",
+    "description": "Warp to your set homestone."
   },
   {
     "id": "item_ration",
@@ -39,7 +44,8 @@
     "kind": "consumable",
     "use": "heal",
     "healHp": 25,
-    "healMp": 10
+    "healMp": 10,
+    "description": "Field food. Restores a little HP and MP."
   },
   {
     "id": "item_stew",
@@ -51,7 +57,8 @@
     "healMp": 15,
     "durationMs": 60000,
     "atkBonus": 6,
-    "defBonus": 4
+    "defBonus": 4,
+    "description": "60s ATK and DEF. R uses stew first."
   },
   {
     "id": "item_bread",
@@ -60,14 +67,16 @@
     "kind": "consumable",
     "use": "heal",
     "healHp": 15,
-    "healMp": 5
+    "healMp": 5,
+    "description": "Cheap snack. Small heal."
   },
   {
     "id": "item_skill_tome",
     "name": "Skill Tome",
     "rarity": "sr",
     "kind": "consumable",
-    "use": "skill_unlock"
+    "use": "skill_unlock",
+    "description": "Grants +1 skill point. Spend it at the Trainer."
   },
   {
     "id": "armor_leather",
@@ -76,7 +85,8 @@
     "kind": "armor",
     "slot": "armor",
     "levelReq": 1,
-    "defBonus": 4
+    "defBonus": 4,
+    "armorWeight": "light"
   },
   {
     "id": "helm_cap",
@@ -85,7 +95,8 @@
     "kind": "armor",
     "slot": "helm",
     "levelReq": 1,
-    "defBonus": 2
+    "defBonus": 2,
+    "armorWeight": "light"
   },
   {
     "id": "boots_leather",
@@ -95,7 +106,8 @@
     "slot": "boots",
     "levelReq": 1,
     "defBonus": 2,
-    "moveSpeedBonus": 0.3
+    "moveSpeedBonus": 0.3,
+    "armorWeight": "light"
   },
   {
     "id": "gloves_wrap",
@@ -104,14 +116,33 @@
     "kind": "armor",
     "slot": "gloves",
     "levelReq": 1,
-    "atkBonus": 1
+    "atkBonus": 1,
+    "armorWeight": "light"
   },
   {
     "id": "acc_ring",
     "name": "Copper Ring",
     "rarity": "sr",
     "kind": "armor",
-    "slot": "accessory",
+    "slot": "ring1",
+    "levelReq": 1,
+    "magicAtkBonus": 2
+  },
+  {
+    "id": "acc_ring2",
+    "name": "Copper Band",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "ring2",
+    "levelReq": 1,
+    "magicAtkBonus": 1
+  },
+  {
+    "id": "acc_amulet",
+    "name": "Copper Amulet",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "amulet",
     "levelReq": 1,
     "magicAtkBonus": 2
   },
@@ -122,7 +153,8 @@
     "kind": "armor",
     "slot": "armor",
     "levelReq": 8,
-    "defBonus": 8
+    "defBonus": 8,
+    "armorWeight": "heavy"
   },
   {
     "id": "helm_iron",
@@ -131,7 +163,8 @@
     "kind": "armor",
     "slot": "helm",
     "levelReq": 8,
-    "defBonus": 4
+    "defBonus": 4,
+    "armorWeight": "heavy"
   },
   {
     "id": "boots_iron",
@@ -141,7 +174,8 @@
     "slot": "boots",
     "levelReq": 8,
     "defBonus": 4,
-    "moveSpeedBonus": 0.5
+    "moveSpeedBonus": 0.5,
+    "armorWeight": "heavy"
   },
   {
     "id": "gloves_iron",
@@ -150,14 +184,33 @@
     "kind": "armor",
     "slot": "gloves",
     "levelReq": 8,
-    "atkBonus": 3
+    "atkBonus": 3,
+    "armorWeight": "heavy"
   },
   {
     "id": "acc_iron",
     "name": "Iron Signet",
     "rarity": "sr",
     "kind": "armor",
-    "slot": "accessory",
+    "slot": "ring1",
+    "levelReq": 8,
+    "magicAtkBonus": 4
+  },
+  {
+    "id": "acc_ring2_iron",
+    "name": "Iron Band",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "ring2",
+    "levelReq": 8,
+    "magicAtkBonus": 3
+  },
+  {
+    "id": "acc_amulet_iron",
+    "name": "Iron Amulet",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "amulet",
     "levelReq": 8,
     "magicAtkBonus": 4
   },
@@ -168,7 +221,8 @@
     "kind": "armor",
     "slot": "armor",
     "levelReq": 15,
-    "defBonus": 14
+    "defBonus": 14,
+    "armorWeight": "plate"
   },
   {
     "id": "helm_ash",
@@ -177,7 +231,8 @@
     "kind": "armor",
     "slot": "helm",
     "levelReq": 15,
-    "defBonus": 7
+    "defBonus": 7,
+    "armorWeight": "plate"
   },
   {
     "id": "boots_ash",
@@ -187,7 +242,8 @@
     "slot": "boots",
     "levelReq": 15,
     "defBonus": 6,
-    "moveSpeedBonus": 0.8
+    "moveSpeedBonus": 0.8,
+    "armorWeight": "plate"
   },
   {
     "id": "gloves_ash",
@@ -196,14 +252,33 @@
     "kind": "armor",
     "slot": "gloves",
     "levelReq": 15,
-    "atkBonus": 5
+    "atkBonus": 5,
+    "armorWeight": "plate"
   },
   {
     "id": "acc_ash",
     "name": "Ashen Band",
     "rarity": "sr",
     "kind": "armor",
-    "slot": "accessory",
+    "slot": "ring1",
+    "levelReq": 15,
+    "magicAtkBonus": 7
+  },
+  {
+    "id": "acc_ring2_ash",
+    "name": "Ashen Coil",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "ring2",
+    "levelReq": 15,
+    "magicAtkBonus": 6
+  },
+  {
+    "id": "acc_amulet_ash",
+    "name": "Ashen Amulet",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "amulet",
     "levelReq": 15,
     "magicAtkBonus": 7
   },
@@ -211,31 +286,183 @@
     "id": "sword_iron",
     "name": "Iron Sword",
     "rarity": "r",
-    "kind": "weapon"
+    "kind": "weapon",
+    "weaponKind": "sword",
+    "hand": "both",
+    "grip": "1h",
+    "atkBonus": 8,
+    "description": "One-handed sword. Mainhand or offhand."
+  },
+  {
+    "id": "sword_zwei",
+    "name": "Zweihander",
+    "rarity": "sr",
+    "kind": "weapon",
+    "weaponKind": "sword",
+    "hand": "mainhand",
+    "grip": "2h",
+    "atkBonus": 14,
+    "description": "Two-handed sword. Blocks offhand."
+  },
+  {
+    "id": "sword_off",
+    "name": "Side Sword",
+    "rarity": "r",
+    "kind": "weapon",
+    "weaponKind": "sword",
+    "hand": "offhand",
+    "grip": "1h",
+    "atkBonus": 5,
+    "description": "Offhand one-handed sword."
   },
   {
     "id": "bow_hunter",
     "name": "Hunter Bow",
     "rarity": "r",
-    "kind": "weapon"
+    "kind": "weapon",
+    "weaponKind": "bow",
+    "hand": "mainhand",
+    "grip": "1h",
+    "atkBonus": 7,
+    "description": "Mainhand bow. Archer default."
   },
   {
     "id": "dagger_twin",
     "name": "Twin Daggers",
     "rarity": "r",
-    "kind": "weapon"
+    "kind": "weapon",
+    "weaponKind": "dagger",
+    "hand": "both",
+    "grip": "1h",
+    "atkBonus": 6,
+    "description": "Light daggers. Mainhand or offhand."
+  },
+  {
+    "id": "dagger_off",
+    "name": "Offhand Dagger",
+    "rarity": "r",
+    "kind": "weapon",
+    "weaponKind": "dagger",
+    "hand": "offhand",
+    "grip": "1h",
+    "atkBonus": 4,
+    "description": "Offhand dagger."
   },
   {
     "id": "staff_arcane",
     "name": "Arcane Staff",
     "rarity": "sr",
-    "kind": "weapon"
+    "kind": "weapon",
+    "weaponKind": "staff",
+    "hand": "mainhand",
+    "grip": "1h",
+    "magicAtkBonus": 12,
+    "description": "Mainhand staff. Mage default."
+  },
+  {
+    "id": "tome_novice",
+    "name": "Novice Tome",
+    "rarity": "r",
+    "kind": "weapon",
+    "weaponKind": "tome",
+    "hand": "mainhand",
+    "grip": "1h",
+    "magicAtkBonus": 10,
+    "description": "Mainhand tome. Uses staff animations."
   },
   {
     "id": "gun_spark",
     "name": "Spark Gun",
     "rarity": "sr",
-    "kind": "weapon"
+    "kind": "weapon",
+    "weaponKind": "gun",
+    "hand": "mainhand",
+    "grip": "1h",
+    "atkBonus": 9,
+    "description": "Mainhand gun. Adventurer testing."
+  },
+  {
+    "id": "charm_leaf",
+    "name": "Leaf Charm",
+    "rarity": "r",
+    "kind": "weapon",
+    "weaponKind": "charm",
+    "hand": "offhand",
+    "grip": "1h",
+    "atkBonus": 3,
+    "description": "Archer offhand charm."
+  },
+  {
+    "id": "orb_glass",
+    "name": "Glass Orb",
+    "rarity": "r",
+    "kind": "weapon",
+    "weaponKind": "orb",
+    "hand": "offhand",
+    "grip": "1h",
+    "magicAtkBonus": 8,
+    "description": "Mage offhand orb."
+  },
+  {
+    "id": "armor_hide",
+    "name": "Hide Vest",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "armor",
+    "levelReq": 1,
+    "defBonus": 6,
+    "armorWeight": "medium"
+  },
+  {
+    "id": "boots_hide",
+    "name": "Hide Boots",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "boots",
+    "levelReq": 1,
+    "defBonus": 3,
+    "moveSpeedBonus": 0.35,
+    "armorWeight": "medium"
+  },
+  {
+    "id": "gloves_hide",
+    "name": "Hide Gloves",
+    "rarity": "r",
+    "kind": "armor",
+    "slot": "gloves",
+    "levelReq": 1,
+    "atkBonus": 2,
+    "armorWeight": "medium"
+  },
+  {
+    "id": "armor_plate",
+    "name": "Plate Cuirass",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "armor",
+    "levelReq": 1,
+    "defBonus": 16,
+    "armorWeight": "plate"
+  },
+  {
+    "id": "boots_plate",
+    "name": "Plate Greaves",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "boots",
+    "levelReq": 1,
+    "defBonus": 7,
+    "armorWeight": "plate"
+  },
+  {
+    "id": "gloves_plate",
+    "name": "Plate Gauntlets",
+    "rarity": "sr",
+    "kind": "armor",
+    "slot": "gloves",
+    "levelReq": 1,
+    "atkBonus": 4,
+    "armorWeight": "plate"
   },
   {
     "id": "spirit_ember",
@@ -257,7 +484,7 @@
   },
   {
     "id": "card_fighter",
-    "name": "Fighter Class Card",
+    "name": "Warrior Class Card",
     "rarity": "ssr",
     "kind": "class_card",
     "use": "class_card",
@@ -265,7 +492,8 @@
     "resistBonus": {
       "earth": 5
     },
-    "weaponCategory": "melee"
+    "weaponCategory": "melee",
+    "description": "Lv10 class change. Earth resist and melee kit."
   },
   {
     "id": "card_mage",
@@ -277,11 +505,12 @@
     "resistBonus": {
       "fire": 5
     },
-    "weaponCategory": "staff"
+    "weaponCategory": "staff",
+    "description": "Lv10 class change. Fire resist and staff kit."
   },
   {
     "id": "card_marksman",
-    "name": "Marksman Class Card",
+    "name": "Archer Class Card",
     "rarity": "ssr",
     "kind": "class_card",
     "use": "class_card",
@@ -290,7 +519,8 @@
       "wind": 5
     },
     "weaponCategory": "ranged",
-    "secondaryWeaponId": "gun_spark"
+    "secondaryWeaponId": "charm_leaf",
+    "description": "Lv10 class change. Wind resist and charm seed."
   },
   {
     "id": "card_rogue",
@@ -303,6 +533,207 @@
       "dark": 5
     },
     "weaponCategory": "dagger",
-    "secondaryWeaponId": "dagger_twin"
+    "secondaryWeaponId": "dagger_off",
+    "description": "Lv10 class change. Dark resist and daggers."
+  },
+  {
+    "id": "subclass_fighter_berserker",
+    "name": "Berserker Seal",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "fighter",
+    "levelReq": 30,
+    "description": "L30 Fighter subclass. Transform later will swap kits."
+  },
+  {
+    "id": "subclass_mage_fire",
+    "name": "Fire Mage Seal",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "mage",
+    "levelReq": 30,
+    "description": "L30 Mage subclass. Fire path."
+  },
+  {
+    "id": "subclass_marksman_sniper",
+    "name": "Sniper Seal",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "marksman",
+    "levelReq": 30,
+    "description": "L30 Archer subclass."
+  },
+  {
+    "id": "subclass_rogue_assassin",
+    "name": "Assassin Seal",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "rogue",
+    "levelReq": 30,
+    "description": "L30 Rogue subclass."
+  },
+  {
+    "id": "subclass_fighter_paladin",
+    "name": "Paladin Seal",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "fighter",
+    "levelReq": 40,
+    "description": "L40 Fighter subclass."
+  },
+  {
+    "id": "subclass_mage_water",
+    "name": "Water Mage Seal",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "mage",
+    "levelReq": 40,
+    "description": "L40 Mage subclass. Water path."
+  },
+  {
+    "id": "subclass_marksman_ranger",
+    "name": "Ranger Seal",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "marksman",
+    "levelReq": 40,
+    "description": "L40 Archer subclass."
+  },
+  {
+    "id": "subclass_rogue_shadow",
+    "name": "Shadow Seal",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "rogue",
+    "levelReq": 40,
+    "description": "L40 Rogue subclass."
+  },
+  {
+    "id": "subclass_fighter_t3",
+    "name": "Fighter Seal III",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "fighter",
+    "levelReq": 50,
+    "description": "L50 Fighter subclass."
+  },
+  {
+    "id": "subclass_mage_t3",
+    "name": "Mage Seal III",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "mage",
+    "levelReq": 50,
+    "description": "L50 Mage subclass."
+  },
+  {
+    "id": "subclass_marksman_t3",
+    "name": "Archer Seal III",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "marksman",
+    "levelReq": 50,
+    "description": "L50 Archer subclass."
+  },
+  {
+    "id": "subclass_rogue_t3",
+    "name": "Rogue Seal III",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "rogue",
+    "levelReq": 50,
+    "description": "L50 Rogue subclass."
+  },
+  {
+    "id": "subclass_fighter_t4",
+    "name": "Fighter Seal IV",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "fighter",
+    "levelReq": 60,
+    "description": "L60 Fighter subclass."
+  },
+  {
+    "id": "subclass_mage_t4",
+    "name": "Mage Seal IV",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "mage",
+    "levelReq": 60,
+    "description": "L60 Mage subclass."
+  },
+  {
+    "id": "subclass_marksman_t4",
+    "name": "Archer Seal IV",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "marksman",
+    "levelReq": 60,
+    "description": "L60 Archer subclass."
+  },
+  {
+    "id": "subclass_rogue_t4",
+    "name": "Rogue Seal IV",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "rogue",
+    "levelReq": 60,
+    "description": "L60 Rogue subclass."
+  },
+  {
+    "id": "subclass_fighter_t5",
+    "name": "Fighter Seal V",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "fighter",
+    "levelReq": 70,
+    "description": "L70 Fighter subclass."
+  },
+  {
+    "id": "subclass_mage_t5",
+    "name": "Mage Seal V",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "mage",
+    "levelReq": 70,
+    "description": "L70 Mage subclass."
+  },
+  {
+    "id": "subclass_marksman_t5",
+    "name": "Archer Seal V",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "marksman",
+    "levelReq": 70,
+    "description": "L70 Archer subclass."
+  },
+  {
+    "id": "subclass_rogue_t5",
+    "name": "Rogue Seal V",
+    "rarity": "sr",
+    "kind": "subclass",
+    "slot": "subclass",
+    "classId": "rogue",
+    "levelReq": 70,
+    "description": "L70 Rogue subclass."
   }
 ]

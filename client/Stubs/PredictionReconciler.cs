@@ -78,7 +78,7 @@ public sealed class PredictionReconciler
                 Hp = hpAfter,
                 X = x,
                 Y = y,
-                Hard = false,
+                Hard = hpAfter <= 0,
             };
         }
 
@@ -87,7 +87,7 @@ public sealed class PredictionReconciler
 
         var hpMatch = pred.PredictedHpAfter <= 0
             ? hpAfter <= 0
-            : Mathf.Abs(pred.PredictedHpAfter - hpAfter) <= 1;
+            : hpAfter > 0 && Mathf.Abs(pred.PredictedHpAfter - hpAfter) <= 1;
         var posMatch = true;
         if (x.HasValue && y.HasValue &&
             (Mathf.Abs(pred.PredictedX) > 1e-4f || Mathf.Abs(pred.PredictedY) > 1e-4f))

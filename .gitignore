@@ -17,13 +17,8 @@ client/Unity/**/Temp/
 client/Unity/**/Logs/
 client/Unity/**/UserSettings/
 client/Unity/**/obj/
-
-client/Unity/**/Library/
-client/Unity/**/Temp/
-client/Unity/**/Logs/
-client/Unity/**/UserSettings/
-client/Unity/**/obj/
 client/Unity/**/Assets/_ToReview/
+client/Unity/gatcha1/
 *.csproj
 *.sln
 *.slnx

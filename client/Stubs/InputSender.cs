@@ -95,7 +95,51 @@ public sealed class InputSender
 
     public void EquipWeapon(string weaponId)
     {
+        if (string.IsNullOrEmpty(weaponId))
+        {
+            _ = _net.SendRawAsync("{\"type\":\"request_equip\",\"weaponId\":null}");
+            return;
+        }
+
         _ = _net.SendRawAsync("{\"type\":\"request_equip\",\"weaponId\":\"" + weaponId + "\"}");
+    }
+
+    public void EquipOffhand(string weaponIdOrNull)
+    {
+        if (string.IsNullOrEmpty(weaponIdOrNull))
+        {
+            _ = _net.SendRawAsync("{\"type\":\"request_equip\",\"offhandId\":null}");
+            return;
+        }
+
+        _ = _net.SendRawAsync("{\"type\":\"request_equip\",\"offhandId\":\"" + weaponIdOrNull + "\"}");
+    }
+
+    public void RequestSwapInventory(int fromIndex, int toIndex)
+    {
+        _ = _net.SendRawAsync(
+            "{\"type\":\"request_swap_inventory\",\"fromIndex\":" + fromIndex + ",\"toIndex\":" + toIndex + "}");
+    }
+
+    public void RequestDebugSetClass(string classId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_debug_set_class\",\"classId\":\"" + classId + "\"}");
+    }
+
+    public void RequestDebugSetLevel(int level)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_debug_set_level\",\"level\":" + level + "}");
+    }
+
+    public void RequestChooseClass(string classId)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_choose_class\",\"classId\":\"" + classId + "\"}");
+    }
+
+    public void RequestTransform(bool on)
+    {
+        var flag = on ? "true" : "false";
+        _ = _net.SendRawAsync("{\"type\":\"request_transform\",\"on\":" + flag + "}");
     }
 
     public void EquipSpirit(string spiritIdOrNull)
@@ -195,6 +239,16 @@ public sealed class InputSender
     public void RequestInteract(string targetId)
     {
         _ = _net.SendRawAsync("{\"type\":\"request_interact\",\"targetId\":\"" + targetId + "\"}");
+    }
+
+    public void RequestDialogClose()
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_dialog_close\"}");
+    }
+
+    public void RequestEnhance(string slot)
+    {
+        _ = _net.SendRawAsync("{\"type\":\"request_enhance\",\"slot\":\"" + slot + "\"}");
     }
 
     public void RequestShopBuy(string shopId, string itemId)

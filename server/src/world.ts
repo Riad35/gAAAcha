@@ -2,15 +2,34 @@ import { classById, defaultBanner, defaultClass, defaultMap, itemById, mapById, 
 import { emptyInventory, padInventory, pityFor, pityView, seedStarterInventory } from "./gacha.js";
 import { loadGuest, type GuestSave } from "./persist.js";
 import { applyPendingHit, applyStatusOnHit, entityBlockedAt, hitFromCaster, applyIncomingDamageMult } from "./combat.js";
+import { isSolidAt } from "./tileCollision.js";
 import { resolveDamage, toCombatElement } from "./combat/damage.js";
 import { loadCombatConfig } from "./combat/config.js";
 import { bindInstanceHooks, resolveBaseMapId, tickInstances } from "./instance.js";
+import {
+  occupiedMapIds,
+  rebuildMapRuntimes,
+  reindexMonster,
+  resetMapRuntimes,
+  getMapRuntime,
+  ensureMapRuntime,
+} from "./mapRuntime.js";
 import { portalsOnMap } from "./portal.js";
 import { noteKill } from "./quest.js";
 import { addItem, removeItem } from "./shop.js";
 import { starterSkillsFor } from "./skills.js";
-import { grantXp } from "./xp.js";
+import { grantXp, totalXpToReach } from "./xp.js";
 import { applyKillLoot, killXpFor, lootTableFor, rollKillRewards } from "./loot.js";
+import {
+  canEquipArmor,
+  canEquipMainhand,
+  canEquipOffhand,
+  CLASS_CHANGE_LEVEL,
+  isTwoHanded,
+  stripInvalidGear,
+} from "./equipRules.js";
+import { ENHANCE_STAT_PER_LEVEL, enhanceLevelOf, type EnhanceSlot } from "./enhance.js";
+import { cancelRest, isResting } from "./rest.js";
 import {
   addThreat,
   clearAllThreat,
@@ -41,6 +60,20 @@ let nextId = 1;
 export function createId(prefix: string): string {
   nextId += 1;
   return `${prefix}_${nextId}`;
+}
+
+export function syncMoveOf(
+  entity: Pick<Entity, "id" | "x" | "y" | "moveSpeed">,
+  opts?: { speed?: number; snap?: boolean; seq?: number },
+): ServerMessage {
+  return {
+    type: "sync_move",
+    entityId: entity.id,
+    x: entity.x,
+    y: entity.y,
+    speed: opts?.snap ? 0 : (opts?.speed ?? entity.moveSpeed),
+    ...(opts?.seq != null ? { seq: opts.seq } : {}),
+  };
 }
 
 export const players = new Map<string, PlayerSession>();
@@ -110,16 +143,14 @@ function monsterSkillPriority(def: MonsterDef): string[] {
 
 function monsterBlockedAt(monster: Entity, nx: number, ny: number): boolean {
   const map = mapById(resolveBaseMapId(monster.mapId)) ?? defaultMap;
-  if (nx < 0 || ny < 0 || nx > map.width - 1 || ny > map.height - 1) {
-    return true;
-  }
-  const txr = Math.round(nx);
-  const tyr = Math.round(ny);
-  if (map.blocked.some((tile) => tile.x === txr && tile.y === tyr)) {
+  if (isSolidAt(nx, ny, map)) {
     return true;
   }
   // Ignore players so chase can enter melee; still blocked by NPCs / solids.
-  const playersIgnore = [...players.values()].map((p) => p.entity.id);
+  const runtime = getMapRuntime(monster.mapId);
+  const playersIgnore = runtime
+    ? [...runtime.playerIds]
+    : [...players.values()].filter((p) => p.entity.mapId === monster.mapId).map((p) => p.entity.id);
   return entityBlockedAt(nx, ny, monster, playersIgnore);
 }
 
@@ -176,7 +207,38 @@ const zeroResist = (): ResistMap => ({
   wind: 0, fire: 0, water: 0, earth: 0, holy: 0, dark: 0,
 });
 
+function rebuildFromWorld(): void {
+  rebuildMapRuntimes({
+    players: players.values(),
+    monsters: liveMonsters.values(),
+    npcs: liveNpcs.values(),
+    projectiles: liveProjectiles.values(),
+  });
+}
+
+function entitiesOnMap(mapId: string): Entity[] {
+  const runtime = getMapRuntime(mapId);
+  if (!runtime) {
+    return [];
+  }
+  const out: Entity[] = [];
+  for (const id of runtime.monsterIds) {
+    const monster = liveMonsters.get(id);
+    if (monster) {
+      out.push(monster);
+    }
+  }
+  for (const id of runtime.playerIds) {
+    const session = players.get(id);
+    if (session) {
+      out.push(session.entity);
+    }
+  }
+  return out;
+}
+
 export function resetWorld(): void {
+  resetMapRuntimes();
   players.clear();
   liveMonsters.clear();
   liveNpcs.clear();
@@ -197,11 +259,18 @@ export function resetWorld(): void {
   lastThreatDecayAt = 0;
   lastMonsterAiAt = 0;
   nextId = 1;
+  const spawnedSpecies = new Map<string, Set<string>>();
   for (const def of monsters) {
     if (def.mapId.startsWith("dungeon_") || def.mapId.startsWith("tower_boss_")) {
       continue;
     }
+    const seen = spawnedSpecies.get(def.mapId) ?? new Set<string>();
+    if (seen.has(def.id)) {
+      continue;
+    }
     spawnMonster(def, def.respawnId, def.x, def.y);
+    seen.add(def.id);
+    spawnedSpecies.set(def.mapId, seen);
   }
   for (const def of npcs) {
     spawnNpc(def);
@@ -232,8 +301,10 @@ function spawnNpc(def: NpcDef): Entity {
     hitRadius: def.hitRadius,
     resist: zeroResist(),
     mapId: def.mapId,
+    sprite: def.sprite,
   };
   liveNpcs.set(def.id, entity);
+  ensureMapRuntime(entity.mapId).npcIds.add(entity.id);
   npcLines.set(def.id, def.line);
   npcInteract.set(def.id, def.interact);
   if (def.switchId) {
@@ -262,7 +333,7 @@ export function spawnMonster(def: MonsterDef, id: string, x: number, y: number):
     mpRegen: 0,
     critChance: 0.02,
     critDamage: 1.4,
-    moveSpeed: def.prefer === "ranged" ? 2.5 : 2,
+    moveSpeed: def.prefer === "ranged" ? 1.5 : 1.2,
     hitRadius: def.hitRadius,
     resist: zeroResist(),
     element: def.element,
@@ -270,6 +341,7 @@ export function spawnMonster(def: MonsterDef, id: string, x: number, y: number):
   };
   entity.resist[def.element] = 15;
   liveMonsters.set(id, entity);
+  ensureMapRuntime(entity.mapId).monsterIds.add(id);
   monsterMeta.set(id, def);
   monsterHome.set(id, { x: def.x, y: def.y });
   monsterAggro.set(id, null);
@@ -284,6 +356,64 @@ export function isImmortalMonster(id: string): boolean {
   return Boolean(def && def.monsterType === "immortal");
 }
 
+/** Live cap = unique catalog species on that map (one slime, one orc, …). */
+export function monsterCapForMap(mapId: string): number {
+  const base = resolveBaseMapId(mapId);
+  const seen = new Set<string>();
+  for (const def of monsters) {
+    if (def.mapId === base) {
+      seen.add(def.id);
+    }
+  }
+  return seen.size;
+}
+
+export function liveHasSpeciesOnMap(mapId: string, speciesId: string): boolean {
+  const runtime = getMapRuntime(mapId);
+  if (runtime) {
+    for (const id of runtime.monsterIds) {
+      const monster = liveMonsters.get(id);
+      if (!monster || monster.hp <= 0) {
+        continue;
+      }
+      if (monsterMeta.get(id)?.id === speciesId) {
+        return true;
+      }
+    }
+    return false;
+  }
+  for (const [id, monster] of liveMonsters) {
+    if (monster.hp <= 0 || monster.mapId !== mapId) {
+      continue;
+    }
+    if (monsterMeta.get(id)?.id === speciesId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function liveMonsterCountOnMap(mapId: string): number {
+  const runtime = getMapRuntime(mapId);
+  if (runtime) {
+    let n = 0;
+    for (const id of runtime.monsterIds) {
+      const monster = liveMonsters.get(id);
+      if (monster && monster.hp > 0) {
+        n += 1;
+      }
+    }
+    return n;
+  }
+  let n = 0;
+  for (const monster of liveMonsters.values()) {
+    if (monster.hp > 0 && monster.mapId === mapId) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 export function clampImmortalHp(entity: Entity): void {
   if (!isImmortalMonster(entity.id)) {
     return;
@@ -294,6 +424,10 @@ export function clampImmortalHp(entity: Entity): void {
 }
 
 export function despawnMonster(id: string): void {
+  const monster = liveMonsters.get(id);
+  if (monster) {
+    getMapRuntime(monster.mapId)?.monsterIds.delete(id);
+  }
   liveMonsters.delete(id);
   monsterMeta.delete(id);
   monsterHome.delete(id);
@@ -345,8 +479,15 @@ function applySave(session: PlayerSession, save: GuestSave): void {
   session.equippedHelmId = save.equippedHelmId ?? null;
   session.equippedBootsId = save.equippedBootsId ?? null;
   session.equippedGlovesId = save.equippedGlovesId ?? null;
-  session.equippedAccessoryId = save.equippedAccessoryId ?? null;
+  session.equippedAmuletId = save.equippedAmuletId ?? save.equippedAccessoryId ?? null;
+  session.equippedAccessoryId = session.equippedAmuletId ?? null;
+  session.equippedRing1Id = save.equippedRing1Id ?? null;
+  session.equippedRing2Id = save.equippedRing2Id ?? null;
+  session.enhanceLevels = save.enhanceLevels ?? {};
+  session.talkingNpcId = null;
   session.classCardId = save.classCardId ?? null;
+  session.equippedSubclassId = save.equippedSubclassId ?? null;
+  session.transformed = Boolean(save.transformed);
   session.equippedSkinId = save.equippedSkinId ?? null;
   session.towerClearedFloor = save.towerClearedFloor ?? 0;
   session.switchFlags = save.switchFlags ?? {};
@@ -428,13 +569,14 @@ export function spawnPlayer(guestToken = "", opts?: { slotIndex?: number; enterW
     actionTimes: [],
     moveTimes: [],
     skillReadyAt: {},
+    skillCdMs: {},
+    busyUntil: 0,
     inventory: emptyInventory(),
     pity: {},
     statuses: [],
     weaponIds: [...defaultClass.startingWeaponIds],
     equippedWeaponId: defaultClass.startingWeaponId,
-    equippedWeapon2Id:
-      defaultClass.startingWeaponIds.find((id) => id !== defaultClass.startingWeaponId) ?? null,
+    equippedWeapon2Id: defaultClass.startingOffhandId ?? null,
     spiritIds: [...defaultClass.startingSpiritIds],
     equippedSpiritId: defaultClass.startingSpiritId,
     moveLockUntil: 0,
@@ -457,12 +599,22 @@ export function spawnPlayer(guestToken = "", opts?: { slotIndex?: number; enterW
     equippedBootsId: null,
     equippedGlovesId: null,
     equippedAccessoryId: null,
+    equippedAmuletId: null,
+    equippedRing1Id: null,
+    equippedRing2Id: null,
+    enhanceLevels: {},
+    talkingNpcId: null,
     friends: [],
     classCardId: null,
+    equippedSubclassId: null,
+    transformed: false,
     equippedSkinId: null,
     towerClearedFloor: 0,
     switchFlags: {},
     inWorld: enterWorld,
+    dirty: false,
+    rpcTimes: [],
+    lastHeardAt: Date.now(),
   };
 
   const save =
@@ -484,25 +636,36 @@ export function spawnPlayer(guestToken = "", opts?: { slotIndex?: number; enterW
   if (session.entity.hp <= 0) {
     respawnAtHome(session);
   }
-  ensureSecondaryWeapon(session);
+  ensureOffhand(session);
   applyGearStats(session);
   players.set(entity.id, session);
+  if (session.inWorld) {
+    ensureMapRuntime(session.entity.mapId).playerIds.add(session.entity.id);
+  }
   return session;
 }
 
-function ensureSecondaryWeapon(session: PlayerSession): void {
+function ensureOffhand(session: PlayerSession): void {
   if (session.equippedWeapon2Id && weaponById(session.equippedWeapon2Id)) {
-    return;
+    const keep = canEquipOffhand(session.classId, session.equippedWeapon2Id, session.equippedWeaponId);
+    if (keep.ok) {
+      return;
+    }
+    session.equippedWeapon2Id = null;
   }
   const cls = classById(session.classId) ?? defaultClass;
-  const sec = cls.startingWeaponIds.find((id) => id !== session.equippedWeaponId);
-  if (!sec || !weaponById(sec)) {
+  const off = cls.startingOffhandId;
+  if (!off || !weaponById(off)) {
     return;
   }
-  if (!session.weaponIds.includes(sec)) {
-    session.weaponIds.push(sec);
+  const chk = canEquipOffhand(session.classId, off, session.equippedWeaponId);
+  if (!chk.ok) {
+    return;
   }
-  session.equippedWeapon2Id = sec;
+  if (!session.weaponIds.includes(off)) {
+    session.weaponIds.push(off);
+  }
+  session.equippedWeapon2Id = off;
 }
 
 /** Class base + gear resists only. Weapon atk/magic bonuses applied once in combat. */
@@ -541,22 +704,37 @@ export function applyGearStats(session: PlayerSession): void {
     session.equippedHelmId,
     session.equippedBootsId,
     session.equippedGlovesId,
-    session.equippedAccessoryId,
+    session.equippedAmuletId ?? session.equippedAccessoryId,
+    session.equippedRing1Id,
+    session.equippedRing2Id,
   ];
-  for (const gid of gearIds) {
-    if (!gid) continue;
+  const gearSlots: EnhanceSlot[] = ["armor", "helm", "boots", "gloves", "amulet", "ring1", "ring2"];
+  gearIds.forEach((gid, i) => {
+    if (!gid) return;
     const item = itemById(gid);
-    if (!item) continue;
+    if (!item) return;
+    const slot = gearSlots[i];
+    const plus = enhanceLevelOf(session, slot) * ENHANCE_STAT_PER_LEVEL;
     session.entity.def += item.defBonus ?? 0;
     session.entity.atk += item.atkBonus ?? 0;
     session.entity.magicAtk += item.magicAtkBonus ?? 0;
     session.entity.moveSpeed += item.moveSpeedBonus ?? 0;
+    if (slot === "amulet" || slot === "ring1" || slot === "ring2") {
+      session.entity.magicAtk += plus;
+    } else {
+      session.entity.def += plus;
+    }
     if (item.resistBonus) {
       for (const [k, v] of Object.entries(item.resistBonus)) {
         session.entity.resist[k as keyof typeof session.entity.resist] += v ?? 0;
       }
     }
-  }
+  });
+  const weaponPlus = enhanceLevelOf(session, "mainhand") * ENHANCE_STAT_PER_LEVEL;
+  session.entity.atk += weaponPlus;
+  const specPlus = enhanceLevelOf(session, "subclass") * ENHANCE_STAT_PER_LEVEL;
+  session.entity.atk += specPlus;
+  session.entity.def += specPlus;
   if (session.classCardId) {
     const card = itemById(session.classCardId);
     if (card?.resistBonus) {
@@ -587,11 +765,76 @@ export function applyWeaponStats(session: PlayerSession): void {
   applyGearStats(session);
 }
 
-export function equipWeapon(session: PlayerSession, weaponId: string): ServerMessage | { ok: true } {
-  if (!session.weaponIds.includes(weaponId) || !weaponById(weaponId)) {
+export function equipWeapon(session: PlayerSession, weaponId: string | null): ServerMessage | { ok: true } {
+  if (weaponId === null || weaponId === "") {
+    if (session.equippedWeaponId) {
+      addItem(session, session.equippedWeaponId, 1);
+    }
+    session.equippedWeaponId = "";
+    applyGearStats(session);
+    return { ok: true };
+  }
+  if (!weaponById(weaponId)) {
     return { type: "error", code: "unknown_weapon", message: `Cannot equip ${weaponId}` };
   }
+  const allowed = canEquipMainhand(session.classId, weaponId);
+  if (!allowed.ok) {
+    return { type: "error", code: allowed.code, message: allowed.message };
+  }
+  const owned = session.weaponIds.includes(weaponId)
+    || session.inventory.some((s) => s.itemId === weaponId && s.quantity > 0);
+  if (!owned) {
+    return { type: "error", code: "unknown_weapon", message: `Cannot equip ${weaponId}` };
+  }
+  if (!session.weaponIds.includes(weaponId)) {
+    session.weaponIds.push(weaponId);
+  }
+  if (session.inventory.some((s) => s.itemId === weaponId && s.quantity > 0)) {
+    removeItem(session, weaponId, 1);
+  }
+  if (session.equippedWeaponId && session.equippedWeaponId !== weaponId) {
+    addItem(session, session.equippedWeaponId, 1);
+  }
   session.equippedWeaponId = weaponId;
+  if (isTwoHanded(weaponId) && session.equippedWeapon2Id) {
+    addItem(session, session.equippedWeapon2Id, 1);
+    session.equippedWeapon2Id = null;
+  }
+  applyGearStats(session);
+  return { ok: true };
+}
+
+export function equipOffhand(session: PlayerSession, weaponId: string | null): ServerMessage | { ok: true } {
+  if (weaponId === null || weaponId === "") {
+    if (session.equippedWeapon2Id) {
+      addItem(session, session.equippedWeapon2Id, 1);
+    }
+    session.equippedWeapon2Id = null;
+    applyGearStats(session);
+    return { ok: true };
+  }
+  if (!weaponById(weaponId)) {
+    return { type: "error", code: "unknown_weapon", message: `Cannot equip ${weaponId}` };
+  }
+  const allowed = canEquipOffhand(session.classId, weaponId, session.equippedWeaponId);
+  if (!allowed.ok) {
+    return { type: "error", code: allowed.code, message: allowed.message };
+  }
+  const owned = session.weaponIds.includes(weaponId)
+    || session.inventory.some((s) => s.itemId === weaponId && s.quantity > 0);
+  if (!owned) {
+    return { type: "error", code: "unknown_weapon", message: `Cannot equip ${weaponId}` };
+  }
+  if (!session.weaponIds.includes(weaponId)) {
+    session.weaponIds.push(weaponId);
+  }
+  if (session.inventory.some((s) => s.itemId === weaponId && s.quantity > 0)) {
+    removeItem(session, weaponId, 1);
+  }
+  if (session.equippedWeapon2Id && session.equippedWeapon2Id !== weaponId) {
+    addItem(session, session.equippedWeapon2Id, 1);
+  }
+  session.equippedWeapon2Id = weaponId;
   applyGearStats(session);
   return { ok: true };
 }
@@ -612,31 +855,47 @@ export function equipSpirit(session: PlayerSession, spiritId: string | null): Se
 
 export function equipGear(
   session: PlayerSession,
-  slot: "armor" | "helm" | "boots" | "gloves" | "accessory",
+  slot: "armor" | "helm" | "boots" | "gloves" | "accessory" | "amulet" | "ring1" | "ring2" | "subclass",
   itemId: string | null,
 ): ServerMessage | { ok: true } {
+  if (slot === "subclass") {
+    return equipSubclass(session, itemId);
+  }
+  const resolved = slot === "accessory" ? "amulet" : slot;
   const field =
-    slot === "armor"
+    resolved === "armor"
       ? "equippedArmorId"
-      : slot === "helm"
+      : resolved === "helm"
         ? "equippedHelmId"
-        : slot === "boots"
+        : resolved === "boots"
           ? "equippedBootsId"
-          : slot === "gloves"
+          : resolved === "gloves"
             ? "equippedGlovesId"
-            : "equippedAccessoryId";
+            : resolved === "ring1"
+              ? "equippedRing1Id"
+              : resolved === "ring2"
+                ? "equippedRing2Id"
+                : "equippedAmuletId";
   const prev = session[field];
   if (itemId === null) {
     if (prev) {
       addItem(session, prev, 1);
     }
     session[field] = null;
+    if (field === "equippedAmuletId") {
+      session.equippedAccessoryId = null;
+    }
     applyGearStats(session);
     return { ok: true };
   }
   const item = itemById(itemId);
-  if (!item || item.kind !== "armor" || item.slot !== slot) {
+  const itemSlot = item?.slot === "accessory" ? "amulet" : item?.slot;
+  if (!item || item.kind !== "armor" || itemSlot !== resolved) {
     return { type: "error", code: "bad_gear", message: "Wrong gear slot" };
+  }
+  const classOk = canEquipArmor(session.classId, item);
+  if (!classOk.ok) {
+    return { type: "error", code: classOk.code, message: classOk.message };
   }
   const need = item.levelReq ?? 1;
   if (session.level < need) {
@@ -652,8 +911,66 @@ export function equipGear(
     addItem(session, prev, 1);
   }
   session[field] = itemId;
+  if (field === "equippedAmuletId") {
+    session.equippedAccessoryId = itemId;
+  }
   applyGearStats(session);
   return { ok: true };
+}
+
+function equipSubclass(session: PlayerSession, itemId: string | null): ServerMessage | { ok: true } {
+  if (session.transformed) {
+    return { type: "error", code: "transformed", message: "Detransform before changing subclass" };
+  }
+  if (itemId === null) {
+    if (session.equippedSubclassId) {
+      addItem(session, session.equippedSubclassId, 1);
+    }
+    session.equippedSubclassId = null;
+    return { ok: true };
+  }
+  const item = itemById(itemId);
+  if (!item || item.kind !== "subclass") {
+    return { type: "error", code: "bad_gear", message: "Not a subclass item" };
+  }
+  if (session.classId !== item.classId) {
+    return { type: "error", code: "wrong_class", message: "That subclass does not match your class" };
+  }
+  const need = item.levelReq ?? 30;
+  if (session.level < need) {
+    return { type: "error", code: "level_too_low", message: `Need level ${need}` };
+  }
+  if (!removeItem(session, itemId, 1)) {
+    return { type: "error", code: "missing_item", message: "Not in inventory" };
+  }
+  if (session.equippedSubclassId) {
+    addItem(session, session.equippedSubclassId, 1);
+  }
+  session.equippedSubclassId = itemId;
+  return { ok: true };
+}
+
+export function setTransformed(session: PlayerSession, on: boolean): { error?: ServerMessage } {
+  if (on && !session.equippedSubclassId) {
+    return { error: { type: "error", code: "no_subclass", message: "Equip a subclass item first" } };
+  }
+  session.transformed = on;
+  return {};
+}
+
+export function debugSetLevel(session: PlayerSession, level: number): { error?: ServerMessage } {
+  const target = Math.max(1, Math.min(99, Math.floor(level)));
+  if (target > session.level) {
+    const need = totalXpToReach(target) - totalXpToReach(session.level) - session.xp;
+    grantXp(session, Math.max(0, need), applyGearStats);
+  } else {
+    session.level = target;
+    session.xp = 0;
+    applyGearStats(session);
+    session.entity.hp = session.entity.maxHp;
+    session.entity.mp = session.entity.maxMp;
+  }
+  return {};
 }
 
 export function currentPityView(session: PlayerSession): PityView {
@@ -667,7 +984,7 @@ export function cooldownSnapshot(session: PlayerSession): CooldownEntry[] {
     return {
       id,
       readyAt: session.skillReadyAt[id] ?? 0,
-      cooldownMs: skill?.cooldownMs ?? 1000,
+      cooldownMs: session.skillCdMs?.[id] ?? skill?.cooldownMs ?? 1000,
     };
   });
 }
@@ -706,8 +1023,10 @@ export function spawnProjectileFromCast(
     pendingStatus: cast.pendingStatus,
     statusDurationMs: cast.statusDurationMs,
     mpAfter,
+    mapId: caster.mapId,
   };
   liveProjectiles.set(id, projectile);
+  ensureMapRuntime(projectile.mapId).projectileIds.add(id);
   return {
     projectile,
     message: {
@@ -775,6 +1094,7 @@ function reapDeadMonsters(now: number): ServerMessage[] {
 }
 
 export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
+  rebuildFromWorld();
   const out: ServerMessage[] = [];
   for (const [id, proj] of [...liveProjectiles.entries()]) {
     const step = proj.speed * dtSec;
@@ -788,12 +1108,12 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
       proj.traveled = (proj.traveled ?? 0) + step;
       proj.x = nx;
       proj.y = ny;
-      out.push({ type: "sync_projectile_move", id, x: nx, y: ny });
+      out.push({ type: "sync_projectile_move", id, x: nx, y: ny, mapId: proj.mapId });
 
       const halfW = (proj.width ?? 0.7) * 0.5 + 0.15;
       let hitEntity: Entity | undefined;
       let bestAlong = Number.POSITIVE_INFINITY;
-      for (const entity of [...liveMonsters.values(), ...[...players.values()].map((p) => p.entity)]) {
+      for (const entity of entitiesOnMap(proj.mapId)) {
         if (entity.id === proj.casterId || entity.hp <= 0) {
           continue;
         }
@@ -858,13 +1178,13 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
           }
         }
         liveProjectiles.delete(id);
-        out.push({ type: "sync_projectile_despawn", id });
+        out.push({ type: "sync_projectile_despawn", id, mapId: proj.mapId });
         continue;
       }
 
       if ((proj.traveled ?? 0) >= (proj.maxRange ?? 0)) {
         liveProjectiles.delete(id);
-        out.push({ type: "sync_projectile_despawn", id });
+        out.push({ type: "sync_projectile_despawn", id, mapId: proj.mapId });
       }
       continue;
     }
@@ -872,7 +1192,7 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
     const target = findEntity(proj.targetId);
     if (!target || target.hp <= 0) {
       liveProjectiles.delete(id);
-      out.push({ type: "sync_projectile_despawn", id });
+      out.push({ type: "sync_projectile_despawn", id, mapId: proj.mapId });
       continue;
     }
 
@@ -884,7 +1204,7 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
     if (dist <= hitDist || dist <= step) {
       proj.x = target.x;
       proj.y = target.y;
-      out.push({ type: "sync_projectile_move", id, x: proj.x, y: proj.y });
+      out.push({ type: "sync_projectile_move", id, x: proj.x, y: proj.y, mapId: proj.mapId });
 
       for (const pending of proj.pendingHits) {
         const hit = applyPendingHit(pending.targetId, pending.damage, pending.crit, proj.skillId, now);
@@ -936,7 +1256,7 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
       }
 
       liveProjectiles.delete(id);
-      out.push({ type: "sync_projectile_despawn", id });
+      out.push({ type: "sync_projectile_despawn", id, mapId: proj.mapId });
       continue;
     }
 
@@ -944,20 +1264,61 @@ export function tickProjectiles(now: number, dtSec: number): ServerMessage[] {
     const ny = proj.y + (dy / dist) * step;
     proj.x = nx;
     proj.y = ny;
-    out.push({ type: "sync_projectile_move", id, x: nx, y: ny });
+    out.push({ type: "sync_projectile_move", id, x: nx, y: ny, mapId: proj.mapId });
   }
   return out;
 }
 
+/** Client only needs collision + props; the 2D digit grid is authoring data. */
+function mapForClient(map: MapDef): MapDef {
+  return {
+    id: map.id,
+    name: map.name,
+    width: map.width,
+    height: map.height,
+    spawn: map.spawn,
+    blocked: map.blocked,
+    props: map.props,
+    hazards: map.hazards,
+  };
+}
+
 export function snapshot(forMapId?: string) {
+  rebuildFromWorld();
   const mapKey = forMapId ?? defaultMap.id;
   const baseId = resolveBaseMapId(mapKey);
   const map = mapById(baseId) ?? defaultMap;
+  const runtime = getMapRuntime(mapKey);
+  const playerEntities: Entity[] = [];
+  const monsterEntities: Entity[] = [];
+  if (runtime) {
+    for (const id of runtime.playerIds) {
+      const session = players.get(id);
+      if (session) {
+        playerEntities.push(session.entity);
+      }
+    }
+    for (const id of runtime.monsterIds) {
+      const monster = liveMonsters.get(id);
+      if (monster && monster.hp > 0) {
+        monsterEntities.push(monster);
+      }
+    }
+  } else {
+    for (const session of players.values()) {
+      if (session.entity.mapId === mapKey) {
+        playerEntities.push(session.entity);
+      }
+    }
+    for (const monster of liveMonsters.values()) {
+      if (monster.hp > 0 && monster.mapId === mapKey) {
+        monsterEntities.push(monster);
+      }
+    }
+  }
   return {
-    players: [...players.values()]
-      .filter((session) => session.entity.mapId === mapKey)
-      .map((session) => session.entity),
-    monsters: [...liveMonsters.values()].filter((monster) => monster.hp > 0 && monster.mapId === mapKey),
+    players: playerEntities,
+    monsters: monsterEntities,
     npcs: [...liveNpcs.values()].filter((npc) => npc.mapId === baseId && !mapKey.includes("#")),
     portals: mapKey.includes("#")
       ? portalsOnMap(baseId).filter(
@@ -967,8 +1328,14 @@ export function snapshot(forMapId?: string) {
             !p.targetMapId.startsWith("tower_boss_"),
         )
       : portalsOnMap(baseId),
-    map: map as MapDef,
+    map: mapForClient(map),
   };
+}
+
+export function mapSpawnOf(mapId: string): { mapId: string; x: number; y: number } {
+  const base = mapId.includes("#") ? mapId.slice(0, mapId.indexOf("#")) : mapId;
+  const map = mapById(base) ?? defaultMap;
+  return { mapId: base, x: map.spawn.x, y: map.spawn.y };
 }
 
 export function respawnAtHome(session: PlayerSession): void {
@@ -977,6 +1344,18 @@ export function respawnAtHome(session: PlayerSession): void {
   session.entity.mapId = session.homeMapId;
   session.entity.x = session.homeX;
   session.entity.y = session.homeY;
+  session.statuses = [];
+}
+
+/** Death respawn: current map spawn (homestone teleport stays respawnAtHome). */
+export function respawnAtMapSpawn(session: PlayerSession): void {
+  cancelRest(session);
+  const spawn = mapSpawnOf(session.entity.mapId);
+  session.entity.hp = session.entity.maxHp;
+  session.entity.mp = session.entity.maxMp;
+  session.entity.mapId = spawn.mapId;
+  session.entity.x = spawn.x;
+  session.entity.y = spawn.y;
   session.statuses = [];
 }
 
@@ -999,7 +1378,7 @@ export function createCharacter(
   session.skillPoints = 1;
   session.weaponIds = [...cls.startingWeaponIds];
   session.equippedWeaponId = cls.startingWeaponId;
-  session.equippedWeapon2Id = cls.startingWeaponIds.find((id) => id !== cls.startingWeaponId) ?? null;
+  session.equippedWeapon2Id = cls.startingOffhandId ?? null;
   session.classCardId = null;
   session.spiritIds = [...cls.startingSpiritIds];
   session.equippedSpiritId = cls.startingSpiritId;
@@ -1026,18 +1405,27 @@ export function createCharacter(
 }
 
 export function changeClass(session: PlayerSession, classId: string, cardItemId?: string): { error?: ServerMessage } {
-  if (session.level < 20) {
+  if (session.level < CLASS_CHANGE_LEVEL) {
     return {
       error: {
         type: "error",
         code: "level_too_low",
-        message: "Class change unlocks at level 20",
+        message: `Class change unlocks at level ${CLASS_CHANGE_LEVEL}`,
+      },
+    };
+  }
+  if (session.classId !== "adventurer") {
+    return {
+      error: {
+        type: "error",
+        code: "already_classed",
+        message: "Class is already chosen",
       },
     };
   }
   const cls = classById(classId);
   if (!cls || cls.id === "adventurer") {
-    return { error: { type: "error", code: "bad_class", message: "Invalid class card" } };
+    return { error: { type: "error", code: "bad_class", message: "Invalid class" } };
   }
   const keepLevel = session.level;
   const keepXp = session.xp;
@@ -1052,36 +1440,82 @@ export function changeClass(session: PlayerSession, classId: string, cardItemId?
     session.equippedSpiritId = cls.startingSpiritId;
   }
   const card = cardItemId ? itemById(cardItemId) : undefined;
-  if (card?.secondaryWeaponId && weaponById(card.secondaryWeaponId)) {
-    if (!session.weaponIds.includes(card.secondaryWeaponId)) {
-      session.weaponIds.push(card.secondaryWeaponId);
+  const off = card?.secondaryWeaponId && weaponById(card.secondaryWeaponId)
+    ? card.secondaryWeaponId
+    : (cls.startingOffhandId ?? null);
+  if (off) {
+    if (!session.weaponIds.includes(off)) {
+      session.weaponIds.push(off);
     }
-    session.equippedWeapon2Id = card.secondaryWeaponId;
-  } else if (cls.id === "marksman" && weaponById("gun_spark")) {
-    if (!session.weaponIds.includes("gun_spark")) session.weaponIds.push("gun_spark");
-    session.equippedWeapon2Id = "gun_spark";
-  } else if (cls.id === "rogue" && weaponById("dagger_twin")) {
-    session.equippedWeapon2Id = session.equippedWeaponId === "dagger_twin" ? null : "dagger_twin";
+    session.equippedWeapon2Id = off;
+  } else {
+    session.equippedWeapon2Id = null;
   }
   session.level = keepLevel;
   session.xp = keepXp;
   session.skillPoints = keepSp;
+  stripInvalidGear(session);
+  applyGearStats(session);
+  return {};
+}
+
+const DEBUG_CLASS_BAG: Record<string, string[]> = {
+  adventurer: [
+    "sword_iron", "sword_zwei", "bow_hunter", "staff_arcane", "tome_novice", "dagger_twin",
+    "gun_spark", "charm_leaf", "orb_glass", "sword_off", "dagger_off",
+    "armor_leather", "armor_hide", "armor_iron", "armor_plate", "boots_leather", "gloves_wrap",
+  ],
+  fighter: ["sword_iron", "sword_zwei", "sword_off", "armor_leather", "armor_iron", "armor_plate", "boots_iron", "gloves_iron"],
+  marksman: ["bow_hunter", "charm_leaf", "armor_leather", "armor_hide", "boots_leather", "gloves_wrap"],
+  mage: ["staff_arcane", "tome_novice", "orb_glass", "armor_leather", "boots_leather", "gloves_wrap"],
+  rogue: ["dagger_twin", "dagger_off", "sword_iron", "armor_leather", "armor_hide", "boots_hide", "gloves_hide"],
+};
+
+export function debugSetClass(session: PlayerSession, classId: string): { error?: ServerMessage } {
+  const cls = classById(classId);
+  if (!cls) {
+    return { error: { type: "error", code: "bad_class", message: "Unknown class" } };
+  }
+  session.classId = cls.id;
+  session.classCardId = cls.id === "adventurer" ? null : session.classCardId;
+  session.unlockedSkillIds = starterSkillsFor(cls.id);
+  session.weaponIds = [...new Set([...session.weaponIds, ...cls.startingWeaponIds])];
+  session.equippedWeaponId = cls.startingWeaponId;
+  if (cls.startingOffhandId) {
+    if (!session.weaponIds.includes(cls.startingOffhandId)) {
+      session.weaponIds.push(cls.startingOffhandId);
+    }
+    session.equippedWeapon2Id = cls.startingOffhandId;
+  } else {
+    session.equippedWeapon2Id = null;
+  }
+  if (cls.startingSpiritId) {
+    if (!session.spiritIds.includes(cls.startingSpiritId)) {
+      session.spiritIds.push(cls.startingSpiritId);
+    }
+    session.equippedSpiritId = cls.startingSpiritId;
+  }
+  for (const id of DEBUG_CLASS_BAG[cls.id] ?? []) {
+    if (weaponById(id) && !session.weaponIds.includes(id)) {
+      session.weaponIds.push(id);
+    }
+    if (itemById(id) && !session.inventory.some((s) => s.itemId === id)) {
+      addItem(session, id, 1);
+    }
+  }
+  stripInvalidGear(session);
   applyGearStats(session);
   return {};
 }
 
 export function swapWeapons(session: PlayerSession): { error?: ServerMessage; ok?: true } {
-  if (!session.equippedWeapon2Id) {
-    return { error: { type: "error", code: "no_secondary", message: "No secondary weapon" } };
-  }
-  if (!session.weaponIds.includes(session.equippedWeapon2Id)) {
-    return { error: { type: "error", code: "unknown_weapon", message: "Secondary not owned" } };
-  }
-  const primary = session.equippedWeaponId;
-  session.equippedWeaponId = session.equippedWeapon2Id;
-  session.equippedWeapon2Id = primary;
-  applyGearStats(session);
-  return { ok: true };
+  return {
+    error: {
+      type: "error",
+      code: "use_paperdoll",
+      message: "Offhand is an equipment slot — drag or right-click in Inventory",
+    },
+  };
 }
 
 export function bumpTowerFloor(session: PlayerSession, floor: number): void {
@@ -1109,6 +1543,7 @@ export function killMonster(entityId: string, now: number): ServerMessage[] {
     return [];
   }
   const isInstance = monster.mapId.includes("#");
+  getMapRuntime(monster.mapId)?.monsterIds.delete(entityId);
   liveMonsters.delete(entityId);
   monsterAttackReady.delete(entityId);
   monsterAggro.delete(entityId);
@@ -1198,7 +1633,11 @@ function tickRegen(now: number): ServerMessage[] {
     }
     const beforeHp = session.entity.hp;
     const beforeMp = session.entity.mp;
-    session.entity.hp = Math.min(session.entity.maxHp, session.entity.hp + session.entity.hpRegen);
+    let hpGain = session.entity.hpRegen;
+    if (isResting(session, now)) {
+      hpGain += Math.max(1, Math.floor(session.entity.maxHp * 0.02));
+    }
+    session.entity.hp = Math.min(session.entity.maxHp, session.entity.hp + hpGain);
     session.entity.mp = Math.min(session.entity.maxMp, session.entity.mp + session.entity.mpRegen);
     if (session.entity.hp !== beforeHp || session.entity.mp !== beforeMp) {
       out.push({
@@ -1286,12 +1725,14 @@ function tickHazards(now: number): ServerMessage[] {
       maxMp: session.entity.maxMp,
     });
     if (session.entity.hp <= 0) {
+      session.talkingNpcId = null;
+      const spawn = mapSpawnOf(session.entity.mapId);
       out.push({
         type: "sync_death",
         entityId: session.entity.id,
-        homeMapId: session.homeMapId,
-        homeX: session.homeX,
-        homeY: session.homeY,
+        homeMapId: spawn.mapId,
+        homeX: spawn.x,
+        homeY: spawn.y,
       });
     }
   }
@@ -1299,6 +1740,8 @@ function tickHazards(now: number): ServerMessage[] {
 }
 
 export function tickWorld(now: number): ServerMessage[] {
+  rebuildFromWorld();
+  const occupied = occupiedMapIds();
   const out: ServerMessage[] = [
     ...tickDots(now),
     ...tickRegen(now),
@@ -1320,6 +1763,21 @@ export function tickWorld(now: number): ServerMessage[] {
     if (now < pending.at) {
       continue;
     }
+    if (liveMonsters.has(pending.entityId)) {
+      const live = liveMonsters.get(pending.entityId);
+      if (live && live.hp > 0) {
+        pendingRespawns.splice(i, 1);
+      } else {
+        pending.at = now + 1000;
+      }
+      continue;
+    }
+    const mapId = pending.def.mapId;
+    if (liveHasSpeciesOnMap(mapId, pending.def.id)
+      || liveMonsterCountOnMap(mapId) >= monsterCapForMap(mapId)) {
+      pending.at = now + 1000;
+      continue;
+    }
     pendingRespawns.splice(i, 1);
     const entity = spawnMonster(pending.def, pending.entityId, pending.def.x, pending.def.y);
     out.push({ type: "sync_spawn", entity });
@@ -1331,6 +1789,9 @@ export function tickWorld(now: number): ServerMessage[] {
 
   for (const [id, monster] of liveMonsters) {
     if (monster.hp <= 0) {
+      continue;
+    }
+    if (!occupied.has(monster.mapId)) {
       continue;
     }
     const def = monsterMeta.get(id);
@@ -1349,14 +1810,30 @@ export function tickWorld(now: number): ServerMessage[] {
 
     let closest: PlayerSession | null = null;
     let closestDist = Number.POSITIVE_INFINITY;
-    for (const session of players.values()) {
-      if (session.entity.hp <= 0 || session.entity.mapId !== monster.mapId) {
-        continue;
+    const here = getMapRuntime(monster.mapId);
+    const nearby = here ? here.playerIds : null;
+    if (nearby) {
+      for (const pid of nearby) {
+        const session = players.get(pid);
+        if (!session || session.entity.hp <= 0) {
+          continue;
+        }
+        const dist = Math.hypot(session.entity.x - monster.x, session.entity.y - monster.y);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = session;
+        }
       }
-      const dist = Math.hypot(session.entity.x - monster.x, session.entity.y - monster.y);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = session;
+    } else {
+      for (const session of players.values()) {
+        if (session.entity.hp <= 0 || session.entity.mapId !== monster.mapId) {
+          continue;
+        }
+        const dist = Math.hypot(session.entity.x - monster.x, session.entity.y - monster.y);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = session;
+        }
       }
     }
     // Proximity aggro only via closest player below — avoid seeding every unit in a packed yard.
@@ -1385,7 +1862,7 @@ export function tickWorld(now: number): ServerMessage[] {
         ai.fixateId = null;
         clearThreat(id);
         monsterAggro.set(id, null);
-        out.push({ type: "sync_move", entityId: id, x: monster.x, y: monster.y });
+        out.push(syncMoveOf(monster, { snap: true }));
         out.push({
           type: "sync_vitals",
           entityId: id,
@@ -1399,7 +1876,7 @@ export function tickWorld(now: number): ServerMessage[] {
           out.push(cleared);
         }
       } else if (tryMoveMonster(monster, home.x, home.y, moveStep)) {
-        out.push({ type: "sync_move", entityId: id, x: monster.x, y: monster.y });
+        out.push(syncMoveOf(monster));
       }
       continue;
     }
@@ -1439,7 +1916,7 @@ export function tickWorld(now: number): ServerMessage[] {
         const px = home.x + Math.cos(ai.patrolT) * 1.2;
         const py = home.y + Math.sin(ai.patrolT) * 1.2;
         if (tryMoveMonster(monster, px, py, moveStep * 0.5)) {
-          out.push({ type: "sync_move", entityId: id, x: monster.x, y: monster.y });
+          out.push(syncMoveOf(monster, { speed: (monster.moveSpeed || 2) * 0.5 }));
         }
         if (Math.hypot(monster.x - px, monster.y - py) < 0.3) {
           ai.phase = "idle";
@@ -1467,7 +1944,7 @@ export function tickWorld(now: number): ServerMessage[] {
       ai.phase = "chase";
       ai.windupUntil = 0;
       if (tryMoveMonster(monster, target.entity.x, target.entity.y, moveStep)) {
-        out.push({ type: "sync_move", entityId: id, x: monster.x, y: monster.y });
+        out.push(syncMoveOf(monster));
       }
       continue;
     }
@@ -1556,12 +2033,13 @@ export function tickWorld(now: number): ServerMessage[] {
         mp: target.entity.mp,
         maxMp: target.entity.maxMp,
       });
+      const spawn = mapSpawnOf(target.entity.mapId);
       out.push({
         type: "sync_death",
         entityId: target.entity.id,
-        homeMapId: target.homeMapId,
-        homeX: target.homeX,
-        homeY: target.homeY,
+        homeMapId: spawn.mapId,
+        homeX: spawn.x,
+        homeY: spawn.y,
       });
     } else {
       out.push({
@@ -1647,6 +2125,7 @@ export function checkBossPhase(monsterId: string): ServerMessage[] {
       fromName: "System",
       text: `${monster.name} enters phase 2!`,
       serverTime: Date.now(),
+      mapId: monster.mapId,
     });
     out.push({
       type: "sync_instance",
@@ -1667,6 +2146,7 @@ export function checkBossPhase(monsterId: string): ServerMessage[] {
       fromName: "System",
       text: `${monster.name} enrages!`,
       serverTime: Date.now(),
+      mapId: monster.mapId,
     });
     out.push({
       type: "sync_instance",
@@ -1786,6 +2266,16 @@ resetWorld();
 bindInstanceHooks({
   createId,
   spawnMonster,
-  listDungeonDefs: (mapId) => monsters.filter((m) => m.mapId === mapId),
+  reindexMonster,
+  listDungeonDefs: (mapId) => {
+    const seen = new Set<string>();
+    return monsters.filter((m) => {
+      if (m.mapId !== mapId || seen.has(m.id)) {
+        return false;
+      }
+      seen.add(m.id);
+      return true;
+    });
+  },
   despawnMonster,
 });

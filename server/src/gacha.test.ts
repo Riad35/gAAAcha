@@ -85,6 +85,8 @@ function session(dust = 2000): PlayerSession {
     towerClearedFloor: 0,
     switchFlags: {},
     inWorld: true,
+    dirty: false,
+    rpcTimes: [],
   };
   if (dust > 0) {
     addItem(player, "item_dust", dust);
@@ -113,8 +115,8 @@ test("pity view exposes the next pull chance", () => {
   assert.equal(view.tenPullCostDust, 90);
 });
 
-test("starter banner pulls cards spirits gear and portraits", () => {
-  assert.ok(defaultBanner.pool.ssr.includes("card_fighter"));
+test("starter banner pulls portraits spirits and gear", () => {
+  assert.equal(defaultBanner.pool.ssr.includes("card_fighter"), false);
   assert.ok(defaultBanner.pool.ssr.includes("char_aurel"));
   assert.ok(defaultBanner.pool.sr.includes("spirit_ember"));
   assert.ok(defaultBanner.pool.sr.includes("staff_arcane"));
@@ -202,13 +204,13 @@ test("starter bag is sword bow ration dust", () => {
   assert.ok(!filled.some((s) => s.itemId?.includes("armor_") || s.itemId?.startsWith("helm_") || s.itemId?.startsWith("acc_")));
 });
 
-test("ssr pull can grant a class card and owns weapons from drops", () => {
+test("ssr pull can grant a portrait and owns weapons from drops", () => {
   const player = session();
   const result = pullGacha(player, "starter", 1, rngAlways(0));
   assert.ok("ok" in result);
   assert.equal(result.results[0].rarity, "ssr");
   const id = result.results[0].itemId;
-  assert.match(id, /^(card_|char_aurel)/);
+  assert.equal(id, "char_aurel");
   assert.ok(player.inventory.some((s) => s.itemId === id));
 });
 

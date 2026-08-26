@@ -2,7 +2,10 @@ export type Element = "wind" | "fire" | "water" | "earth" | "holy" | "dark";
 export type DamageType = "direct" | "aoe" | "dot" | "maxHpPercent";
 export type Rarity = "r" | "sr" | "ssr";
 export type AttrName = "atk" | "magicAtk" | "def" | "magicResist" | "critChance";
-export type WeaponCategory = "sword" | "dagger" | "staff" | "bow" | "gun";
+export type WeaponCategory = "sword" | "dagger" | "staff" | "bow" | "gun" | "tome" | "charm" | "orb";
+export type ArmorWeight = "light" | "medium" | "heavy" | "plate";
+export type HandSlot = "mainhand" | "offhand" | "both";
+export type WeaponGrip = "1h" | "2h";
 export type Scaling = "atk" | "magic";
 
 export type MapDef = {
@@ -12,8 +15,16 @@ export type MapDef = {
   height: number;
   spawn: { x: number; y: number };
   blocked: { x: number; y: number }[];
+  /** Relative path under server/data to a digit-grid .map.txt. Source of truth when set. */
+  grid?: string;
+  /** Inclusive rectangles expanded into blocked tiles at load (fallback if no grid). */
+  wallRects?: { x: number; y: number; w: number; h: number }[];
+  /** Decorative sprites; tiles are also blocked. */
+  props?: { x: number; y: number; kind: string }[];
   /** Tiles that deal periodic damage while stood on. */
   hazards?: { x: number; y: number; damage?: number }[];
+  /** Compiled tile ids (row = y, col = x). Runtime only; not authored in maps.json. */
+  tiles?: number[][];
 };
 
 export type ResistMap = Record<Element, number>;
@@ -38,6 +49,7 @@ export type ClassDef = {
   skillIds: string[];
   startingWeaponId: string;
   startingWeaponIds: string[];
+  startingOffhandId?: string | null;
   startingSpiritId: string | null;
   startingSpiritIds: string[];
 };
@@ -82,9 +94,16 @@ export type StatusDef = {
 export type TargetingType =
   | "NO_TARGET"
   | "UNIT_TARGET"
+  | "ALLY_TARGET"
   | "SKILLSHOT_LINEAR"
   | "SKILLSHOT_CONE"
   | "GROUND_CIRCLE";
+
+/** Who the skill may hit or buff. Omit → inferred from selfTarget / targetingType. */
+export type SkillAffects = "hostile" | "friendly" | "self" | "all";
+
+/** Where aoeRadius is centered. Omit → inferred from targetingType / damageType. */
+export type AoeOrigin = "none" | "caster" | "target" | "ground";
 
 export type SkillDef = {
   id: string;
@@ -97,6 +116,10 @@ export type SkillDef = {
   healMp?: number;
   selfTarget: boolean;
   targetingType: TargetingType;
+  /** Who is a valid hit/buff. Friendly = any living player on the map (incl. self). */
+  affects?: SkillAffects;
+  /** Splash origin. none = single primary (or self). */
+  aoeOrigin?: AoeOrigin;
   element: Element;
   damageType: DamageType;
   scaling: Scaling;
@@ -104,16 +127,18 @@ export type SkillDef = {
   movement: MovementDef | null;
   /** World units per second; 0/omit = instant */
   projectileSpeed?: number;
-  /** Hostile AoE blast radius (ground circle or around primary) */
+  /** Splash radius around aoeOrigin (edge-to-edge). */
   aoeRadius?: number;
   /** Linear skillshot corridor width */
   width?: number;
   /** Cone half-angle in degrees (full cone = 2 * this from center line… use full aperture) */
   coneAngleDeg?: number;
-  /** NosTale-style: 1 = Hauptwaffe (primary), 2 = Sekundärwaffe (secondary). */
+  /** 1 = mainhand, 2 = offhand (legacy shot used 2; bow shot is mainhand). */
   weaponSlot?: 1 | 2;
   /** Adventurer L1–20 gate. Missing = available once the class is unlocked. */
   unlockLevel?: number;
+  /** Classes that list this skill. Catalog / docs; runtime tree is ClassDef.skillIds. */
+  classIds?: string[];
 };
 
 export type WeaponDef = {
@@ -130,6 +155,8 @@ export type WeaponDef = {
   magicAtkBonus: number;
   attackSpeedBonus: number;
   resistBonus?: Partial<ResistMap>;
+  hand?: HandSlot;
+  grip?: WeaponGrip;
 };
 
 export type SpiritDef = {
@@ -140,12 +167,30 @@ export type SpiritDef = {
   resistBonus?: Partial<ResistMap>;
 };
 
-export type MonsterDef = {
+/** Ordered skill ids from skills.json. Data-only until AI review. */
+export type MonsterSkillPriorityList = string[];
+
+/** Live checkBossPhase knobs, stored on the species. Data-only until AI review. */
+export type MonsterPhaseStatModifier = {
+  atkMul?: number;
+  moveSpeedAdd?: number;
+  attackSpeedAdd?: number;
+};
+
+export type MonsterPhaseDef = {
+  hpThresholdPercent: number;
+  skillPriorityOverride?: MonsterSkillPriorityList;
+  statModifier?: MonsterPhaseStatModifier;
+};
+
+/** Combat template. Unique `id`; spawn-cap key is `catalogId ?? id`. */
+export type MonsterSpeciesDef = {
   id: string;
   name: string;
-  mapId: string;
+  catalogId?: string;
   hp: number;
   atk: number;
+  magicAtk?: number;
   def: number;
   magicResist: number;
   element: Element;
@@ -156,6 +201,34 @@ export type MonsterDef = {
   prefer: "melee" | "ranged";
   aggroMode?: "hostile" | "neutral";
   monsterType?: string;
+  hitRate?: number;
+  critChance?: number;
+  critDamage?: number;
+  dodgeRate?: number;
+  elementalResist?: Partial<ResistMap>;
+  skillPriorityList?: MonsterSkillPriorityList;
+  phases?: MonsterPhaseDef[];
+};
+
+/** Placement only. `speciesId` references MonsterSpeciesDef.id. */
+export type MonsterSpawnDef = {
+  speciesId: string;
+  mapId: string;
+  x: number;
+  y: number;
+  respawnId: string;
+  name?: string;
+};
+
+/**
+ * Resolved spawn + species for world.ts.
+ * `id` is the catalog/cap key (`catalogId ?? species.id`), not the unique template id.
+ */
+export type MonsterDef = Omit<MonsterSpeciesDef, "id" | "catalogId"> & {
+  id: string;
+  speciesId: string;
+  catalogId?: string;
+  mapId: string;
   x: number;
   y: number;
   respawnId: string;
@@ -165,12 +238,12 @@ export type ItemDef = {
   id: string;
   name: string;
   rarity: Rarity;
-  kind: "character" | "skin" | "portrait" | "material" | "weapon" | "spirit" | "consumable" | "armor" | "class_card";
+  kind: "character" | "skin" | "portrait" | "material" | "weapon" | "spirit" | "consumable" | "armor" | "class_card" | "subclass";
   use?: "homestone" | "heal" | "buff_food" | "skill_unlock" | "class_card" | "skin" | "portrait";
   healHp?: number;
   healMp?: number;
   durationMs?: number;
-  slot?: "armor" | "helm" | "boots" | "gloves" | "accessory";
+  slot?: "armor" | "helm" | "boots" | "gloves" | "accessory" | "amulet" | "ring1" | "ring2" | "subclass";
   levelReq?: number;
   defBonus?: number;
   atkBonus?: number;
@@ -179,7 +252,12 @@ export type ItemDef = {
   classId?: string;
   resistBonus?: Partial<ResistMap>;
   weaponCategory?: string;
+  weaponKind?: WeaponCategory;
+  hand?: HandSlot;
+  grip?: WeaponGrip;
+  armorWeight?: ArmorWeight;
   secondaryWeaponId?: string;
+  description?: string;
 };
 
 export type PortalDef = {
@@ -221,7 +299,7 @@ export type QuestDef = {
   minLevel?: number;
   chain?: "main" | "side";
   steps: QuestStep[];
-  rewards: { gold: number; items: { itemId: string; quantity: number }[] };
+  rewards: { gold: number; xp?: number; items: { itemId: string; quantity: number }[] };
   dialogue: string;
 };
 
@@ -335,6 +413,7 @@ export type Entity = {
   weaponId?: string;
   spiritId?: string | null;
   mapId: string;
+  sprite?: string;
 };
 
 export type FriendEntry = {
@@ -355,6 +434,8 @@ export type PlayerSession = {
   actionTimes: number[];
   moveTimes: number[];
   skillReadyAt: Record<string, number>;
+  skillCdMs?: Record<string, number>;
+  busyUntil?: number;
   inventory: InventorySlot[];
   pity: Record<string, PityCounter>;
   statuses: StatusInstance[];
@@ -383,13 +464,28 @@ export type PlayerSession = {
   equippedBootsId: string | null;
   equippedGlovesId: string | null;
   equippedAccessoryId: string | null;
+  equippedAmuletId?: string | null;
+  equippedRing1Id?: string | null;
+  equippedRing2Id?: string | null;
+  enhanceLevels?: Partial<Record<string, number>>;
+  talkingNpcId?: string | null;
   friends: FriendEntry[];
   classCardId: string | null;
+  equippedSubclassId?: string | null;
+  transformed?: boolean;
   equippedSkinId: string | null;
   towerClearedFloor: number;
   switchFlags: Record<string, boolean>;
   /** Lobby sessions have not entered world yet (login gate). */
   inWorld: boolean;
+  /** Needs a persist flush (autosave / logout). */
+  dirty: boolean;
+  /** Sliding 1s window for non-move/cast RPCs. */
+  rpcTimes: number[];
+  /** Last websocket payload (any). Used to drop silent sockets. */
+  lastHeardAt?: number;
+  /** Last `sync_cond` snapshot, to emit only on change. */
+  lastCond?: { canMove: boolean; canAct: boolean; resting: boolean };
 };
 
 export type ChatChannel = "world" | "server" | "guild" | "map" | "whisper" | "party";
@@ -403,12 +499,18 @@ export type ClientMessage =
   | { type: "request_char_create_slot"; slotIndex: number; name: string }
   | { type: "request_char_delete"; slotIndex: number }
   | { type: "request_weapon_swap" }
+  | { type: "request_swap_inventory"; fromIndex: number; toIndex: number }
+  | { type: "request_debug_set_class"; classId: string }
+  | { type: "request_debug_set_level"; level: number }
+  | { type: "request_choose_class"; classId: string }
+  | { type: "request_transform"; on: boolean }
   | { type: "request_use_class_card"; slotIndex: number }
   | { type: "request_respawn" }
-  | { type: "request_move"; x: number; y: number }
+  | { type: "request_move"; x: number; y: number; seq?: number }
+  | { type: "request_ping"; clientTime?: number }
   | { type: "cast_skill"; skillId: string; targetId: string; aimDx?: number; aimDy?: number; aimX?: number; aimY?: number }
   | { type: "request_gacha"; bannerId: string; count: 1 | 10 }
-  | { type: "request_equip"; weaponId?: string; spiritId?: string | null }
+  | { type: "request_equip"; weaponId?: string | null; offhandId?: string | null; spiritId?: string | null }
   | { type: "request_inspect"; targetId: string }
   | { type: "request_chat"; channel: ChatChannel; text: string; targetName?: string }
   | { type: "request_party_invite"; targetId: string }
@@ -416,6 +518,8 @@ export type ClientMessage =
   | { type: "request_party_leave" }
   | { type: "request_portal"; portalId: string }
   | { type: "request_interact"; targetId: string }
+  | { type: "request_dialog_close" }
+  | { type: "request_enhance"; slot: string }
   | { type: "request_shop_buy"; shopId: string; itemId: string; quantity?: number }
   | { type: "request_shop_sell"; shopId: string; itemId: string; quantity?: number }
   | { type: "request_use_item"; slotIndex: number }
@@ -424,7 +528,11 @@ export type ClientMessage =
   | { type: "request_quest_turnin"; questId: string }
   | { type: "request_register"; username: string; password: string }
   | { type: "request_login"; username: string; password: string }
-  | { type: "request_equip_gear"; slot: "armor" | "helm" | "boots" | "gloves" | "accessory"; itemId: string | null }
+  | {
+      type: "request_equip_gear";
+      slot: "armor" | "helm" | "boots" | "gloves" | "accessory" | "amulet" | "ring1" | "ring2" | "subclass";
+      itemId: string | null;
+    }
   | { type: "request_trade_invite"; targetId: string }
   | { type: "request_trade_respond"; inviteId: string; accept: boolean }
   | { type: "request_trade_offer"; gold: number; offers: { slotIndex: number; quantity: number }[] }
@@ -473,6 +581,7 @@ export type LiveProjectile = {
   pendingStatus: StatusInstance | null;
   statusDurationMs: number;
   mpAfter: number;
+  mapId: string;
 };
 
 export type ServerMessage =
@@ -516,6 +625,12 @@ export type ServerMessage =
       equippedBootsId: string | null;
       equippedGlovesId: string | null;
       equippedAccessoryId: string | null;
+      equippedAmuletId?: string | null;
+      equippedRing1Id?: string | null;
+      equippedRing2Id?: string | null;
+      enhanceLevels?: Partial<Record<string, number>>;
+      equippedSubclassId?: string | null;
+      transformed?: boolean;
       serverTime: number;
       map: MapDef;
     }
@@ -535,12 +650,14 @@ export type ServerMessage =
         empty: boolean;
       }[];
     }
-  | { type: "sync_move"; entityId: string; x: number; y: number }
+  | { type: "sync_move"; entityId: string; x: number; y: number; speed?: number; seq?: number }
+  | { type: "sync_cond"; entityId: string; canMove: boolean; canAct: boolean; resting: boolean; serverTime: number }
+  | { type: "sync_pong"; serverTime: number; clientTime?: number }
   | { type: "sync_skill"; casterId: string; targetId: string; skillId: string; damage: number; hpAfter: number; mpAfter: number; crit?: boolean; element?: string; missed?: boolean; advantage?: string; resistHint?: number }
   | { type: "sync_aoe"; casterId: string; skillId: string; centerId: string; aoeRadius: number; aimX?: number; aimY?: number; hits: { targetId: string; damage: number; hpAfter: number; crit: boolean; element?: string; missed?: boolean; advantage?: string }[]; mpAfter: number }
   | { type: "sync_vitals"; entityId: string; hp: number; maxHp: number; mp: number; maxMp: number; gold?: number }
   | { type: "sync_gacha"; results: GachaDrop[]; pity: PityView; inventory: InventorySlot[] }
-  | { type: "sync_despawn"; entityId: string; reason: "death" }
+  | { type: "sync_despawn"; entityId: string; reason: "death" | "leave" }
   | { type: "sync_spawn"; entity: Entity }
   | { type: "sync_loot"; itemId: string; quantity: number; inventory: InventorySlot[]; gold?: number }
   | { type: "sync_equip"; weaponId: string; weapon2Id?: string | null; spiritId: string | null; you: Entity }
@@ -549,8 +666,8 @@ export type ServerMessage =
   | { type: "sync_cooldowns"; cooldowns: CooldownEntry[]; serverTime: number }
   | { type: "sync_inventory"; inventory: InventorySlot[]; gold?: number; equippedSkinId?: string | null }
   | { type: "sync_projectile_spawn"; projectile: { id: string; casterId: string; targetId: string; skillId: string; x: number; y: number; speed: number; vx?: number; vy?: number } }
-  | { type: "sync_projectile_move"; id: string; x: number; y: number }
-  | { type: "sync_projectile_despawn"; id: string }
+  | { type: "sync_projectile_move"; id: string; x: number; y: number; mapId?: string }
+  | { type: "sync_projectile_despawn"; id: string; mapId?: string }
   | { type: "sync_party_invite"; inviteId: string; fromId: string; fromName: string }
   | {
       type: "sync_party";
@@ -625,12 +742,14 @@ export type ServerMessage =
       text: string;
       targetId?: string;
       serverTime: number;
+      mapId?: string;
     }
   | {
       type: "sync_interact";
       targetId: string;
       interact: string;
       line: string;
+      name?: string;
       shop?: ShopDef;
       quests?: { quest: QuestDef; state: "available" | "active" | "ready" | "done" }[];
       home?: { mapId: string; x: number; y: number };
@@ -651,6 +770,11 @@ export type ServerMessage =
         manaCost: number;
         weaponSlot: number;
         cooldownMs: number;
+        targetingType?: TargetingType;
+        affects?: SkillAffects;
+        aoeOrigin?: AoeOrigin;
+        range?: number;
+        aoeRadius?: number;
       }[];
     }
   | { type: "sync_death"; entityId: string; homeMapId: string; homeX: number; homeY: number }
@@ -667,4 +791,4 @@ export type ServerMessage =
     }
   | { type: "sync_instance"; instanceId: string | null; mapId: string; expiresAt: number; phase?: number }
   | { type: "sync_auth"; guestToken: string; username: string }
-  | { type: "error"; code: string; message: string };
+  | { type: "error"; code: string; message: string; seq?: number };

@@ -110,7 +110,17 @@ public static class GameLog
             {
                 var code = JsonUtil.ExtractString(json, "code");
                 var msg = JsonUtil.ExtractString(json, "message");
-                Warn(ChannelForError(code), FormatServerError(code, msg));
+                var line = FormatServerError(code, msg);
+                if (code == "blocked" || code == "blocked_entity" || code == "too_fast"
+                    || code == "rate_limited" || code == "move_locked")
+                {
+                    WarnOnce(ChannelForError(code), "err:" + code, line);
+                }
+                else
+                {
+                    Warn(ChannelForError(code), line);
+                }
+
                 break;
             }
             case "sync_state":
@@ -170,6 +180,15 @@ public static class GameLog
             case "sync_spawn":
                 Info(Channel.World, "spawn  entity=" + ShortId(JsonUtil.ExtractString(json, "id")) +
                                     "  name=" + JsonUtil.ExtractString(json, "name"));
+                break;
+            case "sync_status":
+            case "sync_cond":
+            case "sync_pong":
+                if (MinLevel >= Level.Debug)
+                {
+                    DebugLine(Channel.Net, "msg type=" + type);
+                }
+
                 break;
             case "sync_move":
                 if (MinLevel >= Level.Trace)

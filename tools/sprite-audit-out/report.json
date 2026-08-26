@@ -1,0 +1,602 @@
+﻿[
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_idle_calm",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_rotation_calm",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_idle_calm",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_rotation_calm",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_idle_calm",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_rotation_calm",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_idle_calm",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_rotation_calm",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_idle_breath",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_rotation_breathing",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_idle_breath",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_rotation_breathing",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_idle_breath",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_rotation_breathing",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_idle_breath",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_rotation_breathing",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_run",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_running",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_run",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_running",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_run",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_running",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "peaceful_run",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\idle_running",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_idle",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\rotations",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_idle",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\rotations",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_idle",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\rotations",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_idle",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\rotations",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_run",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\animations\\bow_idle_running",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_run",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\animations\\bow_idle_running",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_run",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\animations\\bow_idle_running",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_run",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\animations\\bow_idle_running",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_shoot",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\animations\\bow_idle_shooting",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_shoot",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\animations\\bow_idle_shooting",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_shoot",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\animations\\bow_idle_shooting",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "bow_shoot",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_a_longbow_h\\animations\\bow_idle_shooting",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_idle",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\rotations",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_idle",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\rotations",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_idle",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\rotations",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_idle",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\rotations",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_run",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\animations\\daggers_idle_running",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_run",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\animations\\daggers_idle_running",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_run",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\animations\\daggers_idle_running",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_run",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\animations\\daggers_idle_running",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_attack",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\animations\\daggers_idle_runstartframe",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_attack",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\animations\\daggers_idle_runstartframe",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "daggers_attack",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_daggers_due\\animations\\daggers_idle_runstartframe",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_idle",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\rotations_staff",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_idle",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\rotations_staff",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_idle",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\rotations_staff",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_idle",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\rotations_staff",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_run",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\animations_staff\\running_foeward_running_while_holding_thwo_handed",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_run",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\animations_staff\\running_foeward_running_while_holding_thwo_handed",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_run",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\animations_staff\\running_foeward_running_while_holding_thwo_handed",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_run",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\animations_staff\\running_foeward_running_while_holding_thwo_handed",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "mixed_canvas",
+        "clip":  "staff_run",
+        "facing":  "*",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\animations_staff\\running_foeward_running_while_holding_thwo_handed",
+        "detail":  "sizes: 180x180, 176x176, 172x172"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "staff_cast",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\animations_staff\\holding_staff_closing_eyes_chanting_sticking_one_a\\staffskill1",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "flip_fallback",
+        "clip":  "staff_cast",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_staff_long\\animations_staff\\holding_staff_closing_eyes_chanting_sticking_one_a\\staffskill1",
+        "detail":  "using mirrored south-east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_idle",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\rotations_zweihander",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_idle",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\rotations_zweihander",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_idle",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\rotations_zweihander",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_idle",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\rotations_zweihander",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "orphan_dir",
+        "clip":  "sword_run",
+        "facing":  "*",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\idle_running_zweihander\\grip2_idlewalk",
+        "detail":  "name is not a facing the loader parses (west2 / nested grip packs are ignored)"
+    },
+    {
+        "severity":  "warn",
+        "code":  "orphan_dir",
+        "clip":  "sword_run",
+        "facing":  "*",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\idle_running_zweihander\\oneohanded_sword_idlewalk",
+        "detail":  "name is not a facing the loader parses (west2 / nested grip packs are ignored)"
+    },
+    {
+        "severity":  "warn",
+        "code":  "orphan_dir",
+        "clip":  "sword_run",
+        "facing":  "*",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\idle_running_zweihander\\west2",
+        "detail":  "name is not a facing the loader parses (west2 / nested grip packs are ignored)"
+    },
+    {
+        "severity":  "warn",
+        "code":  "orphan_dir",
+        "clip":  "sword_run",
+        "facing":  "*",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\idle_running_zweihander\\zweihander_idlewalk",
+        "detail":  "name is not a facing the loader parses (west2 / nested grip packs are ignored)"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_run",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\idle_running_zweihander",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_run",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\idle_running_zweihander",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_run",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\idle_running_zweihander",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_run",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\idle_running_zweihander",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_aa",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\swordattacks\\autoattack_sword1",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "sword_aa",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_zweihander\\animations_zweihander\\swordattacks\\autoattack_sword1",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "death",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\die_death_frame",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "death",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\die_death_frame",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "death",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\die_death_frame",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "death",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\die_death_frame",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_idle",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\rotations",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_idle",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\rotations",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_idle",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\rotations",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_idle",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\rotations",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_punch",
+        "facing":  "south-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\animations\\Cross_Punch",
+        "detail":  "loader keeps first only: south-west, south_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_punch",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\animations\\Cross_Punch",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_punch",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\animations\\Cross_Punch",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_punch",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\animations\\Cross_Punch",
+        "detail":  "loader keeps first only: north-west, north_west"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_kick",
+        "facing":  "north-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\animations\\Roundhouse_Kick",
+        "detail":  "loader keeps first only: north-east, north_east"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_kick",
+        "facing":  "south-east",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\animations\\Roundhouse_Kick",
+        "detail":  "loader keeps first only: south-east, south_east, east2"
+    },
+    {
+        "severity":  "warn",
+        "code":  "duplicate_alias",
+        "clip":  "unarmed_kick",
+        "facing":  "north-west",
+        "path":  "C:\\Users\\riadw\\Desktop\\Cursor Projects\\gAAAcha\\client\\Unity\\gatcha1\\Assets\\StreamingAssets\\Sprites\\player\\holding_unarmed\\animations\\Roundhouse_Kick",
+        "detail":  "loader keeps first only: north-west, north_west"
+    }
+]

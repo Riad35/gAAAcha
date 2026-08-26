@@ -43,6 +43,7 @@ const WORLD_CODES = new Set([
   "bad_portal",
   "wrong_map",
   "too_far",
+  "talking",
   "tower_locked",
   "switch_locked",
   "bad_map",
@@ -80,6 +81,10 @@ const UI_CODES = new Set([
   "no_points",
   "auction_full",
   "gone",
+  "talking",
+  "enhance_max",
+  "not_enough_dust",
+  "empty_slot",
 ]);
 
 const RING_CAP = 200;

@@ -151,11 +151,11 @@ test("leash sends slime home and restores HP", () => {
   parkOtherRidgeMobs("monster_slime_1");
   const slime = liveMonsters.get("monster_slime_1");
   assert.ok(slime);
-  slime.x = 14.6;
-  slime.y = 10;
+  slime.x = 6;
+  slime.y = 18.6;
   slime.hp = 10;
   const t0 = 6_000_000;
-  for (let i = 0; i < 48; i += 1) {
+  for (let i = 0; i < 64; i += 1) {
     tickWorld(t0 + i * 400);
   }
   assert.ok(Math.hypot(slime.x - 6, slime.y - 10) < 0.4);
@@ -163,14 +163,14 @@ test("leash sends slime home and restores HP", () => {
   void player;
 });
 
-test("player cannot walk through slime body", () => {
+test("player can walk through slime body", () => {
   const player = ridgeAt("body_block", 6, 10);
   const slime = liveMonsters.get("monster_slime_1");
   assert.ok(slime);
   slime.x = 6.5;
   slime.y = 10;
   const result = validateMove(player, 6.5, 10, 7_000_000);
-  assert.equal("type" in result && result.code, "blocked_entity");
+  assert.equal("ok" in result && result.ok, true);
 });
 
 test("killing slime despawns and world HP hits zero", () => {

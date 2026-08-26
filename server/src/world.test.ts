@@ -7,7 +7,10 @@ import {
   findEntity,
   grantKillLoot,
   killMonster,
+  liveMonsterCountOnMap,
   liveMonsters,
+  monsterCapForMap,
+  monsterMeta,
   monsterStatuses,
   notePlayerDamageThreat,
   players,
@@ -15,7 +18,6 @@ import {
   respawnAtHome,
   spawnMonster,
   spawnPlayer,
-  swapWeapons,
   tickWorld,
 } from "./world.js";
 import { monsters } from "./data.js";
@@ -95,15 +97,11 @@ test("kill loot grants star dust from slime tables", () => {
   assert.ok(player.inventory.some((slot) => slot.itemId === "item_dust" && slot.quantity >= 1));
 });
 
-test("adventurer seeds sword Haupt and bow Sekundär; N swaps them", () => {
+test("adventurer seeds sword mainhand and no offhand by default", () => {
   resetWorld();
   const p = spawnPlayer("dual_wep", { save: null });
   assert.equal(p.equippedWeaponId, "sword_iron");
-  assert.equal(p.equippedWeapon2Id, "bow_hunter");
-  const swap = swapWeapons(p);
-  assert.ok(swap.ok);
-  assert.equal(p.equippedWeaponId, "bow_hunter");
-  assert.equal(p.equippedWeapon2Id, "sword_iron");
+  assert.equal(p.equippedWeapon2Id, null);
 });
 
 test("world spawns multiple monster types", () => {
@@ -157,6 +155,27 @@ test("inspect returns player equip and monster combat fields", () => {
     assert.equal(m.kind, "monster");
     assert.equal(m.weaponId, undefined);
     assert.ok(m.monsterType);
+  }
+});
+
+test("open field maps cap live monsters to unique species", () => {
+  resetWorld();
+  const cap = monsterCapForMap("field_ridge");
+  assert.ok(cap >= 6);
+  const live = [...liveMonsters.values()].filter((m) => m.mapId === "field_ridge" && m.hp > 0);
+  assert.equal(live.length, cap);
+  assert.equal(liveMonsterCountOnMap("field_ridge"), cap);
+  assert.ok(liveMonsters.has("monster_slime_1"));
+  assert.equal(liveMonsters.has("monster_ember_2"), false);
+  assert.equal(liveMonsters.has("monster_pest_2"), false);
+
+  const species = new Map<string, string>();
+  for (const m of liveMonsters.values()) {
+    const def = monsterMeta.get(m.id);
+    assert.ok(def);
+    const key = m.mapId + ":" + def.id;
+    assert.equal(species.has(key), false, "duplicate species " + key);
+    species.set(key, m.id);
   }
 });
 

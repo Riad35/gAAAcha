@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { handleChat } from "./chat.js";
-import { bindCombatWorld, validateCast, validateMove } from "./combat.js";
+import { bindCombatWorld, moveSpeedMult, pruneStatuses, validateCast, validateMove } from "./combat.js";
 import { pullGacha } from "./gacha.js";
 import {
   createGuild,
@@ -27,7 +27,8 @@ import {
 import { setHomestone, teleportHome, usePortal } from "./portal.js";
 import { acceptQuest, decorateQuestProgress, noteTalk, questsForNpc, questSnapshot, turnInQuest } from "./quest.js";
 import { buyFromShop, sellToShop, useInventoryItem } from "./shop.js";
-import { saveGuest } from "./persist.js";
+import { swapInventorySlots } from "./inventoryMove.js";
+import { AUTOSAVE_MS, flushDirtySessions, markSessionDirty, writeSession } from "./persist.js";
 import type { ChatChannel, ClientMessage, PlayerSession, ServerMessage } from "./types.js";
 import { channelForError, log, packetRejectReason } from "./log.js";
 import { deleteCharacterDb, isDbReady, listCharactersDb, loadGuestSlotFromDb, loginAccount, registerAccount } from "./db.js";
@@ -42,7 +43,10 @@ import {
   createCharacter,
   currentPityView,
   applyGearStats,
+  debugSetClass,
+  debugSetLevel,
   equipGear,
+  equipOffhand,
   equipSpirit,
   equipWeapon,
   findEntity,
@@ -51,6 +55,7 @@ import {
   liveNpcs,
   clampImmortalHp,
   isImmortalMonster,
+  mapSpawnOf,
   monsterStatuses,
   notePlayerDamageThreat,
   npcInteract,
@@ -59,11 +64,14 @@ import {
   onMonsterKilledBy,
   players,
   respawnAtHome,
+  respawnAtMapSpawn,
   snapshot,
   spawnPlayer,
   spawnProjectileFromCast,
   statusOf,
+  setTransformed,
   swapWeapons,
+  syncMoveOf,
   tickProjectiles,
   tickWorld,
 } from "./world.js";
@@ -71,6 +79,10 @@ import { auctionSnapshot, buyAuction, cancelAuctionListing, listAuctionItem } fr
 import { instanceSyncMsg } from "./instance.js";
 import { skillTreeSnapshot, unlockSkill } from "./skills.js";
 import { classById, defaultClass, shopByNpcId, skillById } from "./data.js";
+import { casterIdFromSync, isPrivateSync, mapIdFromSync, playerIdsOnMap } from "./interest.js";
+import { metaRpcLimited } from "./rateLimit.js";
+import { beginNpcTalk, closeNpcTalk, enhanceGear, NPC_TALK_RANGE } from "./enhance.js";
+import { cancelRest, isResting } from "./rest.js";
 
 bindCombatWorld(
   findEntity,
@@ -104,19 +116,104 @@ function sendTo(playerId: string, message: ServerMessage): void {
   }
 }
 
-function broadcast(message: ServerMessage): void {
+function pushCond(session: PlayerSession, now: number): void {
+  const msg = takeCondSync(session, now);
+  if (msg) {
+    sendTo(session.entity.id, msg);
+  }
+}
+
+function flushConds(now: number): void {
+  for (const session of players.values()) {
+    pruneStatuses(session, now);
+    pushCond(session, now);
+  }
+}
+
+function dropStaleSessions(now: number): void {
+  for (const [id, session] of players) {
+    if (!isSessionStale(session.lastHeardAt, now)) {
+      continue;
+    }
+    log.info("NET", "drop stale session", { entity: id });
+    const ws = sockets.get(id);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.close();
+    }
+  }
+}
+
+function lookupEntityMap(entityId: string): string | undefined {
+  const player = players.get(entityId);
+  if (player) {
+    return player.entity.mapId;
+  }
+  const monster = liveMonsters.get(entityId);
+  if (monster) {
+    return monster.mapId;
+  }
+  const npc = liveNpcs.get(entityId);
+  if (npc) {
+    return npc.mapId;
+  }
+  return findEntity(entityId)?.mapId;
+}
+
+function broadcast(message: ServerMessage, mapId?: string, exceptId?: string): void {
+  const resolved = mapId ?? mapIdFromSync(message, lookupEntityMap);
+  if (!resolved) {
+    log.debug("NET", "skip broadcast (no map)", { type: message.type });
+    return;
+  }
   const raw = JSON.stringify(message);
-  for (const socket of sockets.values()) {
-    if (socket.readyState === WebSocket.OPEN) {
+  for (const playerId of playerIdsOnMap(resolved, players.values())) {
+    if (exceptId && playerId === exceptId) {
+      continue;
+    }
+    const socket = sockets.get(playerId);
+    if (socket?.readyState === WebSocket.OPEN) {
       socket.send(raw);
     }
   }
 }
 
 function broadcastAll(messages: ServerMessage[]): void {
+  let lastCasterId: string | undefined;
   for (const message of messages) {
+    const caster = casterIdFromSync(message);
+    if (caster) {
+      lastCasterId = caster;
+    }
+    if (isPrivateSync(message) || (message.type === "sync_chat" && message.channel === "server")) {
+      if (lastCasterId) {
+        sendTo(lastCasterId, message);
+      }
+      continue;
+    }
     broadcast(message);
   }
+}
+
+function announceLeave(entityId: string, mapId: string): void {
+  if (!mapId) {
+    return;
+  }
+  broadcast({ type: "sync_despawn", entityId, reason: "leave" }, mapId, entityId);
+}
+
+function announceJoin(session: PlayerSession): void {
+  if (!session.inWorld) {
+    return;
+  }
+  broadcast({ type: "sync_spawn", entity: session.entity }, session.entity.mapId, session.entity.id);
+}
+
+function transferMap(session: PlayerSession, oldMapId: string): void {
+  if (!oldMapId || oldMapId === session.entity.mapId) {
+    return;
+  }
+  announceLeave(session.entity.id, oldMapId);
+  announceJoin(session);
 }
 
 function vitalsOf(entityId: string): ServerMessage | null {
@@ -141,53 +238,11 @@ function broadcastStatus(entityId: string, now: number): void {
   }
 }
 
-function persist(session: PlayerSession): void {
-  if (!session.inWorld || !session.charNameSet) {
-    return;
+function persist(session: PlayerSession, flushNow = false): void {
+  markSessionDirty(session);
+  if (flushNow) {
+    writeSession(session);
   }
-  saveGuest({
-    guestToken: session.guestToken,
-    characterId: session.characterId,
-    slotIndex: session.slotIndex,
-    classId: session.classId,
-    name: session.entity.name,
-    mapId: session.entity.mapId.includes("#")
-      ? session.entity.mapId.slice(0, session.entity.mapId.indexOf("#"))
-      : session.entity.mapId,
-    x: session.entity.x,
-    y: session.entity.y,
-    hp: session.entity.hp,
-    mp: session.entity.mp,
-    inventory: session.inventory,
-    pity: session.pity,
-    equippedWeaponId: session.equippedWeaponId,
-    equippedWeapon2Id: session.equippedWeapon2Id,
-    weaponIds: session.weaponIds,
-    equippedSpiritId: session.equippedSpiritId,
-    spiritIds: session.spiritIds,
-    gold: session.gold,
-    homeMapId: session.homeMapId,
-    homeX: session.homeX,
-    homeY: session.homeY,
-    quests: session.quests,
-    completedQuestIds: session.completedQuestIds,
-    charNameSet: session.charNameSet,
-    level: session.level,
-    xp: session.xp,
-    equippedArmorId: session.equippedArmorId,
-    equippedHelmId: session.equippedHelmId,
-    equippedBootsId: session.equippedBootsId,
-    equippedGlovesId: session.equippedGlovesId,
-    equippedAccessoryId: session.equippedAccessoryId,
-    friends: session.friends,
-    skillPoints: session.skillPoints,
-    unlockedSkillIds: session.unlockedSkillIds,
-    classCardId: session.classCardId,
-    equippedSkinId: session.equippedSkinId,
-    towerClearedFloor: session.towerClearedFloor,
-    switchFlags: session.switchFlags,
-    updatedAt: Date.now(),
-  });
 }
 
 async function resolveCharList(token: string) {
@@ -203,6 +258,9 @@ async function resolveCharList(token: string) {
 function parseMessage(raw: string): ClientMessage | null {
   try {
     const data = JSON.parse(raw) as ClientMessage;
+    if (data.type === "request_ping") {
+      return data;
+    }
     if (data.type === "request_move" || data.type === "cast_skill") {
       return data;
     }
@@ -216,6 +274,21 @@ function parseMessage(raw: string): ClientMessage | null {
       return data;
     }
     if (data.type === "request_server_list" || data.type === "request_char_list" || data.type === "request_weapon_swap") {
+      return data;
+    }
+    if (data.type === "request_swap_inventory" && typeof data.fromIndex === "number" && typeof data.toIndex === "number") {
+      return data;
+    }
+    if (data.type === "request_debug_set_class" && typeof data.classId === "string") {
+      return data;
+    }
+    if (data.type === "request_debug_set_level" && typeof data.level === "number") {
+      return data;
+    }
+    if (data.type === "request_choose_class" && typeof data.classId === "string") {
+      return data;
+    }
+    if (data.type === "request_transform" && typeof data.on === "boolean") {
       return data;
     }
     if (data.type === "request_char_select" && typeof data.slotIndex === "number") {
@@ -234,9 +307,10 @@ function parseMessage(raw: string): ClientMessage | null {
       return data;
     }
     if (data.type === "request_equip") {
-      const hasWeapon = typeof data.weaponId === "string";
+      const hasWeapon = data.weaponId === null || typeof data.weaponId === "string";
+      const hasOff = data.offhandId === null || typeof data.offhandId === "string";
       const hasSpirit = data.spiritId === null || typeof data.spiritId === "string";
-      if (hasWeapon || hasSpirit) {
+      if (hasWeapon || hasOff || hasSpirit) {
         return data;
       }
     }
@@ -262,6 +336,12 @@ function parseMessage(raw: string): ClientMessage | null {
       return data;
     }
     if (data.type === "request_interact" && typeof data.targetId === "string") {
+      return data;
+    }
+    if (data.type === "request_dialog_close") {
+      return data;
+    }
+    if (data.type === "request_enhance" && typeof data.slot === "string") {
       return data;
     }
     if (data.type === "request_shop_buy" && typeof data.shopId === "string" && typeof data.itemId === "string") {
@@ -294,7 +374,11 @@ function parseMessage(raw: string): ClientMessage | null {
         data.slot === "helm" ||
         data.slot === "boots" ||
         data.slot === "gloves" ||
-        data.slot === "accessory") &&
+        data.slot === "accessory" ||
+        data.slot === "amulet" ||
+        data.slot === "ring1" ||
+        data.slot === "ring2" ||
+        data.slot === "subclass") &&
       (data.itemId === null || typeof data.itemId === "string")
     ) {
       return data;
@@ -399,10 +483,17 @@ function sendState(ws: WebSocket, session: PlayerSession): void {
     equippedHelmId: session.equippedHelmId,
     equippedBootsId: session.equippedBootsId,
     equippedGlovesId: session.equippedGlovesId,
-    equippedAccessoryId: session.equippedAccessoryId,
+    equippedAccessoryId: session.equippedAmuletId ?? session.equippedAccessoryId,
+    equippedAmuletId: session.equippedAmuletId ?? session.equippedAccessoryId ?? null,
+    equippedRing1Id: session.equippedRing1Id ?? null,
+    equippedRing2Id: session.equippedRing2Id ?? null,
+    enhanceLevels: session.enhanceLevels ?? {},
+    equippedSubclassId: session.equippedSubclassId ?? null,
+    transformed: Boolean(session.transformed),
     serverTime: now,
     map,
   });
+  pushCond(session, now);
   send(ws, guildSnapshot(session));
   send(ws, friendsSnapshot(session));
   send(ws, skillTreeSnapshot(session));
@@ -438,21 +529,33 @@ export function startServer(port = 7777): WebSocketServer {
   });
 
   setInterval(() => {
-    broadcastAll(tickWorld(Date.now()));
+    const now = Date.now();
+    broadcastAll(tickWorld(now));
+    flushConds(now);
+    dropStaleSessions(now);
   }, 400);
 
   setInterval(() => {
     broadcastAll(tickProjectiles(Date.now(), 0.1));
   }, 100);
 
+  setInterval(() => {
+    const n = flushDirtySessions(players.values());
+    if (n > 0) {
+      log.info("PERSIST", "autosave", { sessions: n });
+    }
+  }, AUTOSAVE_MS);
+
   wss.on("connection", (ws) => {
     let session = spawnPlayer();
     sockets.set(session.entity.id, ws);
     sendState(ws, session);
+    announceJoin(session);
     log.info("SYS", "player joined", { entity: session.entity.id, guest: session.guestToken });
 
     ws.on("message", (buf) => {
       const raw = buf.toString();
+      session.lastHeardAt = Date.now();
       const msg = parseMessage(raw);
       if (!msg) {
         const reason = packetRejectReason(raw);
@@ -463,9 +566,23 @@ export function startServer(port = 7777): WebSocketServer {
         });
         return;
       }
-      log.debug("NET", "recv", { type: msg.type, entity: session.entity.id, map: session.entity.mapId });
+      if (msg.type !== "request_ping") {
+        log.debug("NET", "recv", { type: msg.type, entity: session.entity.id, map: session.entity.mapId });
+      }
+
+      const now = Date.now();
+      if (msg.type === "request_ping") {
+        send(ws, { type: "sync_pong", serverTime: now, clientTime: msg.clientTime });
+        return;
+      }
+
+      if (metaRpcLimited(session, msg.type, now)) {
+        send(ws, { type: "error", code: "rate_limited", message: "Too many requests" });
+        return;
+      }
 
       if (msg.type === "request_hello") {
+        announceLeave(session.entity.id, session.entity.mapId);
         onPlayerDisconnect(session.entity.id);
         sockets.delete(session.entity.id);
         players.delete(session.entity.id);
@@ -473,6 +590,7 @@ export function startServer(port = 7777): WebSocketServer {
         ensureGuild(session);
         sockets.set(session.entity.id, ws);
         sendState(ws, session);
+        announceJoin(session);
         log.info("SYS", "player hello", { entity: session.entity.id, guest: session.guestToken });
         return;
       }
@@ -481,7 +599,14 @@ export function startServer(port = 7777): WebSocketServer {
         void (async () => {
           const result = await registerAccount(msg.username, msg.password, session.guestToken);
           if ("error" in result) {
-            send(ws, { type: "error", code: result.error, message: result.error });
+            send(ws, {
+              type: "error",
+              code: result.error,
+              message:
+                result.error === "db_offline"
+                  ? "Login needs Postgres (DATABASE_URL). Continue as Guest."
+                  : result.error,
+            });
             return;
           }
           session.guestToken = result.guestToken;
@@ -496,28 +621,17 @@ export function startServer(port = 7777): WebSocketServer {
         void (async () => {
           const result = await loginAccount(msg.username, msg.password);
           if ("error" in result) {
-            send(ws, { type: "error", code: result.error, message: result.error });
+            send(ws, {
+              type: "error",
+              code: result.error,
+              message:
+                result.error === "db_offline"
+                  ? "Login needs Postgres (DATABASE_URL). Continue as Guest."
+                  : result.error,
+            });
             return;
           }
-          onPlayerDisconnect(session.entity.id);
-          sockets.delete(session.entity.id);
-          players.delete(session.entity.id);
-          session = spawnPlayer(result.guestToken);
-          ensureGuild(session);
-          sockets.set(session.entity.id, ws);
-          send(ws, { type: "sync_auth", guestToken: result.guestToken, username: msg.username.trim().toLowerCase() });
-          sendState(ws, session);
-        })();
-        return;
-      }
-
-      if (msg.type === "request_login") {
-        void (async () => {
-          const result = await loginAccount(msg.username, msg.password);
-          if ("error" in result) {
-            send(ws, { type: "error", code: result.error, message: result.error });
-            return;
-          }
+          announceLeave(session.entity.id, session.entity.mapId);
           onPlayerDisconnect(session.entity.id);
           sockets.delete(session.entity.id);
           players.delete(session.entity.id);
@@ -560,6 +674,7 @@ export function startServer(port = 7777): WebSocketServer {
             send(ws, { type: "error", code: "empty_slot", message: "Empty character slot" });
             return;
           }
+          announceLeave(session.entity.id, session.entity.mapId);
           onPlayerDisconnect(session.entity.id);
           sockets.delete(session.entity.id);
           players.delete(session.entity.id);
@@ -568,6 +683,7 @@ export function startServer(port = 7777): WebSocketServer {
           ensureGuild(session);
           sockets.set(session.entity.id, ws);
           sendState(ws, session);
+          announceJoin(session);
         })();
         return;
       }
@@ -627,6 +743,88 @@ export function startServer(port = 7777): WebSocketServer {
         return;
       }
 
+      if (msg.type === "request_swap_inventory") {
+        const result = swapInventorySlots(session, msg.fromIndex, msg.toIndex);
+        if (!("ok" in result)) {
+          send(ws, result);
+          return;
+        }
+        persist(session);
+        send(ws, { type: "sync_inventory", inventory: session.inventory, gold: session.gold });
+        return;
+      }
+
+      if (msg.type === "request_debug_set_class") {
+        const result = debugSetClass(session, msg.classId);
+        if (result.error) {
+          send(ws, result.error);
+          return;
+        }
+        persist(session, true);
+        send(ws, skillTreeSnapshot(session));
+        send(ws, {
+          type: "sync_equip",
+          weaponId: session.equippedWeaponId,
+          weapon2Id: session.equippedWeapon2Id,
+          spiritId: session.equippedSpiritId,
+          you: session.entity,
+        });
+        send(ws, { type: "sync_inventory", inventory: session.inventory, gold: session.gold });
+        sendState(ws, session);
+        return;
+      }
+
+      if (msg.type === "request_debug_set_level") {
+        const result = debugSetLevel(session, msg.level);
+        if (result.error) {
+          send(ws, result.error);
+          return;
+        }
+        persist(session, true);
+        sendState(ws, session);
+        return;
+      }
+
+      if (msg.type === "request_choose_class") {
+        const master = liveNpcs.get("npc_class_master");
+        if (!master || master.mapId !== session.entity.mapId) {
+          send(ws, { type: "error", code: "invalid_target", message: "Class Master not found" });
+          return;
+        }
+        if (Math.hypot(session.entity.x - master.x, session.entity.y - master.y) > 2.2) {
+          send(ws, { type: "error", code: "too_far", message: "Move closer to the Class Master" });
+          return;
+        }
+        const result = changeClass(session, msg.classId);
+        if (result.error) {
+          send(ws, result.error);
+          return;
+        }
+        persist(session, true);
+        const cls = classById(session.classId);
+        send(ws, {
+          type: "sync_class_change",
+          classId: session.classId,
+          className: cls?.name ?? session.classId,
+          skillIds: session.unlockedSkillIds,
+          resistBonus: (cls?.resist ?? {}) as Record<string, number>,
+        });
+        send(ws, skillTreeSnapshot(session));
+        sendState(ws, session);
+        return;
+      }
+
+      if (msg.type === "request_transform") {
+        const result = setTransformed(session, msg.on);
+        if (result.error) {
+          send(ws, result.error);
+          return;
+        }
+        persist(session);
+        sendState(ws, session);
+        return;
+      }
+
       if (msg.type === "request_weapon_swap") {
         const result = swapWeapons(session);
         if (result.error) {
@@ -654,7 +852,7 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         for (const m of result.messages) {
           send(ws, m);
         }
@@ -680,10 +878,16 @@ export function startServer(port = 7777): WebSocketServer {
         return;
       }
 
-      const now = Date.now();
       if (msg.type === "request_equip") {
-        if (typeof msg.weaponId === "string") {
+        if (msg.weaponId !== undefined) {
           const result = equipWeapon(session, msg.weaponId);
+          if (!("ok" in result)) {
+            send(ws, result);
+            return;
+          }
+        }
+        if (msg.offhandId !== undefined) {
+          const result = equipOffhand(session, msg.offhandId);
           if (!("ok" in result)) {
             send(ws, result);
             return;
@@ -704,6 +908,8 @@ export function startServer(port = 7777): WebSocketServer {
           spiritId: session.equippedSpiritId,
           you: session.entity,
         });
+        send(ws, { type: "sync_inventory", inventory: session.inventory, gold: session.gold });
+        sendState(ws, session);
         return;
       }
 
@@ -712,6 +918,8 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, { type: "error", code: "you_are_dead", message: "You are dead — respawn at Homestone" });
           return;
         }
+        const wasResting = isResting(session, now);
+        const seq = typeof msg.seq === "number" && Number.isFinite(msg.seq) ? Math.floor(msg.seq) : undefined;
         const result = validateMove(session, msg.x, msg.y, now);
         if ("ok" in result) {
           const dx = result.x - session.entity.x;
@@ -724,17 +932,33 @@ export function startServer(port = 7777): WebSocketServer {
           session.entity.x = result.x;
           session.entity.y = result.y;
           session.lastMoveAt = now;
-          broadcast({ type: "sync_move", entityId: session.entity.id, x: result.x, y: result.y });
+          markSessionDirty(session);
+          if (len > 0.04) {
+            cancelRest(session);
+          }
+          broadcast(syncMoveOf(session.entity, {
+            speed: session.entity.moveSpeed * moveSpeedMult(session, now),
+            seq,
+          }));
+          if (wasResting && !isResting(session, now)) {
+            broadcast({
+              type: "sync_status",
+              entityId: session.entity.id,
+              statuses: session.statuses,
+              serverTime: now,
+            });
+            pushCond(session, now);
+          }
           return;
         }
-        send(ws, result);
+        send(ws, seq != null ? { ...result, seq } : result);
         return;
       }
 
       if (msg.type === "request_gacha") {
         const gacha = pullGacha(session, msg.bannerId, msg.count, Math.random);
         if ("ok" in gacha) {
-          persist(session);
+          persist(session, true);
           send(ws, { type: "sync_gacha", results: gacha.results, pity: gacha.pity, inventory: gacha.inventory });
           send(ws, {
             type: "sync_equip",
@@ -755,10 +979,12 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, { type: "error", code: "not_dead", message: "You are not dead" });
           return;
         }
-        respawnAtHome(session);
-        persist(session);
+        const oldMap = session.entity.mapId;
+        respawnAtMapSpawn(session);
+        persist(session, true);
         sendState(ws, session);
-        broadcast({ type: "sync_move", entityId: session.entity.id, x: session.entity.x, y: session.entity.y });
+        transferMap(session, oldMap);
+        broadcast(syncMoveOf(session.entity, { snap: true }));
         broadcast({
           type: "sync_vitals",
           entityId: session.entity.id,
@@ -833,24 +1059,27 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         sendState(ws, session);
+        announceJoin(session);
         return;
       }
 
       if (msg.type === "request_portal") {
+        const oldMap = session.entity.mapId;
         const result = usePortal(session, msg.portalId, now);
         if (result.error) {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         log.info("WORLD", "portal", {
           entity: session.entity.id,
           map: session.entity.mapId,
           portal: msg.portalId,
         });
         sendState(ws, session);
+        transferMap(session, oldMap);
         return;
       }
 
@@ -860,10 +1089,12 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, { type: "error", code: "invalid_target", message: "NPC not found" });
           return;
         }
-        if (Math.hypot(session.entity.x - npc.x, session.entity.y - npc.y) > 2.2) {
+        if (Math.hypot(session.entity.x - npc.x, session.entity.y - npc.y) > NPC_TALK_RANGE) {
           send(ws, { type: "error", code: "too_far", message: "Move closer" });
           return;
         }
+        beginNpcTalk(session, msg.targetId);
+        pushCond(session, now);
         const interact = npcInteract.get(msg.targetId) ?? "flavor";
         const talkMsg = noteTalk(session, msg.targetId);
         if (talkMsg) {
@@ -874,6 +1105,7 @@ export function startServer(port = 7777): WebSocketServer {
           type: "sync_interact",
           targetId: msg.targetId,
           interact,
+          name: npc.name,
           line: npcLines.get(msg.targetId) ?? "",
           shop: interact.startsWith("shop_") ? shopByNpcId(msg.targetId) : undefined,
           quests: npcQuests.length > 0 ? npcQuests : undefined,
@@ -912,13 +1144,33 @@ export function startServer(port = 7777): WebSocketServer {
         return;
       }
 
+      if (msg.type === "request_dialog_close") {
+        closeNpcTalk(session);
+        pushCond(session, now);
+        return;
+      }
+
+      if (msg.type === "request_enhance") {
+        const result = enhanceGear(session, msg.slot);
+        if (!("ok" in result)) {
+          send(ws, result);
+          return;
+        }
+        applyGearStats(session);
+        persist(session, true);
+        send(ws, { type: "sync_inventory", inventory: session.inventory, gold: session.gold });
+        send(ws, { type: "sync_gold", gold: session.gold });
+        sendState(ws, session);
+        return;
+      }
+
       if (msg.type === "request_shop_buy") {
         const result = buyFromShop(session, msg.shopId, msg.itemId, msg.quantity ?? 1);
         if (result.error) {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         send(ws, { type: "sync_inventory", inventory: session.inventory, gold: session.gold });
         send(ws, { type: "sync_gold", gold: session.gold });
         return;
@@ -930,13 +1182,14 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         send(ws, { type: "sync_inventory", inventory: session.inventory, gold: session.gold });
         send(ws, { type: "sync_gold", gold: session.gold });
         return;
       }
 
       if (msg.type === "request_use_item") {
+        const oldMap = session.entity.mapId;
         const result = useInventoryItem(session, msg.slotIndex, now, {
           teleportHome: (requireCooldown) => teleportHome(session, now, requireCooldown),
           changeClass: (classId, cardId) => changeClass(session, classId, cardId),
@@ -945,12 +1198,13 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         applyGearStats(session);
         for (const m of result.messages) {
           send(ws, m);
         }
         sendState(ws, session);
+        transferMap(session, oldMap);
         return;
       }
 
@@ -969,12 +1223,13 @@ export function startServer(port = 7777): WebSocketServer {
           sendState(ws, session);
           return;
         }
+        const oldMap = session.entity.mapId;
         const result = teleportHome(session, now, false);
         if (result.error) {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         send(ws, {
           type: "sync_fx",
           kind: "homestone",
@@ -983,6 +1238,7 @@ export function startServer(port = 7777): WebSocketServer {
           y: session.entity.y,
         });
         sendState(ws, session);
+        transferMap(session, oldMap);
         return;
       }
 
@@ -1004,9 +1260,11 @@ export function startServer(port = 7777): WebSocketServer {
           return;
         }
         persist(session);
+        applyGearStats(session);
         for (const m of result.messages) {
           send(ws, m);
         }
+        sendState(ws, session);
         return;
       }
 
@@ -1055,7 +1313,7 @@ export function startServer(port = 7777): WebSocketServer {
           sendTo(playerId, m);
         }
         if (result.done) {
-          persist(session);
+          persist(session, true);
         }
         return;
       }
@@ -1154,7 +1412,7 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         if (result.msg) {
           send(ws, result.msg);
         }
@@ -1168,7 +1426,7 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         for (const m of result.buyerMsgs) {
           send(ws, m);
         }
@@ -1184,7 +1442,7 @@ export function startServer(port = 7777): WebSocketServer {
           send(ws, result.error);
           return;
         }
-        persist(session);
+        persist(session, true);
         for (const m of result.msgs ?? []) {
           send(ws, m);
         }
@@ -1228,7 +1486,7 @@ export function startServer(port = 7777): WebSocketServer {
       });
 
       for (const moved of result.movedEntities) {
-        broadcast({ type: "sync_move", entityId: moved.id, x: moved.x, y: moved.y });
+        broadcast(syncMoveOf(moved));
       }
 
       if (result.projectile) {
@@ -1292,20 +1550,22 @@ export function startServer(port = 7777): WebSocketServer {
               send(ws, m);
             }
             grantedLoot = true;
-            persist(session);
+            persist(session, true);
           }
         }
         if (hit.hpAfter <= 0) {
           const dead = [...players.values()].find((p) => p.entity.id === hit.targetId);
           if (dead && dead.entity.hp <= 0) {
             dead.statuses = [];
+            const spawn = mapSpawnOf(dead.entity.mapId);
             sendTo(dead.entity.id, {
               type: "sync_death",
               entityId: dead.entity.id,
-              homeMapId: dead.homeMapId,
-              homeX: dead.homeX,
-              homeY: dead.homeY,
+              homeMapId: spawn.mapId,
+              homeX: spawn.x,
+              homeY: spawn.y,
             });
+            pushCond(dead, now);
           }
         }
       }
@@ -1321,12 +1581,24 @@ export function startServer(port = 7777): WebSocketServer {
       });
       for (const id of statusIds) {
         broadcastStatus(id, now);
+        const target = players.get(id);
+        if (target) {
+          pushCond(target, now);
+        }
+      }
+      for (const moved of result.movedEntities) {
+        const shoved = players.get(moved.id);
+        if (shoved) {
+          pushCond(shoved, now);
+        }
       }
       send(ws, { type: "sync_inventory", inventory: session.inventory });
     });
 
     ws.on("close", () => {
-      persist(session);
+      closeNpcTalk(session);
+      persist(session, true);
+      announceLeave(session.entity.id, session.entity.mapId);
       const tradeLeft = onTradeDisconnect(session.entity.id);
       for (const { playerId, msg: m } of tradeLeft.syncs) {
         if (playerId !== session.entity.id) {

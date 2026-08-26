@@ -5,6 +5,8 @@ import type { PlayerSession, ServerMessage } from "./types.js";
 export const ADVENTURER_UNLOCK_LEVEL: Record<string, number> = {
   auto_attack: 1,
   shot: 1,
+  rest: 1,
+  powerup: 1,
   shockwave: 3,
   dash: 5,
   rally: 8,
@@ -24,23 +26,14 @@ export function unlockLevelOf(skillId: string, classId: string): number {
   return 1;
 }
 
-/** Core skills granted at character create. */
+/** Core skills granted at character create / class change. */
 export function starterSkillsFor(classId: string): string[] {
   const cls = classById(classId) ?? defaultClass;
-  if (cls.id === "adventurer") {
-    return cls.skillIds.filter((id) => unlockLevelOf(id, cls.id) <= 1);
+  const starters = cls.skillIds.filter((id) => unlockLevelOf(id, cls.id) <= 1);
+  if (!starters.includes("auto_attack") && cls.skillIds.includes("auto_attack")) {
+    starters.unshift("auto_attack");
   }
-  const core = ["auto_attack"];
-  for (const id of cls.skillIds) {
-    if (core.includes(id)) {
-      continue;
-    }
-    core.push(id);
-    if (core.length >= 4) {
-      break;
-    }
-  }
-  return core;
+  return starters.length ? starters : ["auto_attack"];
 }
 
 export function unlockableSkills(session: PlayerSession): string[] {
@@ -95,6 +88,11 @@ export function skillTreeSnapshot(session: PlayerSession): ServerMessage {
       manaCost: def.manaCost,
       weaponSlot: def.weaponSlot ?? 0,
       cooldownMs: def.cooldownMs,
+      targetingType: def.targetingType,
+      affects: def.affects,
+      aoeOrigin: def.aoeOrigin,
+      range: def.range,
+      aoeRadius: def.aoeRadius,
     });
   }
   return {

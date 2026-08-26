@@ -1,7 +1,9 @@
 import { mapById, skillById, spiritById, weaponById } from "./data.js";
 import { resolveBaseMapId } from "./instance.js";
+import { isSolidAt, resolveWalk } from "./tileCollision.js";
 import { loadCombatConfig } from "./combat/config.js";
-import { resolveDamage, toCombatElement, type DamageResult } from "./combat/damage.js";
+import { resolveDamage, toCombatElement, type DamageResult, type DamageRng } from "./combat/damage.js";
+import { cancelRest, isResting } from "./rest.js";
 import type {
   AttrName,
   Element,
@@ -10,12 +12,54 @@ import type {
   PlayerSession,
   Scaling,
   ServerMessage,
+  SkillAffects,
   SkillDef,
+  AoeOrigin,
   StatusInstance,
   WeaponDef,
 } from "./types.js";
 
 const MAX_ACTIONS_PER_SEC = 12;
+
+const STRIKE_SKILLS = new Set([
+  "auto_attack",
+  "auto_attack_off",
+  "slash",
+  "shot",
+  "hook_shot",
+  "shockwave",
+  "shove",
+  "pull",
+  "stun_bolt",
+  "cannon_flame",
+  "cleave",
+  "arrow_rain",
+  "arcane_nova",
+  "knife_fan",
+  "thunderstorm",
+  "explosion",
+]);
+
+/** Client SkillCastSec after the 1.75× combat-pacing pass. Auto uses full CD instead. */
+export function castRecoveryMs(skillId: string): number {
+  if (skillId === "auto_attack" || skillId === "auto_attack_off") {
+    return 1225;
+  }
+  if (skillId === "dash") {
+    return 438;
+  }
+  if (STRIKE_SKILLS.has(skillId) || skillId.endsWith("_hit")) {
+    return 788;
+  }
+  return 613;
+}
+
+let combatRng: DamageRng = Math.random;
+
+/** Tests pin this to a constant so variance/crit cannot flake comparisons. */
+export function setCombatRng(rng?: DamageRng): void {
+  combatRng = rng ?? Math.random;
+}
 const MAX_MOVES_PER_SEC = 30;
 const SHOVE_MOVE_LOCK_MS = 250;
 
@@ -98,14 +142,8 @@ function mapFor(entity: Entity): MapDef {
   return mapById(resolveBaseMapId(entity.mapId)) ?? mapById("town_ashen")!;
 }
 
-function inBounds(x: number, y: number, map: MapDef): boolean {
-  return x >= 0 && y >= 0 && x <= map.width - 1 && y <= map.height - 1;
-}
-
 function isBlocked(x: number, y: number, map: MapDef): boolean {
-  const tx = Math.round(x);
-  const ty = Math.round(y);
-  return map.blocked.some((tile) => tile.x === tx && tile.y === ty);
+  return isSolidAt(x, y, map);
 }
 
 function rateLimited(session: PlayerSession, now: number): boolean {
@@ -135,7 +173,7 @@ export function rangeGap(a: Entity, b: Entity): number {
   return Math.max(0, distance(a.x, a.y, b.x, b.y) - hitRadiusOf(a) - hitRadiusOf(b));
 }
 
-/** True if mover at (x,y) would overlap a blocking entity. Monster–monster ignored. */
+/** True if mover at (x,y) would overlap a blocking entity. Combatants may overlap mobs. */
 export function entityBlockedAt(
   x: number,
   y: number,
@@ -154,6 +192,17 @@ export function entityBlockedAt(
       return false;
     }
     if (mover.kind === "monster" && other.kind === "monster") {
+      return false;
+    }
+    // Player ↔ monster: stand in melee without body-block (NosTale-style).
+    if (
+      (mover.kind === "player" && other.kind === "monster") ||
+      (mover.kind === "monster" && other.kind === "player")
+    ) {
+      return false;
+    }
+    // NPCs occupy floor pads; they must not act as invisible walls.
+    if (other.kind === "npc" || mover.kind === "npc") {
       return false;
     }
     return distance(x, y, other.x, other.y) < moverR + hitRadiusOf(other) - 0.02;
@@ -243,8 +292,12 @@ function attrBonus(session: PlayerSession, attr: AttrName, now: number): number 
   return bonus;
 }
 
+function isAutoAttackSkill(skill: SkillDef): boolean {
+  return skill.id === "auto_attack" || skill.id === "auto_attack_off";
+}
+
 export function resolveAttackElement(session: PlayerSession, skill: SkillDef, weapon: WeaponDef | undefined): Element {
-  if (skill.id === "auto_attack") {
+  if (isAutoAttackSkill(skill)) {
     const spirit = session.equippedSpiritId ? spiritById(session.equippedSpiritId) : undefined;
     return spirit?.element ?? weapon?.element ?? skill.element;
   }
@@ -298,6 +351,9 @@ export function validateMove(
   if (isStunned(session, now)) {
     return { type: "error", code: "stunned", message: "You are stunned" };
   }
+  if (session.talkingNpcId) {
+    return { type: "error", code: "talking", message: "In conversation" };
+  }
   if (isMoveLocked(session, now)) {
     return { type: "error", code: "move_locked", message: "You were shoved" };
   }
@@ -308,22 +364,46 @@ export function validateMove(
     return { type: "error", code: "invalid_move", message: "Coordinates must be numbers" };
   }
   const map = mapFor(session.entity);
-  if (!inBounds(x, y, map) || isBlocked(x, y, map)) {
-    return { type: "error", code: "blocked", message: "Tile is not walkable" };
-  }
+  const walked = resolveWalk(session.entity.x, session.entity.y, x, y, map);
+  x = walked.x;
+  y = walked.y;
   if (entityBlockedAt(x, y, session.entity)) {
     return { type: "error", code: "blocked_entity", message: "Blocked by entity" };
   }
 
   const elapsedSec = Math.max(0, (now - session.lastMoveAt) / 1000);
   const speed = session.entity.moveSpeed * moveSpeedMult(session, now);
-  const maxDist = speed * Math.max(elapsedSec, 1 / 20);
+  // Floor matches client ~12 Hz sends + jitter so bunched packets do not rubber-band.
+  const maxDist = speed * Math.max(elapsedSec, 1 / 10) + 0.2;
   const dist = distance(session.entity.x, session.entity.y, x, y);
-  if (dist > maxDist + 0.05) {
+  if (dist <= maxDist) {
+    if (dist > 0.04) {
+      cancelRest(session);
+    }
+    return { ok: true, x, y };
+  }
+
+  // Teleport / speed hack — still reject. Small overshoot is clamped along the path.
+  if (dist > speed * 0.45 + 1.5) {
     return { type: "error", code: "too_fast", message: "Move exceeds walk speed" };
   }
 
-  return { ok: true, x, y };
+  const t = maxDist / dist;
+  const clamped = resolveWalk(
+    session.entity.x,
+    session.entity.y,
+    session.entity.x + (x - session.entity.x) * t,
+    session.entity.y + (y - session.entity.y) * t,
+    map,
+  );
+  if (distance(session.entity.x, session.entity.y, clamped.x, clamped.y) > 0.04) {
+    cancelRest(session);
+  }
+  return {
+    ok: true,
+    x: clamped.x,
+    y: clamped.y,
+  };
 }
 
 function stepEntity(
@@ -343,7 +423,7 @@ function stepEntity(
   for (let i = 0; i < steps; i += 1) {
     const nx = entity.x + stepX;
     const ny = entity.y + stepY;
-    if (!inBounds(nx, ny, map) || isBlocked(nx, ny, map)) {
+    if (isBlocked(nx, ny, map)) {
       break;
     }
     if (entityBlockedAt(nx, ny, entity, ignoreIds)) {
@@ -363,14 +443,14 @@ function needsProjectile(skill: SkillDef, weapon: WeaponDef | undefined): boolea
   if (skill.movement) {
     return false;
   }
-  if (skill.id === "auto_attack") {
+  if (isAutoAttackSkill(skill)) {
     return weapon?.style === "ranged";
   }
   return (skill.projectileSpeed ?? 0) > 0;
 }
 
 function projectileSpeedOf(skill: SkillDef, weapon: WeaponDef | undefined): number {
-  if (skill.id === "auto_attack" && weapon?.style === "ranged") {
+  if (isAutoAttackSkill(skill) && weapon?.style === "ranged") {
     return skill.projectileSpeed && skill.projectileSpeed > 0 ? skill.projectileSpeed : 14;
   }
   return skill.projectileSpeed ?? 14;
@@ -402,7 +482,7 @@ function lockPlayerMove(targetId: string, now: number): void {
 }
 
 function resolveScaling(skill: SkillDef, weapon: WeaponDef | undefined): Scaling {
-  if (skill.id === "auto_attack") {
+  if (isAutoAttackSkill(skill)) {
     return weapon?.scaling ?? skill.scaling;
   }
   return skill.scaling;
@@ -458,7 +538,7 @@ function computeDamage(
     },
     extraMult,
     config: loadCombatConfig(),
-    rng: Math.random,
+    rng: combatRng,
   });
 
   if (resolved.missed) {
@@ -483,9 +563,10 @@ function computeDamage(
 }
 
 function resolveWeaponForSkill(session: PlayerSession, skill: SkillDef): WeaponDef | undefined {
-  if (skill.weaponSlot === 2 && session.equippedWeapon2Id) {
-    return weaponById(session.equippedWeapon2Id) ?? weaponById(session.equippedWeaponId);
+  if (skill.id === "auto_attack_off" || skill.weaponSlot === 2) {
+    return session.equippedWeapon2Id ? weaponById(session.equippedWeapon2Id) : undefined;
   }
+
   return weaponById(session.equippedWeaponId);
 }
 
@@ -519,14 +600,17 @@ export function applyIncomingDamageMult(session: PlayerSession, damage: number, 
     out = Math.max(0, Math.floor(out * mult));
     session.statuses.splice(decoyIdx, 1);
   }
+  if (out > 0) {
+    cancelRest(session);
+  }
   return out;
 }
 
-function applyStatusToTarget(targetId: string, status: StatusInstance, selfTarget: boolean, session: PlayerSession): void {
+function applyStatusToTarget(targetId: string, status: StatusInstance, session: PlayerSession): void {
   if (status.until <= Date.now()) {
     return;
   }
-  if (selfTarget) {
+  if (targetId === session.entity.id) {
     session.statuses = session.statuses.filter((s) => s.id !== status.id);
     session.statuses.push(status);
     return;
@@ -540,31 +624,85 @@ function applyStatusToTarget(targetId: string, status: StatusInstance, selfTarge
   attachMonsterStatus(targetId, status);
 }
 
-function allCombatTargets(casterId: string): Entity[] {
+export function resolveSkillAffects(skill: SkillDef): SkillAffects {
+  if (skill.affects) {
+    return skill.affects;
+  }
+  if (skill.selfTarget) {
+    return "self";
+  }
+  if (skill.targetingType === "ALLY_TARGET") {
+    return "friendly";
+  }
+  return "all";
+}
+
+export function resolveAoeOrigin(skill: SkillDef): AoeOrigin {
+  if (skill.aoeOrigin) {
+    return skill.aoeOrigin;
+  }
+  if (skill.targetingType === "GROUND_CIRCLE") {
+    return "ground";
+  }
+  if (skill.damageType === "aoe") {
+    return skill.selfTarget ? "caster" : "target";
+  }
+  return "none";
+}
+
+function candidatesForAffects(casterId: string, affects: SkillAffects): Entity[] {
   const caster = findEntityHook(casterId);
   const mapId = caster?.mapId;
+  const sameMap = (entity: Entity): boolean =>
+    entity.hp > 0 && (!mapId || entity.mapId === mapId);
+
+  if (affects === "self") {
+    return caster && sameMap(caster) ? [caster] : [];
+  }
+
   const out: Entity[] = [];
-  for (const entity of listHostilesHook()) {
-    if (entity.id !== casterId && entity.hp > 0 && (!mapId || entity.mapId === mapId)) {
-      out.push(entity);
+  if (affects === "hostile" || affects === "all") {
+    for (const entity of listHostilesHook()) {
+      if (entity.id !== casterId && sameMap(entity)) {
+        out.push(entity);
+      }
     }
   }
-  for (const session of getPlayersHook()) {
-    if (session.entity.id !== casterId && session.entity.hp > 0 && (!mapId || session.entity.mapId === mapId)) {
-      out.push(session.entity);
+  if (affects === "friendly") {
+    for (const session of getPlayersHook()) {
+      if (sameMap(session.entity)) {
+        out.push(session.entity);
+      }
+    }
+  } else if (affects === "all") {
+    for (const session of getPlayersHook()) {
+      if (session.entity.id !== casterId && sameMap(session.entity)) {
+        out.push(session.entity);
+      }
     }
   }
   return out;
 }
 
-function collectAoeTargets(center: Entity, radius: number, casterId: string): Entity[] {
-  return allCombatTargets(casterId).filter((entity) => {
+function collectAoeTargets(
+  center: Entity,
+  radius: number,
+  casterId: string,
+  affects: SkillAffects = "all",
+): Entity[] {
+  return candidatesForAffects(casterId, affects).filter((entity) => {
     return rangeGap(center, entity) <= radius + 0.05;
   });
 }
 
-function collectAoeAtPoint(cx: number, cy: number, radius: number, casterId: string): Entity[] {
-  return allCombatTargets(casterId).filter((entity) => {
+function collectAoeAtPoint(
+  cx: number,
+  cy: number,
+  radius: number,
+  casterId: string,
+  affects: SkillAffects = "all",
+): Entity[] {
+  return candidatesForAffects(casterId, affects).filter((entity) => {
     const gap = Math.max(0, distance(cx, cy, entity.x, entity.y) - (entity.hitRadius || 0.4));
     return gap <= radius + 0.05;
   });
@@ -609,13 +747,14 @@ function collectLinearTargets(
   range: number,
   width: number,
   maxHits: number,
+  affects: SkillAffects = "all",
 ): Entity[] {
   const ax = caster.x;
   const ay = caster.y;
   const bx = ax + dx * range;
   const by = ay + dy * range;
   const hits: { entity: Entity; along: number }[] = [];
-  for (const entity of allCombatTargets(caster.id)) {
+  for (const entity of candidatesForAffects(caster.id, affects)) {
     const d = distPointToSegment(entity.x, entity.y, ax, ay, bx, by);
     const thresh = width * 0.5 + (entity.hitRadius || 0.4);
     if (d > thresh) {
@@ -637,10 +776,11 @@ function collectConeTargets(
   dy: number,
   range: number,
   coneAngleDeg: number,
+  affects: SkillAffects = "all",
 ): Entity[] {
   const half = (coneAngleDeg * Math.PI) / 180 / 2;
   const out: Entity[] = [];
-  for (const entity of allCombatTargets(caster.id)) {
+  for (const entity of candidatesForAffects(caster.id, affects)) {
     const ex = entity.x - caster.x;
     const ey = entity.y - caster.y;
     const dist = Math.hypot(ex, ey);
@@ -724,6 +864,9 @@ export function validateCast(
   if (isStunned(session, now)) {
     return { type: "error", code: "stunned", message: "You are stunned" };
   }
+  if (session.talkingNpcId) {
+    return { type: "error", code: "talking", message: "In conversation" };
+  }
   if (rateLimited(session, now)) {
     return { type: "error", code: "rate_limited", message: "Too many actions" };
   }
@@ -732,15 +875,36 @@ export function validateCast(
   if (!skill) {
     return { type: "error", code: "unknown_skill", message: `Unknown skill ${skillId}` };
   }
+  if (skillId !== "rest") {
+    cancelRest(session);
+  } else if (isResting(session, now)) {
+    cancelRest(session);
+    session.skillReadyAt[skillId] = now + (skill.cooldownMs ?? 1000);
+    session.skillCdMs = session.skillCdMs ?? {};
+    session.skillCdMs[skillId] = skill.cooldownMs ?? 1000;
+    session.busyUntil = now + castRecoveryMs(skillId);
+    return {
+      ok: true,
+      hits: [{ targetId: session.entity.id, damage: 0, hpAfter: session.entity.hp, crit: false }],
+      mpAfter: session.entity.mp,
+      moved: false,
+      movedEntities: [],
+      primaryTargetId: session.entity.id,
+      aoe: false,
+    };
+  }
   if (
     session.unlockedSkillIds.length > 0 &&
     !session.unlockedSkillIds.includes(skillId) &&
-    skillId !== "auto_attack"
+    skillId !== "auto_attack" &&
+    skillId !== "auto_attack_off"
   ) {
     return { type: "error", code: "locked_skill", message: "Skill not unlocked" };
   }
 
-  if (!skill.selfTarget && isBlinded(session, now)) {
+  const affects = resolveSkillAffects(skill);
+  const aoeOrigin = resolveAoeOrigin(skill);
+  if (!skill.selfTarget && affects !== "self" && affects !== "friendly" && isBlinded(session, now)) {
     return { type: "error", code: "blinded", message: "You are blinded" };
   }
 
@@ -748,13 +912,20 @@ export function validateCast(
   if (now < readyAt) {
     return { type: "error", code: "on_cooldown", message: `${skill.name} is on cooldown` };
   }
+  if (now < (session.busyUntil ?? 0)) {
+    return { type: "error", code: "busy", message: "Still recovering" };
+  }
 
   if (session.entity.mp < skill.manaCost) {
     return { type: "error", code: "not_enough_mana", message: "Not enough mana" };
   }
 
   const weapon = resolveWeaponForSkill(session, skill);
-  const isAuto = skill.id === "auto_attack";
+  if (skill.id === "auto_attack_off" && !weapon) {
+    return { type: "error", code: "no_offhand", message: "No offhand equipped" };
+  }
+
+  const isAuto = isAutoAttackSkill(skill);
   const isAoe = skill.damageType === "aoe";
 
   let targets: Entity[] = [];
@@ -774,7 +945,7 @@ export function validateCast(
     }
     aimX = pt.x;
     aimY = pt.y;
-    targets = collectAoeAtPoint(pt.x, pt.y, blastRadius, session.entity.id);
+    targets = collectAoeAtPoint(pt.x, pt.y, blastRadius, session.entity.id, affects);
     resolvedTargetId = targets[0]?.id ?? "";
     primary = targets[0];
   } else if (skill.targetingType === "SKILLSHOT_LINEAR" || skill.targetingType === "SKILLSHOT_CONE") {
@@ -792,13 +963,39 @@ export function validateCast(
         directionalProjectile = true;
         targets = []; // hits resolved in flight
       } else {
-        targets = collectLinearTargets(session.entity, dirDx, dirDy, skill.range, width, 3);
+        targets = collectLinearTargets(session.entity, dirDx, dirDy, skill.range, width, 3, affects);
       }
     } else {
-      targets = collectConeTargets(session.entity, dirDx, dirDy, skill.range, skill.coneAngleDeg ?? 60);
+      targets = collectConeTargets(session.entity, dirDx, dirDy, skill.range, skill.coneAngleDeg ?? 60, affects);
     }
     resolvedTargetId = targets[0]?.id ?? "";
     primary = targets[0];
+  } else if (skill.targetingType === "ALLY_TARGET") {
+    const requested = findEntityHook(targetId);
+    if (requested && requested.kind !== "player") {
+      return { type: "error", code: "invalid_target", message: "Target must be an ally" };
+    }
+    if (!requested || requested.hp <= 0 || requested.mapId !== session.entity.mapId) {
+      primary = session.entity;
+    } else {
+      primary = requested;
+    }
+    const range = rangeGap(session.entity, primary);
+    if (range > skill.range + 0.05) {
+      return { type: "error", code: "out_of_range", message: "Target out of range" };
+    }
+    targets = [primary];
+    resolvedTargetId = primary.id;
+  } else if (aoeOrigin === "caster" && skill.targetingType === "NO_TARGET") {
+    if (skill.movement?.kind === "dash" && isMoveLocked(session, now)) {
+      return { type: "error", code: "move_locked", message: "You were shoved" };
+    }
+    primary = session.entity;
+    resolvedTargetId = session.entity.id;
+    targets = collectAoeTargets(session.entity, blastRadius, session.entity.id, affects);
+    if (!targets.some((t) => t.id === session.entity.id)) {
+      targets.unshift(session.entity);
+    }
   } else {
     // UNIT / NO_TARGET / self
     if (!primary) {
@@ -809,6 +1006,9 @@ export function validateCast(
     }
     if (primary.hp <= 0) {
       return { type: "error", code: "target_dead", message: "Target is already dead" };
+    }
+    if (affects === "hostile" && primary.kind !== "monster") {
+      return { type: "error", code: "invalid_target", message: "Target must be an enemy" };
     }
 
     if (skill.movement?.kind === "dash" && isMoveLocked(session, now)) {
@@ -821,15 +1021,36 @@ export function validateCast(
       return { type: "error", code: "out_of_range", message: "Target out of range" };
     }
 
-    targets = isAoe
-      ? skill.selfTarget
-        ? collectAoeTargets(session.entity, blastRadius, session.entity.id)
-        : collectAoeTargets(primary, blastRadius, session.entity.id)
-      : [primary];
+    if (aoeOrigin === "target") {
+      targets = collectAoeTargets(primary, blastRadius, session.entity.id, affects);
+      if (!targets.some((t) => t.id === primary.id)) {
+        targets.unshift(primary);
+      }
+    } else if (aoeOrigin === "caster") {
+      targets = collectAoeTargets(session.entity, blastRadius, session.entity.id, affects);
+      if (!targets.some((t) => t.id === session.entity.id)) {
+        targets.unshift(session.entity);
+      }
+    } else if (isAoe) {
+      targets = skill.selfTarget
+        ? collectAoeTargets(session.entity, blastRadius, session.entity.id, affects)
+        : collectAoeTargets(primary, blastRadius, session.entity.id, affects);
+    } else {
+      targets = [primary];
+    }
   }
 
-  if ((isAoe || skill.targetingType === "GROUND_CIRCLE" || skill.targetingType === "SKILLSHOT_CONE") &&
-      targets.length === 0 && !directionalProjectile) {
+  const allowEmpty =
+    skill.selfTarget ||
+    skill.targetingType === "ALLY_TARGET" ||
+    aoeOrigin === "caster" ||
+    (aoeOrigin === "target" && Boolean(primary));
+  if (
+    !allowEmpty &&
+    (isAoe || skill.targetingType === "GROUND_CIRCLE" || skill.targetingType === "SKILLSHOT_CONE") &&
+    targets.length === 0 &&
+    !directionalProjectile
+  ) {
     return { type: "error", code: "no_targets", message: "No targets in range" };
   }
 
@@ -842,7 +1063,11 @@ export function validateCast(
   const asMult = attackSpeedMult(session, now);
   const as = Math.max(0.5, (session.entity.attackSpeed + (weapon?.attackSpeedBonus ?? 0)) * asMult);
   const cdScale = Math.max(0.5, 1 / as);
-  session.skillReadyAt[skillId] = now + skill.cooldownMs * cdScale;
+  const duration = skill.cooldownMs * cdScale;
+  session.skillReadyAt[skillId] = now + duration;
+  session.skillCdMs = session.skillCdMs ?? {};
+  session.skillCdMs[skillId] = duration;
+  session.busyUntil = now + (isAuto ? duration : castRecoveryMs(skillId));
 
   const movedEntities: { id: string; x: number; y: number }[] = [];
   let moved = false;
@@ -890,30 +1115,25 @@ export function validateCast(
     }
   }
 
-  if (skill.status && skill.status.durationMs > 0 && skill.selfTarget) {
+  const useProjectile = directionalProjectile || needsProjectile(skill, weapon);
+  let pendingStatus: StatusInstance | null = null;
+  let statusDurationMs = 0;
+  if (skill.status && skill.status.durationMs > 0) {
     const focusElement = skill.id === "elemental_focus"
       ? resolveAttackElement(session, { ...skill, id: "auto_attack" }, weapon)
       : skill.status.element;
     const status = statusFromDef(skill.status, now, focusElement);
-    applyStatusToTarget(session.entity.id, status, true, session);
-  }
-
-  const useProjectile = directionalProjectile || needsProjectile(skill, weapon);
-  let pendingStatus: StatusInstance | null = null;
-  let statusDurationMs = 0;
-  if (skill.status && skill.status.durationMs > 0 && !skill.selfTarget) {
-    statusDurationMs = skill.status.durationMs;
-    pendingStatus = statusFromDef(skill.status, now, skill.status.element);
-    if (!useProjectile && primary) {
-      applyStatusToTarget(primary.id, pendingStatus, false, session);
-      // apply to all cone/aoe targets
-      for (const t of targets) {
-        if (t.id !== primary.id) {
-          applyStatusToTarget(t.id, { ...pendingStatus, id: pendingStatus.id }, false, session);
-        }
+    const applySelfOnly = skill.selfTarget || affects === "self";
+    if (useProjectile && !applySelfOnly) {
+      pendingStatus = status;
+      statusDurationMs = skill.status.durationMs;
+    } else if (applySelfOnly) {
+      applyStatusToTarget(session.entity.id, status, session);
+    } else {
+      const statusTargets = targets.length > 0 ? targets : (primary ? [primary] : [session.entity]);
+      for (const t of statusTargets) {
+        applyStatusToTarget(t.id, { ...status }, session);
       }
-      pendingStatus = null;
-      statusDurationMs = 0;
     }
   }
 
@@ -922,11 +1142,8 @@ export function validateCast(
 
   for (const target of targets) {
     if (skill.heal > 0 || (skill.healMp ?? 0) > 0) {
-      if (target.id !== session.entity.id && !skill.selfTarget) {
-        continue;
-      }
       target.hp = Math.min(target.maxHp, target.hp + skill.heal);
-      if (skill.selfTarget) {
+      if (target.id === session.entity.id) {
         session.entity.mp = Math.min(session.entity.maxMp, session.entity.mp + (skill.healMp ?? 0));
       }
       hits.push({ targetId: target.id, damage: skill.heal, hpAfter: target.hp, crit: false });
@@ -973,10 +1190,10 @@ export function validateCast(
     moved,
     movedEntities,
     primaryTargetId: resolvedTargetId || session.entity.id,
-    aoe: isAoe || skill.targetingType === "GROUND_CIRCLE",
+    aoe: isAoe || skill.targetingType === "GROUND_CIRCLE" || aoeOrigin === "caster" || aoeOrigin === "target",
     aimX,
     aimY,
-    aoeRadius: skill.targetingType === "GROUND_CIRCLE" ? blastRadius : undefined,
+    aoeRadius: aoeOrigin !== "none" ? blastRadius : undefined,
     projectile: useProjectile
       ? {
           speed: projectileSpeedOf(skill, weapon),

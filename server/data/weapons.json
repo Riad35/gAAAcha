@@ -12,7 +12,42 @@
     "atkBonus": 8,
     "magicAtkBonus": 0,
     "attackSpeedBonus": 0.05,
-    "resistBonus": { "earth": 5 }
+    "resistBonus": { "earth": 5 },
+    "hand": "both",
+    "grip": "1h"
+  },
+  {
+    "id": "sword_zwei",
+    "name": "Zweihander",
+    "slot": "weapon",
+    "category": "sword",
+    "style": "melee",
+    "range": 1.8,
+    "element": "earth",
+    "damageType": "direct",
+    "scaling": "atk",
+    "atkBonus": 14,
+    "magicAtkBonus": 0,
+    "attackSpeedBonus": -0.05,
+    "resistBonus": { "earth": 8 },
+    "hand": "mainhand",
+    "grip": "2h"
+  },
+  {
+    "id": "sword_off",
+    "name": "Side Sword",
+    "slot": "weapon",
+    "category": "sword",
+    "style": "melee",
+    "range": 1.4,
+    "element": "earth",
+    "damageType": "direct",
+    "scaling": "atk",
+    "atkBonus": 5,
+    "magicAtkBonus": 0,
+    "attackSpeedBonus": 0.08,
+    "hand": "offhand",
+    "grip": "1h"
   },
   {
     "id": "dagger_twin",
@@ -27,7 +62,25 @@
     "atkBonus": 6,
     "magicAtkBonus": 0,
     "attackSpeedBonus": 0.2,
-    "resistBonus": { "wind": 5 }
+    "resistBonus": { "wind": 5 },
+    "hand": "both",
+    "grip": "1h"
+  },
+  {
+    "id": "dagger_off",
+    "name": "Offhand Dagger",
+    "slot": "weapon",
+    "category": "dagger",
+    "style": "melee",
+    "range": 1.1,
+    "element": "wind",
+    "damageType": "direct",
+    "scaling": "atk",
+    "atkBonus": 4,
+    "magicAtkBonus": 0,
+    "attackSpeedBonus": 0.12,
+    "hand": "offhand",
+    "grip": "1h"
   },
   {
     "id": "staff_arcane",
@@ -42,7 +95,25 @@
     "atkBonus": 2,
     "magicAtkBonus": 12,
     "attackSpeedBonus": 0,
-    "resistBonus": { "holy": 8 }
+    "resistBonus": { "holy": 8 },
+    "hand": "mainhand",
+    "grip": "1h"
+  },
+  {
+    "id": "tome_novice",
+    "name": "Novice Tome",
+    "slot": "weapon",
+    "category": "tome",
+    "style": "ranged",
+    "range": 4.2,
+    "element": "holy",
+    "damageType": "direct",
+    "scaling": "magic",
+    "atkBonus": 1,
+    "magicAtkBonus": 10,
+    "attackSpeedBonus": 0.05,
+    "hand": "mainhand",
+    "grip": "1h"
   },
   {
     "id": "bow_hunter",
@@ -57,7 +128,9 @@
     "atkBonus": 7,
     "magicAtkBonus": 0,
     "attackSpeedBonus": 0.05,
-    "resistBonus": { "water": 5 }
+    "resistBonus": { "water": 5 },
+    "hand": "mainhand",
+    "grip": "1h"
   },
   {
     "id": "gun_spark",
@@ -72,6 +145,40 @@
     "atkBonus": 9,
     "magicAtkBonus": 0,
     "attackSpeedBonus": -0.05,
-    "resistBonus": { "fire": 5 }
+    "resistBonus": { "fire": 5 },
+    "hand": "mainhand",
+    "grip": "1h"
+  },
+  {
+    "id": "charm_leaf",
+    "name": "Leaf Charm",
+    "slot": "weapon",
+    "category": "charm",
+    "style": "ranged",
+    "range": 5,
+    "element": "wind",
+    "damageType": "direct",
+    "scaling": "atk",
+    "atkBonus": 3,
+    "magicAtkBonus": 2,
+    "attackSpeedBonus": 0.05,
+    "hand": "offhand",
+    "grip": "1h"
+  },
+  {
+    "id": "orb_glass",
+    "name": "Glass Orb",
+    "slot": "weapon",
+    "category": "orb",
+    "style": "ranged",
+    "range": 4.5,
+    "element": "holy",
+    "damageType": "direct",
+    "scaling": "magic",
+    "atkBonus": 0,
+    "magicAtkBonus": 8,
+    "attackSpeedBonus": 0,
+    "hand": "offhand",
+    "grip": "1h"
   }
 ]

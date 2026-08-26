@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using UnityEngine;
 
 /// <summary>
 /// Drop into a Unity 6.3 project (Assets/Scripts/Network).
@@ -16,14 +18,22 @@ public sealed class NetClient
     private ClientWebSocket _socket;
     private CancellationTokenSource _cts;
     private Task _receiveTask = Task.CompletedTask;
+    private readonly Queue<string> _outbox = new Queue<string>();
+    private string _pendingMove;
+    private bool _draining;
 
     public bool IsConnected => _socket?.State == WebSocketState.Open;
 
     public event Action<string> MessageReceived;
 
+    private int _moveSeq;
+
+    public int LastMoveSeq => _moveSeq;
+
     public async Task ConnectAsync(string url = DefaultUrl)
     {
         await DisconnectAsync();
+        _moveSeq = 0;
         _cts = new CancellationTokenSource();
         _socket = new ClientWebSocket();
         await _socket.ConnectAsync(new Uri(url), _cts.Token);
@@ -33,26 +43,43 @@ public sealed class NetClient
     public Task SendMoveAsync(float x, float y)
     {
         var inv = CultureInfo.InvariantCulture;
-        return SendAsync(
+        _moveSeq += 1;
+        EnqueueSend(
             "{\"type\":\"request_move\",\"x\":" + x.ToString("G9", inv) +
-            ",\"y\":" + y.ToString("G9", inv) + "}");
+            ",\"y\":" + y.ToString("G9", inv) +
+            ",\"seq\":" + _moveSeq + "}",
+            coalesceMove: true);
+        return Task.CompletedTask;
+    }
+
+    public Task SendPingAsync()
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var t = (Time.realtimeSinceStartupAsDouble * 1000.0).ToString("G9", inv);
+        EnqueueSend("{\"type\":\"request_ping\",\"clientTime\":" + t + "}", false);
+        return Task.CompletedTask;
     }
 
     public Task SendCastAsync(string skillId, string targetId)
     {
-        return SendAsync(
-            $"{{\"type\":\"cast_skill\",\"skillId\":\"{skillId}\",\"targetId\":\"{targetId}\"}}");
+        EnqueueSend(
+            $"{{\"type\":\"cast_skill\",\"skillId\":\"{skillId}\",\"targetId\":\"{targetId}\"}}",
+            false);
+        return Task.CompletedTask;
     }
 
     public Task SendGachaAsync(string bannerId = "starter", int count = 1)
     {
-        return SendAsync(
-            $"{{\"type\":\"request_gacha\",\"bannerId\":\"{bannerId}\",\"count\":{count}}}");
+        EnqueueSend(
+            $"{{\"type\":\"request_gacha\",\"bannerId\":\"{bannerId}\",\"count\":{count}}}",
+            false);
+        return Task.CompletedTask;
     }
 
     public Task SendRawAsync(string json)
     {
-        return SendAsync(json);
+        EnqueueSend(json, coalesceMove: false);
+        return Task.CompletedTask;
     }
 
     public async Task DisconnectAsync()
@@ -102,6 +129,75 @@ public sealed class NetClient
             if (ReferenceEquals(_cts, cts))
             {
                 _cts = null;
+            }
+        }
+    }
+
+    private void EnqueueSend(string json, bool coalesceMove)
+    {
+        lock (_outbox)
+        {
+            if (coalesceMove)
+            {
+                _pendingMove = json;
+            }
+            else
+            {
+                _outbox.Enqueue(json);
+            }
+
+            if (_draining)
+            {
+                return;
+            }
+
+            _draining = true;
+        }
+
+        _ = DrainAsync();
+    }
+
+    private async Task DrainAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                string next;
+                lock (_outbox)
+                {
+                    if (_outbox.Count > 0)
+                    {
+                        next = _outbox.Dequeue();
+                    }
+                    else if (!string.IsNullOrEmpty(_pendingMove))
+                    {
+                        next = _pendingMove;
+                        _pendingMove = null;
+                    }
+                    else
+                    {
+                        _draining = false;
+                        return;
+                    }
+                }
+
+                await SendAsync(next);
+            }
+        }
+        finally
+        {
+            lock (_outbox)
+            {
+                if (_outbox.Count > 0 || !string.IsNullOrEmpty(_pendingMove))
+                {
+                    _draining = true;
+                    _ = DrainAsync();
+                }
+                else
+                {
+                    _draining = false;
+                }
             }
         }
     }

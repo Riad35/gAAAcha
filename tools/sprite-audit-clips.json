@@ -1,0 +1,24 @@
+{
+  "facingNames": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+  "notes": "Runtime never leaves a body blank: last-good → walk → run → idle → any facing → shape. 8-dir locomotion/idle is required; 1-dir skills may face the lock. Kit map: StreamingAssets/Data/animation_kits.json. Holes: docs/sprite-asset-tasks.md.",
+  "clips": [
+    { "id": "peaceful_idle", "root": "streaming", "folder": "player/idle_rotation_calm", "want": [0,1,2,3,4,5,6,7], "strict": false, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "peaceful_run" },
+    { "id": "peaceful_run", "folder": "idle_base/Idle_base/animations_base/idle_running", "want": [0,1,2,3,4,5,6,7], "strict": true, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "peaceful_idle" },
+    { "id": "hurt", "folder": "idle_base/Idle_base/animations_base/idle_taking_dmg", "want": [0,2,4], "strict": false, "pose": "stand", "dirs": 3, "pivot": "feet", "fallback": "peaceful_idle" },
+    { "id": "death", "folder": "idle_base/Idle_base/animations_base/idle_falling_death", "want": [0,1,2,3,5,6,7], "strict": false, "pose": "fall", "dirs": 8, "pivot": "feet", "fallback": "peaceful_idle" },
+    { "id": "pickup", "folder": "idle_base/Idle_base/animations_base/idle_pickingup_animation", "want": [0,4], "strict": false, "pose": "stand", "dirs": 2, "pivot": "feet", "fallback": "peaceful_idle" },
+    { "id": "sit", "folder": "idle_base/Idle_base/animations_base/idle_sitting", "want": [0,1,2,3,5,6,7], "strict": false, "pose": "sit", "dirs": 8, "pivot": "feet", "fallback": "peaceful_idle" },
+    { "id": "bow_idle", "folder": "idle_holding_longbow/holding_longbow/rotations_longbow", "want": [0,1,2,3,4,5,6,7], "strict": true, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "bow_run" },
+    { "id": "bow_run", "folder": "idle_holding_longbow/holding_longbow/animations_longbow/running_forward_running_switfly_elegant_stride", "want": [0,1,2,3,4,5,6,7], "strict": true, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "peaceful_run" },
+    { "id": "bow_shoot", "folder": "idle_holding_longbow/holding_longbow/animations_longbow/loading_bow_with_arrow_shooting_arrow_stable_uprig", "want": [0,1,2,3,4,5,6,7], "strict": true, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "bow_idle" },
+    { "id": "daggers_idle", "folder": "idle_holding_daggers/holding_daggers/rotations_daggers", "want": [1,2,3,4,5,6,7], "strict": false, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "daggers_run" },
+    { "id": "daggers_run", "folder": "idle_holding_daggers/holding_daggers/animations_daggers/forward_leaning_very_fast_steps_jumping_running_ru", "want": [0,1,2,3,4,5,6,7], "strict": true, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "peaceful_run" },
+    { "id": "staff_idle", "folder": "idle_holding_staff/holding_staff_long/rotations_staff", "want": [0,1,2,3,4,5,6,7], "strict": true, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "staff_run" },
+    { "id": "staff_run", "folder": "idle_holding_staff/holding_staff_long/animations_staff/running_foeward_running_while_holding_thwo_handed", "want": [0,1,2,3,4,6,7], "strict": false, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "peaceful_run" },
+    { "id": "staff_cast", "folder": "idle_holding_staff/holding_staff_long/animations_staff/chanting", "want": [0,1,3,4,5,6], "strict": false, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "staff_idle" },
+    { "id": "sword_idle", "folder": "idle_holding_zweihander/holding_zweihander/rotations_zweih", "want": [0,2,3,4,5,6,7], "strict": false, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "sword_run" },
+    { "id": "sword_run", "folder": "idle_holding_zweihander/holding_zweihander/animations_zweih/running_zweihander", "want": [0,1,2,3,4,5,6,7], "strict": true, "pose": "stand", "dirs": 8, "pivot": "feet", "fallback": "peaceful_run" },
+    { "id": "sword_aa", "folder": "idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_autoattack", "want": [0], "strict": false, "pose": "stand", "dirs": 1, "pivot": "feet", "fallback": "sword_idle" },
+    { "id": "emo_scared", "folder": "emotions/emo_scared", "want": [0], "strict": false, "pose": "stand", "dirs": 1, "pivot": "feet", "fallback": "peaceful_idle" }
+  ]
+}

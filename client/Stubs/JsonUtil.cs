@@ -316,83 +316,140 @@ public static class JsonUtil
 
     public static HashSet<Vector2Int> ParseBlockedTiles(string mapJson)
     {
-        var blocked = new HashSet<Vector2Int>();
-        var idx = mapJson.IndexOf("\"blocked\"");
-        if (idx < 0)
-        {
-            return blocked;
-        }
-
-        var part = mapJson.Substring(idx);
-        var cursor = 0;
-        while (cursor < part.Length)
-        {
-            var xToken = part.IndexOf("\"x\":", cursor);
-            if (xToken < 0)
-            {
-                break;
-            }
-
-            var yToken = part.IndexOf("\"y\":", xToken);
-            if (yToken < 0 || yToken - xToken > 24)
-            {
-                cursor = xToken + 4;
-                continue;
-            }
-
-            if (TryNumber(part.Substring(xToken, 20), "x", out var x) &&
-                TryNumber(part.Substring(yToken, 20), "y", out var y))
-            {
-                blocked.Add(new Vector2Int(Mathf.RoundToInt(x), Mathf.RoundToInt(y)));
-            }
-
-            cursor = yToken + 4;
-        }
-
-        return blocked;
+        return ParseXyArray(mapJson, "blocked");
     }
 
     public static HashSet<Vector2Int> ParseHazardTiles(string mapJson)
     {
-        var hazards = new HashSet<Vector2Int>();
-        var idx = mapJson.IndexOf("\"hazards\"");
-        if (idx < 0)
-        {
-            return hazards;
-        }
+        return ParseXyArray(mapJson, "hazards");
+    }
 
-        var part = mapJson.Substring(idx);
-        var end = part.IndexOf(']');
-        if (end > 0)
+    public struct MapProp
+    {
+        public int X;
+        public int Y;
+        public string Kind;
+    }
+
+    public static List<MapProp> ParseMapProps(string mapJson)
+    {
+        var list = new List<MapProp>();
+        var part = SliceNamedArray(mapJson, "props");
+        if (string.IsNullOrEmpty(part))
         {
-            part = part.Substring(0, end + 1);
+            return list;
         }
 
         var cursor = 0;
         while (cursor < part.Length)
         {
-            var xToken = part.IndexOf("\"x\":", cursor);
-            if (xToken < 0)
+            var brace = part.IndexOf('{', cursor);
+            if (brace < 0)
             {
                 break;
             }
 
-            var yToken = part.IndexOf("\"y\":", xToken);
-            if (yToken < 0 || yToken - xToken > 24)
+            var end = part.IndexOf('}', brace);
+            if (end < 0)
             {
-                cursor = xToken + 4;
+                break;
+            }
+
+            var obj = part.Substring(brace, end - brace + 1);
+            cursor = end + 1;
+            if (!TryNumber(obj, "x", out var x) || !TryNumber(obj, "y", out var y))
+            {
                 continue;
             }
 
-            if (TryNumber(part.Substring(xToken, 20), "x", out var x) &&
-                TryNumber(part.Substring(yToken, 20), "y", out var y))
+            var kind = ExtractString(obj, "kind");
+            if (string.IsNullOrEmpty(kind))
             {
-                hazards.Add(new Vector2Int(Mathf.RoundToInt(x), Mathf.RoundToInt(y)));
+                kind = "rock";
             }
 
-            cursor = yToken + 4;
+            list.Add(new MapProp
+            {
+                X = Mathf.RoundToInt(x),
+                Y = Mathf.RoundToInt(y),
+                Kind = kind,
+            });
         }
 
-        return hazards;
+        return list;
+    }
+
+    private static HashSet<Vector2Int> ParseXyArray(string mapJson, string key)
+    {
+        var set = new HashSet<Vector2Int>();
+        var part = SliceNamedArray(mapJson, key);
+        if (string.IsNullOrEmpty(part))
+        {
+            return set;
+        }
+
+        var cursor = 0;
+        while (cursor < part.Length)
+        {
+            var brace = part.IndexOf('{', cursor);
+            if (brace < 0)
+            {
+                break;
+            }
+
+            var end = part.IndexOf('}', brace);
+            if (end < 0)
+            {
+                break;
+            }
+
+            var obj = part.Substring(brace, end - brace + 1);
+            cursor = end + 1;
+            if (TryNumber(obj, "x", out var x) && TryNumber(obj, "y", out var y))
+            {
+                set.Add(new Vector2Int(Mathf.FloorToInt(x + 0.5f), Mathf.FloorToInt(y + 0.5f)));
+            }
+        }
+
+        return set;
+    }
+
+    private static string SliceNamedArray(string json, string key)
+    {
+        if (string.IsNullOrEmpty(json))
+        {
+            return "";
+        }
+
+        var idx = json.IndexOf("\"" + key + "\"");
+        if (idx < 0)
+        {
+            return "";
+        }
+
+        var start = json.IndexOf('[', idx);
+        if (start < 0)
+        {
+            return "";
+        }
+
+        var depth = 0;
+        for (var i = start; i < json.Length; i++)
+        {
+            if (json[i] == '[')
+            {
+                depth += 1;
+            }
+            else if (json[i] == ']')
+            {
+                depth -= 1;
+                if (depth == 0)
+                {
+                    return json.Substring(start, i - start + 1);
+                }
+            }
+        }
+
+        return "";
     }
 }

@@ -16,6 +16,7 @@ type Spawner = {
   spawnMonster: (def: MonsterDef, id: string, x: number, y: number) => Entity;
   listDungeonDefs: (mapId: string) => MonsterDef[];
   despawnMonster: (id: string) => void;
+  reindexMonster: (entity: Entity, previousMapId?: string) => void;
 };
 
 const instances = new Map<string, LiveInstance>();
@@ -64,7 +65,9 @@ export function createDungeonInstance(
   for (const def of hooks.listDungeonDefs(mapId)) {
     const mid = `${def.respawnId}_${id}`;
     const ent = hooks.spawnMonster(def, mid, def.x, def.y);
+    const previousMapId = ent.mapId;
     ent.mapId = `${mapId}#${id}`;
+    hooks.reindexMonster(ent, previousMapId);
     inst.monsterIds.push(mid);
   }
   instances.set(id, inst);

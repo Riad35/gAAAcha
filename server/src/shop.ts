@@ -1,4 +1,6 @@
-import { classById, itemById, shopById, spiritById, weaponById } from "./data.js";
+import { itemById, shopById, spiritById, weaponById } from "./data.js";
+import { skillTreeSnapshot } from "./skills.js";
+import { canEquipMainhand, canEquipOffhand, handOf } from "./equipRules.js";
 import type { InventorySlot, ItemDef, PlayerSession, ServerMessage, ShopDef } from "./types.js";
 
 const DEFAULT_FOOD_MS = 60_000;
@@ -106,15 +108,17 @@ export function sellToShop(
   if (!shop) {
     return { error: { type: "error", code: "bad_shop", message: "Unknown shop" } };
   }
+  const qty = Math.max(1, Math.min(20, Math.floor(quantity)));
   const entry = shop.entries.find((e) => e.itemId === itemId);
-  if (!entry) {
+  const item = itemById(itemId) ?? weaponById(itemId);
+  if (!item && !entry) {
     return { error: { type: "error", code: "bad_item", message: "Shop will not buy that" } };
   }
-  const qty = Math.max(1, Math.min(20, Math.floor(quantity)));
+  const sellPrice = entry?.sellPrice ?? (item && "rarity" in item && item.rarity === "ssr" ? 80 : item && "rarity" in item && item.rarity === "sr" ? 20 : 5);
   if (!removeItem(session, itemId, qty)) {
     return { error: { type: "error", code: "missing_item", message: "You do not have that" } };
   }
-  session.gold += entry.sellPrice * qty;
+  session.gold += sellPrice * qty;
   return { shop };
 }
 
@@ -134,15 +138,36 @@ export function useInventoryItem(
   const def = itemById(slot.itemId);
   const asWeapon = weaponById(slot.itemId);
   if (!def?.use) {
-    // Allow equipping owned weapons from inventory as secondary
     if (asWeapon) {
       if (!session.weaponIds.includes(slot.itemId)) {
         session.weaponIds.push(slot.itemId);
       }
-      if (session.equippedWeaponId === slot.itemId) {
-        return { error: { type: "error", code: "already_primary", message: "Already primary" }, messages: [] };
+      const hand = handOf(slot.itemId);
+      if (hand === "offhand") {
+        const chk = canEquipOffhand(session.classId, slot.itemId, session.equippedWeaponId);
+        if (!chk.ok) {
+          return { error: { type: "error", code: chk.code, message: chk.message }, messages: [] };
+        }
+        session.equippedWeapon2Id = slot.itemId;
+        return {
+          messages: [
+            { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
+            {
+              type: "sync_chat",
+              channel: "server",
+              fromId: "system",
+              fromName: "System",
+              text: `Offhand: ${asWeapon.name}`,
+              serverTime: now,
+            },
+          ],
+        };
       }
-      session.equippedWeapon2Id = slot.itemId;
+      const chk = canEquipMainhand(session.classId, slot.itemId);
+      if (!chk.ok) {
+        return { error: { type: "error", code: chk.code, message: chk.message }, messages: [] };
+      }
+      session.equippedWeaponId = slot.itemId;
       return {
         messages: [
           { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
@@ -151,7 +176,7 @@ export function useInventoryItem(
             channel: "server",
             fromId: "system",
             fromName: "System",
-            text: `Secondary weapon: ${asWeapon.name}`,
+            text: `Mainhand: ${asWeapon.name}`,
             serverTime: now,
           },
         ],
@@ -247,50 +272,31 @@ export function useInventoryItem(
 
   if (def.use === "skill_unlock") {
     removeItem(session, slot.itemId, 1);
-    session.gold += 10;
+    session.skillPoints += 1;
     return {
       messages: [
         { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
-        { type: "sync_gold", gold: session.gold },
+        skillTreeSnapshot(session),
         {
           type: "sync_chat",
           channel: "server",
           fromId: "system",
           fromName: "System",
-          text: "You study the tome. (+10g study stipend)",
+          text: "You study the tome. +1 skill point. Spend it at the Trainer.",
           serverTime: now,
         },
       ],
     };
   }
 
-  if (def.use === "class_card" && def.classId && helpers.changeClass) {
-    const cardId = slot.itemId;
-    const result = helpers.changeClass(def.classId, cardId);
-    if (result.error) {
-      return { error: result.error, messages: [] };
-    }
-    removeItem(session, cardId, 1);
-    const cls = classById(def.classId);
+  if (def.use === "class_card") {
     return {
-      messages: [
-        { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
-        {
-          type: "sync_class_change",
-          classId: def.classId,
-          className: cls?.name ?? def.classId,
-          skillIds: session.unlockedSkillIds,
-          resistBonus: (def.resistBonus ?? {}) as Record<string, number>,
-        },
-        {
-          type: "sync_chat",
-          channel: "server",
-          fromId: "system",
-          fromName: "System",
-          text: `Class changed to ${cls?.name ?? def.classId}.`,
-          serverTime: now,
-        },
-      ],
+      error: {
+        type: "error",
+        code: "use_npc",
+        message: "Choose your class at the Class Master in town (level 20).",
+      },
+      messages: [],
     };
   }
 

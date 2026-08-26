@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { expandMapDef } from "./mapGrid.js";
 import type {
   BannerDef,
   ClassDef,
@@ -36,8 +37,12 @@ export type NpcDef = {
     | "homestone"
     | "flavor"
     | "auction"
-    | "switch";
+    | "switch"
+    | "class_change"
+    | "subclass";
   switchId?: string;
+  sprite?: string;
+  dialogPortraits?: { greet?: string; prompt?: string };
 };
 
 const CLASS_ALIASES: Record<string, string> = {
@@ -54,7 +59,8 @@ function loadJson<T>(name: string): T {
   return JSON.parse(readFileSync(join(dataDir, name), "utf8")) as T;
 }
 
-export const maps = loadJson<MapDef[]>("maps.json");
+export const portals = loadJson<PortalDef[]>("portals.json");
+export const maps = loadJson<MapDef[]>("maps.json").map((m) => expandMapDef(m, dataDir, portals));
 export const classes = loadJson<ClassDef[]>("classes.json");
 export const skills = loadJson<SkillDef[]>("skills.json");
 export const monsters = loadJson<MonsterDef[]>("monsters.json");
@@ -63,7 +69,6 @@ export const banners = loadJson<BannerDef[]>("banners.json");
 export const weapons = loadJson<WeaponDef[]>("weapons.json");
 export const spirits = loadJson<SpiritDef[]>("spirits.json");
 export const npcs = loadJson<NpcDef[]>("npcs.json");
-export const portals = loadJson<PortalDef[]>("portals.json");
 export const shops = loadJson<ShopDef[]>("shops.json");
 export const quests = loadJson<QuestDef[]>("quests.json");
 export const lootTables = loadJson<Record<string, LootTable>>("loot.json");

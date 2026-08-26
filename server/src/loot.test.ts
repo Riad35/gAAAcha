@@ -80,6 +80,8 @@ function session(): PlayerSession {
     towerClearedFloor: 0,
     switchFlags: {},
     inWorld: true,
+    dirty: false,
+    rpcTimes: [],
   };
 }
 

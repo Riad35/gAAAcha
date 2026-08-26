@@ -4,10 +4,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { listCharSlots, saveCharSlot, deleteCharSlot } from "./chars.js";
-import { changeClass, createCharacter, resetWorld, spawnPlayer, swapWeapons, bumpTowerFloor } from "./world.js";
+import { changeClass, createCharacter, resetWorld, spawnPlayer, bumpTowerFloor } from "./world.js";
 import { usePortal } from "./portal.js";
-import { addItem } from "./shop.js";
-import { useInventoryItem } from "./shop.js";
 import type { GuestSave } from "./persist.js";
 import { emptyInventory } from "./gacha.js";
 
@@ -44,25 +42,16 @@ test("char list returns 8 slots", () => {
   deleteCharSlot(token, 2);
 });
 
-test("class card changes class and seeds secondary", () => {
+test("class pick at L20 seeds weapons and is not a card use", () => {
   resetWorld();
   const p = spawnPlayer("card_t");
   createCharacter(p, "Hero", "adventurer");
   assert.equal(p.classId, "adventurer");
   p.level = 20;
-  addItem(p, "card_marksman", 1);
-  const slot = p.inventory.find((s) => s.itemId === "card_marksman")!;
-  const result = useInventoryItem(p, slot.slotIndex, Date.now(), {
-    teleportHome: () => ({}),
-    changeClass: (classId, cardId) => changeClass(p, classId, cardId),
-  });
-  assert.ok(!result.error);
+  assert.equal(changeClass(p, "marksman").error, undefined);
   assert.equal(p.classId, "marksman");
   assert.equal(p.equippedWeaponId, "bow_hunter");
-  assert.equal(p.equippedWeapon2Id, "gun_spark");
-  const swap = swapWeapons(p);
-  assert.ok(swap.ok);
-  assert.equal(p.equippedWeaponId, "gun_spark");
+  assert.equal(p.equippedWeapon2Id, "charm_leaf");
 });
 
 test("tower gate locks until cleared floor + switch", () => {

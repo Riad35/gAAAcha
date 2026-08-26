@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS inventory_slots (
 ALTER TABLE inventory_slots DROP CONSTRAINT IF EXISTS inventory_slots_range;
 ALTER TABLE inventory_slots ADD CONSTRAINT inventory_slots_range CHECK (slot_index >= 0 AND slot_index < 144);
 
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS equipped_subclass_id TEXT;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS transformed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS equipped_amulet_id TEXT;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS equipped_ring1_id TEXT;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS equipped_ring2_id TEXT;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS enhance_levels JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE TABLE IF NOT EXISTS pity_counters (
   account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
   banner_id TEXT NOT NULL,

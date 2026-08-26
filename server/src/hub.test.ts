@@ -194,7 +194,9 @@ test("skill unlock spends points; auction list/buy", async () => {
     assert.ok(shot);
     assert.equal(shot?.name, "Shot");
     assert.equal(shot?.manaCost, 8);
-    assert.equal(shot?.weaponSlot, 2);
+    assert.equal(shot?.weaponSlot, 1);
+    assert.equal(shot?.targetingType, "SKILLSHOT_LINEAR");
+    assert.equal(shot?.range, 5);
     const aa = tree.catalog?.find((c) => c.id === "auto_attack");
     assert.equal(aa?.weaponSlot, 1);
     assert.ok(tree.classSkillIds?.includes("hook_shot"));

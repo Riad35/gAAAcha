@@ -1,0 +1,318 @@
+{
+  "version": 1,
+  "ppu": 180,
+  "frameDurationMs": 80,
+  "notes": "Female 180 pack. Folders are StreamingAssets/Art resource paths. Missing clips stay status=missing; runtime falls back. Do not invent frames.",
+  "facingNames": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+  "kits": [
+    {
+      "id": "unarmed",
+      "clips": [
+        {
+          "id": "idle",
+          "state": "IDLE",
+          "kind": "stills",
+          "status": "filled",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/idle_rotation_calm",
+          "altFolders": [
+            "Sprites/player/female/idle_base/Idle_base/rotations_base",
+            "Sprites/player/female/idle_base/Idle_base/rotations"
+          ],
+          "present": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": [],
+          "fallback": "",
+          "task": "Art Idle_base/rotations and rotations_base are empty; calm stills live in StreamingAssets. Prefer Art stills once they exist."
+        },
+        {
+          "id": "run",
+          "state": "WALK",
+          "kind": "sequence",
+          "status": "filled",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_base/Idle_base/animations_base/idle_running",
+          "present": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": [],
+          "fallback": "idle",
+          "task": "No separate WALK pack; Walk and Run both use idle_running."
+        },
+        {
+          "id": "attack",
+          "state": "ATTACK",
+          "kind": "missing",
+          "status": "missing",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "",
+          "present": [],
+          "missing": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "fallback": "run",
+          "task": "Unarmed punch / fist AA clip. Runtime uses run until then."
+        },
+        {
+          "id": "hurt",
+          "state": "HIT",
+          "kind": "hurt",
+          "status": "partial",
+          "pose": "stand",
+          "dirs": 3,
+          "folder": "Sprites/player/female/idle_base/Idle_base/animations_base/idle_taking_dmg",
+          "present": ["facing_south", "facing_north", "facing_side"],
+          "missing": ["south-east", "east", "north-east", "north-west", "south-west"],
+          "fallback": "idle",
+          "task": "Hurt is 3 aliases (N/S/side), not 8 named dirs. Unused extra: getting_hit_taking_dmg_crouching_pushback_flinchin."
+        },
+        {
+          "id": "death",
+          "state": "DIE",
+          "kind": "sequence",
+          "status": "partial",
+          "pose": "fall",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_base/Idle_base/animations_base/idle_falling_death",
+          "present": ["south", "south-east", "east", "north-east", "north-west", "west", "south-west"],
+          "missing": ["north"],
+          "fallback": "idle",
+          "task": "Death missing north; NE is the neighbor fallback."
+        },
+        {
+          "id": "sit",
+          "state": "SIT",
+          "kind": "sequence",
+          "status": "partial",
+          "pose": "sit",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_base/Idle_base/animations_base/idle_sitting",
+          "present": ["south", "south-east", "east", "north-east", "north-west", "west", "south-west"],
+          "missing": ["north"],
+          "fallback": "idle",
+          "task": "Sit missing north."
+        },
+        {
+          "id": "pickup",
+          "state": "PICKUP",
+          "kind": "sequence",
+          "status": "partial",
+          "pose": "stand",
+          "dirs": 2,
+          "folder": "Sprites/player/female/idle_base/Idle_base/animations_base/idle_pickingup_animation",
+          "present": ["south", "north"],
+          "missing": ["south-east", "east", "north-east", "north-west", "west", "south-west"],
+          "fallback": "idle",
+          "task": "Pickup is north/south only (pickingup_north / pickingup_south)."
+        }
+      ]
+    },
+    {
+      "id": "bow",
+      "clips": [
+        {
+          "id": "idle",
+          "state": "IDLE",
+          "kind": "stills",
+          "status": "filled",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_longbow/holding_longbow/rotations_longbow",
+          "present": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": [],
+          "fallback": ""
+        },
+        {
+          "id": "run",
+          "state": "WALK",
+          "kind": "sequence",
+          "status": "filled",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_longbow/holding_longbow/animations_longbow/running_forward_running_switfly_elegant_stride",
+          "present": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": [],
+          "fallback": "unarmed.run"
+        },
+        {
+          "id": "attack",
+          "state": "ATTACK",
+          "kind": "sequence",
+          "status": "filled",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_longbow/holding_longbow/animations_longbow/loading_bow_with_arrow_shooting_arrow_stable_uprig",
+          "present": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": [],
+          "fallback": "idle"
+        }
+      ]
+    },
+    {
+      "id": "daggers",
+      "clips": [
+        {
+          "id": "idle",
+          "state": "IDLE",
+          "kind": "stills",
+          "status": "partial",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_daggers/holding_daggers/rotations_daggers",
+          "present": ["south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": ["south"],
+          "fallback": "",
+          "task": "No south.png. Leftover south-west_0005.png is not a south still. Runtime flips/neighbors."
+        },
+        {
+          "id": "run",
+          "state": "WALK",
+          "kind": "sequence",
+          "status": "filled",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_daggers/holding_daggers/animations_daggers/forward_leaning_very_fast_steps_jumping_running_ru",
+          "present": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": [],
+          "fallback": "unarmed.run"
+        },
+        {
+          "id": "attack",
+          "state": "ATTACK",
+          "kind": "missing",
+          "status": "missing",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "",
+          "present": [],
+          "missing": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "fallback": "run",
+          "task": "No dagger AA clip. Runtime uses dagger run."
+        }
+      ]
+    },
+    {
+      "id": "staff",
+      "clips": [
+        {
+          "id": "idle",
+          "state": "IDLE",
+          "kind": "stills",
+          "status": "filled",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_staff/holding_staff_long/rotations_staff",
+          "present": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": [],
+          "fallback": ""
+        },
+        {
+          "id": "run",
+          "state": "WALK",
+          "kind": "sequence",
+          "status": "partial",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_staff/holding_staff_long/animations_staff/running_foeward_running_while_holding_thwo_handed",
+          "present": ["south", "south-east", "east", "north-east", "north", "west", "south-west"],
+          "missing": ["north-west"],
+          "fallback": "unarmed.run",
+          "task": "Staff run missing north-west."
+        },
+        {
+          "id": "attack",
+          "state": "CAST",
+          "kind": "sequence",
+          "status": "partial",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_staff/holding_staff_long/animations_staff/chanting",
+          "present": ["south", "south-east", "north-east", "north", "north-west", "west"],
+          "missing": ["east", "south-west"],
+          "fallback": "idle",
+          "task": "Staff chanting missing east and south-west. Nested chanting1 leftover."
+        }
+      ]
+    },
+    {
+      "id": "sword",
+      "clips": [
+        {
+          "id": "idle",
+          "state": "IDLE",
+          "kind": "stills",
+          "status": "partial",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/rotations_zweih",
+          "present": ["south", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": ["south-east"],
+          "fallback": "",
+          "task": "Zwei idle stills missing south-east."
+        },
+        {
+          "id": "run",
+          "state": "WALK",
+          "kind": "sequence",
+          "status": "filled",
+          "pose": "stand",
+          "dirs": 8,
+          "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/running_zweihander",
+          "present": ["south", "south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "missing": [],
+          "fallback": "unarmed.run",
+          "task": "East folder is named west2; loader already aliases that."
+        },
+        {
+          "id": "attack",
+          "state": "ATTACK",
+          "kind": "sequence",
+          "status": "partial",
+          "pose": "stand",
+          "dirs": 1,
+          "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_autoattack",
+          "present": ["south"],
+          "missing": ["south-east", "east", "north-east", "north", "north-west", "west", "south-west"],
+          "fallback": "idle",
+          "task": "Sword AA is 1-dir. Optional later: 8-dir or face-the-lock only (already OK)."
+        }
+      ]
+    }
+  ],
+  "skills": [
+    { "id": "slash", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_focus_slash", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "cleave", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_swordwhirl", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "shockwave", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_windcutter", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "hook_shot", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_blows_of_fury", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "war_cry", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_buff_warcry", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "iron_stance", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_block", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "rally", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_buff_ready_up", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "decoy", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_taunt", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "shove", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_pike", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "dash", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_sworddance", "dirs": 1, "state": "SKILL", "status": "filled" },
+    { "id": "auto_attack", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_autoattack", "dirs": 1, "state": "ATTACK", "status": "filled" },
+    { "id": "auto_attack_off", "weapon": "sword", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_autoattack", "dirs": 1, "state": "ATTACK", "status": "filled" },
+    { "id": "rest", "weapon": "*", "kit": "unarmed", "clip": "sit", "dirs": 8, "state": "SIT", "status": "partial" },
+    { "id": "powerup", "weapon": "*", "emote": "south_powerup", "dirs": 1, "state": "EMOTE", "status": "filled" },
+    { "id": "arrow_rain", "weapon": "bow", "kit": "bow", "clip": "attack", "dirs": 8, "state": "CAST", "status": "filled" },
+    { "id": "arcane_nova", "weapon": "staff", "kit": "staff", "clip": "attack", "dirs": 8, "state": "CAST", "status": "partial" }
+  ],
+  "emotes": [
+    { "id": "emo_scared", "folder": "Sprites/player/female/emotions/emo_scared", "altFolders": ["Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/emo_zweihand/emo_zweih_scared"], "dirs": 1, "status": "filled" },
+    { "id": "idle_sitting", "kit": "unarmed", "clip": "sit", "dirs": 8, "status": "partial" },
+    { "id": "south_powerup", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/emo_zweihand/emo_zweihand_getting_pumped", "altFolders": ["Sprites/player/female/idle_holding_staff/holding_staff_long/emote_staff/emo_turnaround_with_staff", "Sprites/player/female/emotions/emo_scared"], "dirs": 1, "status": "filled" },
+    { "id": "emo_zweih_wink", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/emo_zweihand/emo_zweih_wink", "dirs": 1, "status": "filled" },
+    { "id": "emo_zweih_bet", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/emo_zweihand/emo_zweih_bet", "dirs": 1, "status": "filled" },
+    { "id": "emo_zwei_readying", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/emo_zweihand/emo_zwei_readying", "dirs": 1, "status": "filled" },
+    { "id": "emo_zweihand_taunt", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/emo_zweihand/emo_zweihand_taunt", "dirs": 1, "status": "filled" },
+    { "id": "emo_zweih_come_get_me", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/emotes_zweih/emo_zweih_come_get_me", "dirs": 1, "status": "filled" },
+    { "id": "emo_zweih_victory", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/emo_zweihand/emo_zweih_victory", "dirs": 1, "status": "filled" },
+    { "id": "emo_zweih_hellyeah", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/emo_zweihand/emo_zweih_hellyeah", "dirs": 1, "status": "filled" },
+    { "id": "staff_emo_victory", "folder": "Sprites/player/female/idle_holding_staff/holding_staff_long/emote_staff/emo_turnaround_with_staff", "dirs": 1, "status": "filled" }
+  ],
+  "unused": [
+    { "id": "zweih_strike", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_strike", "task": "Not on the hotbar." },
+    { "id": "zweih_electric_slash", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_electric_slash", "task": "Not on the hotbar." },
+    { "id": "zweih_combo", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_combo", "task": "Not on the hotbar." },
+    { "id": "zweih_blance", "folder": "Sprites/player/female/idle_holding_zweihander/holding_zweihander/animations_zweih/zweihand_skills/zweih_blance", "task": "Not on the hotbar (name as exported)." },
+    { "id": "flinch_crouch", "folder": "Sprites/player/female/idle_base/Idle_base/animations_base/getting_hit_taking_dmg_crouching_pushback_flinchin", "task": "Extra flinch pack, not wired. Hurt uses idle_taking_dmg." }
+  ]
+}

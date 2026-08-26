@@ -1,5 +1,6 @@
 import { questById, quests } from "./data.js";
 import { addItem, removeItem } from "./shop.js";
+import { grantXp } from "./xp.js";
 import type { PlayerSession, QuestDef, QuestProgress, QuestStep, ServerMessage } from "./types.js";
 
 function stepHint(step: QuestStep | undefined): string {
@@ -203,6 +204,8 @@ export function turnInQuest(session: PlayerSession, questId: string): {
   for (const reward of quest.rewards.items) {
     addItem(session, reward.itemId, reward.quantity);
   }
+  const xpGain = quest.rewards.xp ?? 0;
+  const xpMsgs = xpGain > 0 ? grantXp(session, xpGain) : [];
   session.quests = session.quests.filter((q) => q.questId !== questId);
   session.completedQuestIds.push(questId);
 
@@ -219,6 +222,7 @@ export function turnInQuest(session: PlayerSession, questId: string): {
   }
 
   const messages: ServerMessage[] = [
+    ...xpMsgs,
     questSnapshot(session),
     { type: "sync_inventory", inventory: session.inventory, gold: session.gold },
     { type: "sync_gold", gold: session.gold },

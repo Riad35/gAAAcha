@@ -2,13 +2,13 @@
   "default": {
     "goldMin": 2,
     "goldMax": 4,
-    "xp": 16,
+    "xp": 24,
     "drops": [{ "itemId": "item_dust", "chance": 0.7 }]
   },
   "slime": {
     "goldMin": 2,
     "goldMax": 5,
-    "xp": 16,
+    "xp": 24,
     "drops": [
       { "itemId": "item_dust", "chance": 1 },
       { "itemId": "item_ration", "chance": 0.08 }
@@ -27,7 +27,7 @@
   "pest": {
     "goldMin": 3,
     "goldMax": 6,
-    "xp": 18,
+    "xp": 26,
     "drops": [
       { "itemId": "item_dust", "chance": 0.7 },
       { "itemId": "item_ration", "chance": 0.12 }
@@ -36,7 +36,7 @@
   "beetle": {
     "goldMin": 3,
     "goldMax": 6,
-    "xp": 20,
+    "xp": 28,
     "drops": [
       { "itemId": "item_dust", "chance": 0.65 },
       { "itemId": "item_bread", "chance": 0.1 }

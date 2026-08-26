@@ -138,8 +138,14 @@ function rowToSave(token: string, c: Record<string, unknown>, inventory: Invento
     equippedHelmId: (c.equipped_helm_id as string) ?? null,
     equippedBootsId: (c.equipped_boots_id as string) ?? null,
     equippedGlovesId: (c.equipped_gloves_id as string) ?? null,
-    equippedAccessoryId: (c.equipped_accessory_id as string) ?? null,
+    equippedAccessoryId: (c.equipped_amulet_id as string) ?? (c.equipped_accessory_id as string) ?? null,
+    equippedAmuletId: (c.equipped_amulet_id as string) ?? (c.equipped_accessory_id as string) ?? null,
+    equippedRing1Id: (c.equipped_ring1_id as string) ?? null,
+    equippedRing2Id: (c.equipped_ring2_id as string) ?? null,
+    enhanceLevels: (c.enhance_levels as Record<string, number>) ?? {},
     classCardId: (c.class_card_id as string) ?? null,
+    equippedSubclassId: (c.equipped_subclass_id as string) ?? null,
+    transformed: Boolean(c.transformed),
     towerClearedFloor: Number(c.tower_cleared_floor ?? 0),
     switchFlags: (c.switch_flags as Record<string, boolean>) ?? {},
     updatedAt: Date.now(),
@@ -331,12 +337,17 @@ export async function saveGuestToDb(data: GuestSave): Promise<void> {
       data.equippedHelmId ?? null,
       data.equippedBootsId ?? null,
       data.equippedGlovesId ?? null,
-      data.equippedAccessoryId ?? null,
+      data.equippedAmuletId ?? data.equippedAccessoryId ?? null,
       data.classCardId ?? null,
       data.towerClearedFloor ?? 0,
       JSON.stringify(data.switchFlags ?? {}),
       Boolean(data.charNameSet),
       JSON.stringify(data.completedQuestIds ?? []),
+      data.equippedSubclassId ?? null,
+      Boolean(data.transformed),
+      data.equippedRing1Id ?? null,
+      data.equippedRing2Id ?? null,
+      JSON.stringify(data.enhanceLevels ?? {}),
     ];
     if (!characterId) {
       const ins = await client.query<{ id: string }>(
@@ -345,8 +356,10 @@ export async function saveGuestToDb(data: GuestSave): Promise<void> {
           map_id, x, y, hp, mp, gold, home_map_id, home_x, home_y,
           equipped_weapon_id, equipped_weapon2_id, equipped_spirit_id, weapon_ids, spirit_ids,
           equipped_armor_id, equipped_helm_id, equipped_boots_id, equipped_gloves_id, equipped_accessory_id,
-          class_card_id, tower_cleared_floor, switch_flags, char_name_set, completed_quest_ids
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22::jsonb,$23,$24,$25,$26,$27,$28,$29,$30::jsonb,$31,$32::jsonb)
+          equipped_amulet_id,
+          class_card_id, tower_cleared_floor, switch_flags, char_name_set, completed_quest_ids,
+          equipped_subclass_id, transformed, equipped_ring1_id, equipped_ring2_id, enhance_levels
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22::jsonb,$23,$24,$25,$26,$27,$27,$28,$29,$30::jsonb,$31,$32::jsonb,$33,$34,$35,$36,$37::jsonb)
         RETURNING id`,
         [accountId, ...payload],
       );
@@ -359,7 +372,9 @@ export async function saveGuestToDb(data: GuestSave): Promise<void> {
           map_id=$9, x=$10, y=$11, hp=$12, mp=$13, gold=$14, home_map_id=$15, home_x=$16, home_y=$17,
           equipped_weapon_id=$18, equipped_weapon2_id=$19, equipped_spirit_id=$20, weapon_ids=$21::jsonb, spirit_ids=$22::jsonb,
           equipped_armor_id=$23, equipped_helm_id=$24, equipped_boots_id=$25, equipped_gloves_id=$26, equipped_accessory_id=$27,
-          class_card_id=$28, tower_cleared_floor=$29, switch_flags=$30::jsonb, char_name_set=$31, completed_quest_ids=$32::jsonb
+          equipped_amulet_id=$27,
+          class_card_id=$28, tower_cleared_floor=$29, switch_flags=$30::jsonb, char_name_set=$31, completed_quest_ids=$32::jsonb,
+          equipped_subclass_id=$33, transformed=$34, equipped_ring1_id=$35, equipped_ring2_id=$36, enhance_levels=$37::jsonb
         WHERE id=$1`,
         [characterId, ...payload],
       );
