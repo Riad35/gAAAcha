@@ -1,0 +1,12 @@
+{
+  "name": "gAAAcha",
+  "user": "ubuntu",
+  "install": "cd server && npm ci",
+  "terminals": [
+    {
+      "name": "server",
+      "command": "cd server && npm run dev"
+    }
+  ],
+  "ports": [7777]
+}
