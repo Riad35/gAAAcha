@@ -83,6 +83,7 @@ import { casterIdFromSync, isPrivateSync, mapIdFromSync, playerIdsOnMap } from "
 import { metaRpcLimited } from "./rateLimit.js";
 import { beginNpcTalk, closeNpcTalk, enhanceGear, NPC_TALK_RANGE } from "./enhance.js";
 import { cancelRest, isResting } from "./rest.js";
+import { isSessionStale, takeCondSync } from "./cond.js";
 
 bindCombatWorld(
   findEntity,
